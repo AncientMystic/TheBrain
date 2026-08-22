@@ -3,6 +3,7 @@ import time
 import numpy as np
 from core import db
 from core.embeddings import get_embedding
+import config
 
 
 def retrieve_memories(query, top_k=5, session_id=None):
