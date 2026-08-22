@@ -115,7 +115,7 @@ tqdm      # optional, for progress bars
 
 Tesseract Setup
 
-· Windows: download from GitHub UB-Mannheim/tesseract and add to PATH.
+· Windows: download from [GitHub UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki) and add to PATH.
 · Linux: sudo apt install tesseract-ocr
 · macOS: brew install tesseract
 
