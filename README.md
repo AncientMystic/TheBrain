@@ -1,6 +1,6 @@
 # TheBrain
 
-TheBrain is a local-first document intelligence and knowledge extraction engine. It ingests large collections of mixed-format documents (PDF, HTML, Markdown, DOCX, EPUB, RTF, Jupyter Notebook, plain text, source code, and more), extracts structured knowledge using local LLMs and embedding models via LM Studio, and stores it across multiple SQLite databases. The system includes graph-based retrieval, verification-first reasoning, long-term memory, learned logic modules, an OpenAI-compatible server, automatic audit/governance, and optional deep research mode with autonomous report generation.
+TheBrain is a local-first document intelligence and knowledge extraction engine. It ingests large collections of mixed-format documents (PDF, HTML, Markdown, DOCX, EPUB, RTF, Jupyter Notebook, plain text, source code, and more), extracts structured knowledge using local LLMs and embedding models via LM Studio, and stores it across multiple SQLite databases. The system includes graph-based retrieval, verification-first reasoning, long-term memory, learned logic modules, an OpenAI-compatible server, automatic audit/governance, optional deep research mode with autonomous report generation, and full-text search integration via Recoll.
 
 ---
 
@@ -42,6 +42,13 @@ TheBrain is a local-first document intelligence and knowledge extraction engine.
 - **Deep Research mode**  
   Autonomous research with recursive subtopic exploration, mindmap construction, and multi‑page Markdown report generation.
 
+- **Recoll full‑text search integration**  
+  - Optional wrapper for the Recoll Python API.  
+  - Build and maintain a separate full‑text index over your documents.  
+  - Use Recoll as an additional evidence source in chat and deep research.  
+  - New autonomous mode: `--guided-learning --recoll` that uses knowledge gaps to generate Recoll queries, process retrieved documents, and expand the knowledge graph automatically.  
+  - Dedicated `recoll_log.db` to avoid duplicate queries and track processed documents.
+
 - **OpenAI-compatible server**  
   Exposes `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, and `/v1/health`.
 
@@ -56,7 +63,8 @@ TheBrain is a local-first document intelligence and knowledge extraction engine.
   - External graph embedding matrix for fast fuzzy matching.  
   - Configurable parallel file processing.  
   - Progress bars (if `tqdm` installed).  
-  - Optional async LLM calls (requires `aiohttp`).
+  - Optional async LLM calls (requires `aiohttp`).  
+  - Optional small/large/audit model roles.
 
 ---
 
@@ -68,6 +76,7 @@ TheBrain is a local-first document intelligence and knowledge extraction engine.
 - Tesseract OCR (optional, for scanned PDFs)
 - LM Studio running locally (or on a network) with at least one LLM and embedding model loaded.
 - (Optional) ONNX Runtime and Hugging Face Hub for the fast NER extractor.
+- (Optional) Recoll with Python API installed (for full‑text search).
 
 ### Install Dependencies
 
@@ -113,6 +122,19 @@ Tesseract Setup
 ONNX NER Model
 
 The fast extractor can automatically download a pre‑trained ONNX NER model from Hugging Face. The default repository is optimum/bert-base-NER or Xenova/bert-base-NER (configured in config.py). You can also manually download and place the model files in models/ner_onnx (or your configured directory). Set FAST_EXTRACTOR_ENABLED = False to disable.
+
+Recoll Setup (Optional)
+
+1. Install Recoll on your system. For Windows, ensure the Python API wheel matches your Python version (usually found in C:\Program Files\Recoll\Share\dist).
+2. Install the Python API:
+   ```powershell
+   pip install "C:\Program Files\Recoll\Share\dist\Recoll-<version>-cp3xx-cp3xx-win_amd64.whl"
+   ```
+3. Verify:
+   ```python
+   from recoll import recoll
+   ```
+4. Set USE_RECOLL = true in config.py or environment variable USE_RECOLL=true.
 
 ---
 
@@ -200,6 +222,18 @@ DEEP_RESEARCH_INTERACTIVE = True     # ask user before exploring subtopics
 DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 2
 ```
 
+Recoll Settings
+
+```python
+USE_RECOLL = os.environ.get("USE_RECOLL", "false").lower() == "true"
+RECOLL_CONFDIR = os.environ.get("RECOLL_CONFDIR", "")
+RECOLL_EXTRA_DBS = os.environ.get("RECOLL_EXTRA_DBS", "")  # space-separated list
+RECOLL_DEFAULT_LIMIT = int(os.environ.get("RECOLL_DEFAULT_LIMIT", "20"))
+RECOLL_MAX_ROUNDS = int(os.environ.get("RECOLL_MAX_ROUNDS", "10"))
+RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "true"
+RECOLL_LOG_DB_FILE = str(DATA_DIR / "recoll_log.db")
+```
+
 ---
 
 Usage
@@ -252,6 +286,7 @@ Chat now supports:
 · Graph-first retrieval with multi-hop expansion.
 · Intent-aware answer generation.
 · Markdown output with source citations.
+· Optional Recoll full-text search when USE_RECOLL=true.
 
 Deep Research Mode
 
@@ -268,6 +303,38 @@ When you enter a query, the system will:
 3. Suggest subtopics (and optionally ask if you want to explore each).
 4. Generate a comprehensive Markdown report in the reports/ folder.
 5. Recursively explore subtopics up to the configured depth.
+
+Recoll-Guided Autonomous Learning
+
+Use Recoll to fill knowledge gaps automatically:
+
+```bash
+python main.py --guided-learning --recoll
+```
+
+Optional flags:
+
+· --recoll-max-rounds 5 – maximum autonomous iterations.
+· --recoll-interactive – ask before processing each retrieved document.
+· --debug – extra logging.
+
+How it works:
+
+1. Analyzes internal databases for gaps (low confidence facts, sparse entities, low-coverage keywords, unconnected topics).
+2. Generates Recoll search queries using the LLM.
+3. Queries the Recoll index to find relevant documents.
+4. Processes new documents through TheBrain’s extraction pipeline.
+5. Logs all queries and processed documents in recoll_log.db to avoid duplicates.
+
+Build Recoll Index
+
+To build/update a separate full-text index for your documents:
+
+```bash
+python main.py --build-recoll-index --input "A:/documents"
+```
+
+This will scan the folder, extract text, and add each document to the Recoll index using a writable connection.
 
 Server
 
@@ -333,7 +400,8 @@ TheBrain/
 ├── scripts/
 ├── models/               # ONNX NER model
 ├── reports/              # generated research reports
-└── data/                 # SQLite databases
+├── data/                 # SQLite databases (including recoll_log.db)
+└── upload-to-github/     # prepared repository folder (if created)
 ```
 
 ---
@@ -360,7 +428,7 @@ Reasoning and Chat
 3. Retrieve initial facts from the external graph, optionally using FTS.
 4. Expand facts through multi‑hop graph traversal (keyword co‑occurrence, global edges, hypergraph, entity‑fact index).
 5. Check sufficiency with LLM.
-6. If insufficient, add chunks via embedding similarity.
+6. If insufficient, add chunks via embedding similarity (and optionally Recoll full‑text results).
 7. Verify claims with SymStep, VeriCoT, FiDeLiS, R‑CoT, ARES (adaptive if enabled).
 8. Re‑rank facts using memory and logic modules.
 9. Synthesize final answer with provenance and Markdown formatting.
@@ -373,6 +441,15 @@ Deep Research
 4. Optionally ask user which subtopics to pursue.
 5. Generate a detailed report for each subtopic, including a coherence pass.
 6. Save reports to reports/.
+
+Recoll-Guided Learning
+
+1. Query internal SQLite for knowledge gaps.
+2. Generate Recoll search queries from those gaps using LLM.
+3. Search the Recoll full-text index.
+4. Process retrieved documents through the standard pipeline.
+5. Log all queries and processed documents.
+6. Repeat until no new documents are processed or max rounds reached.
 
 ---
 
