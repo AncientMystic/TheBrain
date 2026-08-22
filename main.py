@@ -239,20 +239,21 @@ def main():
     reasoning_mode = "--reasoning" in sys.argv
     deep_research = "--deep-research" in sys.argv
     recoll_mode = "--recoll" in sys.argv
+    recoll_fast = "--recoll-fast" in sys.argv
     build_recoll_index = "--build-recoll-index" in sys.argv
+    interactive = "--interactive" in sys.argv
     input_path = None
     if "--input" in sys.argv:
         idx = sys.argv.index("--input") + 1
         if idx < len(sys.argv):
             input_path = sys.argv[idx]
 
-    validate_config()
-    recoll_fast = "--recoll-fast" in sys.argv
     recoll_query = None
     if "--recoll-query" in sys.argv:
         idx = sys.argv.index("--recoll-query") + 1
         if idx < len(sys.argv):
             recoll_query = sys.argv[idx]
+
     recoll_limit = None
     if "--recoll-limit" in sys.argv:
         idx = sys.argv.index("--recoll-limit") + 1
@@ -261,6 +262,7 @@ def main():
                 recoll_limit = int(sys.argv[idx])
             except ValueError:
                 print("Invalid --recoll-limit value, using default.")
+
     preview_chars = None
     if "--preview-chars" in sys.argv:
         idx = sys.argv.index("--preview-chars") + 1
@@ -270,81 +272,46 @@ def main():
             except ValueError:
                 print("Invalid --preview-chars value, using default.")
 
+    recoll_model = None
+    if "--recoll-model" in sys.argv:
+        idx = sys.argv.index("--recoll-model") + 1
+        if idx < len(sys.argv):
+            recoll_model = sys.argv[idx]
+
+    validate_config()
     init_all()
 
+    # Handle recoll-fast first (only if flag present)
     if recoll_fast:
-        interactive = "--interactive" in sys.argv
+        from recoll_fast import process_recoll_fast, collect_seed_keywords
         if recoll_query:
-            # Process a single query automatically
-            try:
-                process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
-            except ImportError:
-                print("recoll_fast module not found. Please run the setup script.")
-            return
-        else:
-            if interactive:
-                print("Recoll Fast interactive mode. Type 'exit' to quit.")
-                while True:
-                    try:
-                        q = input("Recoll query> ").strip()
-                    except (KeyboardInterrupt, EOFError):
-                        break
-                    if q.lower() in ("exit", "quit"):
-                        break
-                    if not q:
-                        continue
-                    recoll_query = q
-                    try:
-                        process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
-                    except ImportError:
-                        print("recoll_fast module not found. Please run the setup script.")
-            else:
-                # Automatic mode: collect seed keywords from existing knowledge
-                print("Recoll Fast automatic mode - collecting seed keywords...")
+            process_recoll_fast(recoll_query, max_results=recoll_limit,
+                                preview_chars=preview_chars, model=recoll_model)
+        elif interactive:
+            print("Recoll Fast interactive mode. Type 'exit' to quit.")
+            while True:
                 try:
-                    seeds = collect_seed_keywords(limit=config.RECOLL_AUTO_KEYWORD_LIMIT if hasattr(config, 'RECOLL_AUTO_KEYWORD_LIMIT') else 20)
-                    if not seeds:
-                        print("No seed keywords found in key_facts. Use --recoll-query or build knowledge first.")
-                        return
-                    print(f"Processing {len(seeds)} keywords automatically...")
-                    for kw in seeds:
-                        print(f"\n=== Processing keyword: {kw} ===")
-                        process_recoll_fast(kw, max_results=recoll_limit, preview_chars=preview_chars)
-                except ImportError:
-                    print("recoll_fast module not found. Please run the setup script.")
-            return
-
-    if recoll_query:
-        try:
-            process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
-        except ImportError:
-            print("recoll_fast module not found. Please run the setup script.")
-        return
-    else:
-        # Automatic mode: collect seed keywords from existing knowledge
-        print("Recoll Fast automatic mode - collecting seed keywords...")
-        try:
+                    q = input("Recoll query> ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    break
+                if q.lower() in ("exit", "quit"):
+                    break
+                if not q:
+                    continue
+                process_recoll_fast(q, max_results=recoll_limit,
+                                    preview_chars=preview_chars, model=recoll_model)
+        else:
+            # Automatic mode: collect seed keywords
+            print("Recoll Fast automatic mode - collecting seed keywords...")
             seeds = collect_seed_keywords(limit=config.RECOLL_AUTO_KEYWORD_LIMIT if hasattr(config, 'RECOLL_AUTO_KEYWORD_LIMIT') else 20)
             if not seeds:
-                print("No seed keywords found in key_facts. Use --recoll-query or build knowledge first.")
-                return
-            print(f"Processing {len(seeds)} keywords automatically...")
-            for kw in seeds:
-                print(f"\n=== Processing keyword: {kw} ===")
-                try:
-                    process_recoll_fast(kw, max_results=recoll_limit, preview_chars=preview_chars)
-                except Exception as e:
-                    print(f"Error processing '{kw}': {e}")
-                    traceback.print_exc()
-        except ImportError:
-            print("recoll_fast module not found. Please run the setup script.")
-        return
-
-    if server_mode:
-        import uvicorn
-        from server import app as server_app
-        print(f"Starting OpenAI-compatible server on http://{config.SERVER_HOST}:{config.SERVER_PORT}")
-        uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
+                print("No seed keywords found. Use --recoll-query or build knowledge first.")
+            else:
+                print(f"Processing {len(seeds)} keywords automatically...")
+                for kw in seeds:
+                    print(f"\n=== Processing keyword: {kw} ===")
+                    process_recoll_fast(kw, max_results=recoll_limit,
+                                        preview_chars=preview_chars, model=recoll_model)
         return
 
     if build_recoll_index:
@@ -352,9 +319,9 @@ def main():
             print("Please provide --input <path> for building Recoll index.")
             return
         try:
+            import recoll
             from core.file_utils import get_file_hash
             from extractors.registry import extract_text_from_file
-            import recoll
             files = scan_files(input_path)
             print(f"Indexing {len(files)} files with Recoll...")
             db = recoll.connect(writable=True)
@@ -364,7 +331,6 @@ def main():
                     result = extract_text_from_file(f)
                     text = result.get("text", "")
                     if not text:
-                        print("    No text extracted, skipping.")
                         continue
                     doc = recoll.Doc()
                     doc.url = f.as_uri()
@@ -375,8 +341,6 @@ def main():
                     udi = f"thebrain:{file_hash}"
                     if db.needUpdate(udi, file_hash):
                         db.addOrUpdate(udi, doc)
-                    else:
-                        print("    Up to date, skipping.")
                 except Exception as e:
                     print(f"    Recoll indexing error: {e}")
             db.close()
@@ -384,12 +348,19 @@ def main():
         except ImportError as e:
             print(f"Recoll not available: {e}")
         return
+
+    if server_mode:
+        import uvicorn
+        from server import app as server_app
+        print(f"Starting OpenAI-compatible server on http://{config.SERVER_HOST}:{config.SERVER_PORT}")
+        uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
+        return
+
     if audit_mode:
         audit_all()
         return
 
     if chat_mode or deep_research:
-        # Chat mode (optionally with deep research)
         from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
         from chat.conversation import add_message, get_conversation_context
         from deep_research.coordinator import DeepResearchCoordinator
@@ -466,81 +437,55 @@ def main():
         tracker.total_files = 0
         tracker.processed_count = 0
         _recoll_max_rounds = config.RECOLL_MAX_ROUNDS
-        _recoll_interactive = "--recoll-interactive" in sys.argv
         if "--recoll-max-rounds" in sys.argv:
             _idx = sys.argv.index("--recoll-max-rounds") + 1
             if _idx < len(sys.argv):
                 _recoll_max_rounds = int(sys.argv[_idx])
-        run_recoll_guided_learning(process_file, tracker, max_rounds=_recoll_max_rounds, interactive=_recoll_interactive)
+        run_recoll_guided_learning(process_file, tracker, max_rounds=_recoll_max_rounds,
+                                   interactive=interactive)
         return
+
     if guided:
         if not input_path:
             print("Please provide --input <path> for guided learning.")
             return
         input_path = Path(input_path)
         files = scan_files(input_path)
-        # Progress bar support
-        if config.USE_PROGRESS_BARS and config.TQDM_AVAILABLE:
-            try:
-                from tqdm import tqdm
-                files_iter = tqdm(files, desc="Processing files", unit="file")
-            except ImportError:
-                files_iter = files
-        else:
-            files_iter = files
         total = len(files)
         tracker = ProgressTracker()
         tracker.total_files = total
         tracker.processed_count = 0
         try:
-            if config.PARALLEL_PROCESSING_ENABLED:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                import threading
-                lock = threading.Lock()
-
-                def process_with_lock(f):
-                    with lock:
-                        result = process_file(f, tracker, logic_context="")
-                    return result
-
-                with ThreadPoolExecutor(max_workers=config.PARALLEL_WORKERS) as executor:
-                    futures = [executor.submit(process_with_lock, f) for f in files]
-                    for future in as_completed(futures):
-                        tracker.processed_count += 1
-                        if future.result():
-                            print("    (Success)")
-            else:
-                for f in files_iter:
-                    logic_context = ""
-                    if logic_mode:
-                        try:
-                            result = extract_text_from_file(f)
-                            first_text = result["text"][:1000]
-                            logic_ids = decide_logic_modules(first_text, context=first_text)
-                            if logic_ids:
-                                conn = db.db_connect("logic")
-                                cur = conn.cursor()
-                                for lid in logic_ids:
-                                    cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
-                                    row = cur.fetchone()
-                                    if row:
-                                        logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
-                                conn.close()
-                        except Exception as e:
-                            print(f"  (Logic decision error: {e})")
-                    success = process_file(f, tracker, logic_context=logic_context)
-                    tracker.processed_count += 1
-                    if success:
-                        print("    (Success)")
-                    gc.collect()
-                    time.sleep(0.1)
+            for f in files:
+                logic_context = ""
+                if logic_mode:
+                    try:
+                        result = extract_text_from_file(f)
+                        first_text = result["text"][:1000]
+                        logic_ids = decide_logic_modules(first_text, context=first_text)
+                        if logic_ids:
+                            conn = db.db_connect("logic")
+                            cur = conn.cursor()
+                            for lid in logic_ids:
+                                cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
+                                row = cur.fetchone()
+                                if row:
+                                    logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                            conn.close()
+                    except Exception as e:
+                        print(f"  (Logic decision error: {e})")
+                success = process_file(f, tracker, logic_context=logic_context)
+                tracker.processed_count += 1
+                if success:
+                    print("    (Success)")
+                gc.collect()
+                time.sleep(0.1)
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)
         print(f"\nGuided learning complete. Processed {tracker.processed_count} files.")
         return
+
     print("No mode specified.")
-
-
 if __name__ == "__main__":
     main()
