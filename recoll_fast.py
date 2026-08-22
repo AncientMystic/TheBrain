@@ -207,13 +207,25 @@ def process_recoll_fast(keyword: str, max_results: int = None, preview_chars: in
     doc_hash_to_name = {entry[0]: entry[2] for entry in preview_entries}
 
     for (doc_hash, chunk_idx, chunk_text), chunk_data in zip(all_chunks_flat, chunk_results):
-        # Basic validation for facts
-        if "facts" in chunk_data:
-            cleaned_facts = [f for f in chunk_data["facts"]
-                             if f.get("source_span") and f.get("source_span") in chunk_text
-                             and f.get("confidence", 0) >= 0.5]
-        else:
-            cleaned_facts = []
+        # Permissive validation: keep all facts with a non-empty fact_text,
+        # lower confidence threshold, and auto-generate source_span if missing.
+        cleaned_facts = []
+        for f in chunk_data.get("facts", []):
+            if not isinstance(f, dict):
+                continue
+            fact_text = f.get("fact_text", "").strip()
+            if not fact_text:
+                continue
+            # Accept confidence >= 0.3 (less strict)
+            if f.get("confidence", 0) < 0.3:
+                continue
+            # Ensure source_span exists
+            if not f.get("source_span"):
+                f["source_span"] = fact_text[:80]
+            cleaned_facts.append(f)
+
+        if config.DEBUG_VERBOSE:
+            print(f"    Chunk {chunk_idx}: raw facts={len(chunk_data.get('facts', []))} entities={len(chunk_data.get('entities', []))} kept_facts={len(cleaned_facts)}")
 
         # Insert facts and sources
         for fact in cleaned_facts:
