@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from core import db
+from scripts.init_recoll_log_db import init_recoll_log_db
 
 
 def init_index_db():
@@ -297,6 +298,7 @@ def init_all():
     init_memories_db()
     init_logic_db()
     init_reasoning_db()
+    init_recoll_log_db()
     print("All databases ready.")
 
 

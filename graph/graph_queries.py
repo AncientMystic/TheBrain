@@ -13,6 +13,7 @@ def _cache_facts(key, facts, ttl=60):
     _keyword_cache[key] = facts
     _keyword_cache_ttl[key] = time.time()
 from core import db
+import config
 
 def get_related_keywords(keyword, min_weight=0.5):
     conn = db.db_connect("external_graph")

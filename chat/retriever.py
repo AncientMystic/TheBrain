@@ -24,7 +24,7 @@ def _cache_facts(key, facts, ttl=300):
 
 
 
-def retrieve_from_graph(query_analysis, top_k=20):
+def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
     keywords = query_analysis.get("keywords", [])
     entities = query_analysis.get("entities", [])
     facts = []
@@ -68,6 +68,49 @@ def retrieve_from_graph(query_analysis, top_k=20):
             unique_facts.append(fact)
 
     unique_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    # Ensure 'result' is defined (should be, but safety)
+    if 'result' not in locals():
+        result = []
+
+    # Optional Recoll full-text search (additional source)
+    if config.USE_RECOLL:
+        try:
+            from core.recoll_client import RecollClient
+            recoll_client = RecollClient()
+            recoll_results, _ = recoll_client.search(query_analysis.get('original', ''), limit=5, fetch_text=False)
+            for doc in recoll_results:
+                file_url = getattr(doc, "url", "")
+                file_path = file_url.replace("file://", "")
+                if file_path:
+                    conn = db.db_connect("index")
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT dc.chunk_id, dc.doc_hash, dc.chunk_text
+                        FROM document_chunks dc
+                        JOIN documents d ON dc.doc_hash = d.file_hash
+                        WHERE d.file_path = ?
+                        LIMIT 3
+                    """, (file_path,))
+                    rows = cur.fetchall()
+                    conn.close()
+                    for row in rows:
+                        result.append({
+                            "fact_id": None,
+                            "doc_hash": row["doc_hash"],
+                            "doc_name": file_path,
+                            "fact_text": row["chunk_text"][:300],
+                            "canonical_value": "",
+                            "source_span": "",
+                            "confidence": 0.6,
+                            "chunk_id": row["chunk_id"],
+                        })
+            recoll_client.close()
+        except ImportError:
+            pass
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Recoll fallback error: {e})")
+
     return unique_facts[:top_k]
 
 

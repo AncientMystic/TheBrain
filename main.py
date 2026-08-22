@@ -35,6 +35,7 @@ from scripts.init_schemas import init_all
 from memory import retrieve_memories, store_memory
 from logic import retrieve_logic_modules, decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
+from deep_research.recoll_guided_learning import run_recoll_guided_learning
 
 
 def normalize_key(text):
@@ -236,6 +237,8 @@ def main():
     logic_mode = "--logic" in sys.argv
     reasoning_mode = "--reasoning" in sys.argv
     deep_research = "--deep-research" in sys.argv
+    recoll_mode = "--recoll" in sys.argv
+    build_recoll_index = "--build-recoll-index" in sys.argv
     input_path = None
     if "--input" in sys.argv:
         idx = sys.argv.index("--input") + 1
@@ -252,6 +255,43 @@ def main():
         uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
         return
 
+    if build_recoll_index:
+        if not input_path:
+            print("Please provide --input <path> for building Recoll index.")
+            return
+        try:
+            from core.file_utils import get_file_hash
+            from extractors.registry import extract_text_from_file
+            import recoll
+            files = scan_files(input_path)
+            print(f"Indexing {len(files)} files with Recoll...")
+            db = recoll.connect(writable=True)
+            for i, f in enumerate(files):
+                print(f"  Indexing {i+1}/{len(files)}: {f.name}")
+                try:
+                    result = extract_text_from_file(f)
+                    text = result.get("text", "")
+                    if not text:
+                        print("    No text extracted, skipping.")
+                        continue
+                    doc = recoll.Doc()
+                    doc.url = f.as_uri()
+                    doc.title = f.stem
+                    doc.mimetype = result.get("format", "text/plain")
+                    doc.text = text
+                    file_hash = get_file_hash(str(f))
+                    udi = f"thebrain:{file_hash}"
+                    if db.needUpdate(udi, file_hash):
+                        db.addOrUpdate(udi, doc)
+                    else:
+                        print("    Up to date, skipping.")
+                except Exception as e:
+                    print(f"    Recoll indexing error: {e}")
+            db.close()
+            print("Recoll index build complete.")
+        except ImportError as e:
+            print(f"Recoll not available: {e}")
+        return
     if audit_mode:
         audit_all()
         return
@@ -328,6 +368,19 @@ def main():
         print("Logic learning complete.")
         return
 
+    if guided and recoll_mode:
+        print("Starting Recoll-guided learning mode.")
+        tracker = ProgressTracker()
+        tracker.total_files = 0
+        tracker.processed_count = 0
+        _recoll_max_rounds = config.RECOLL_MAX_ROUNDS
+        _recoll_interactive = "--recoll-interactive" in sys.argv
+        if "--recoll-max-rounds" in sys.argv:
+            _idx = sys.argv.index("--recoll-max-rounds") + 1
+            if _idx < len(sys.argv):
+                _recoll_max_rounds = int(sys.argv[_idx])
+        run_recoll_guided_learning(process_file, tracker, max_rounds=_recoll_max_rounds, interactive=_recoll_interactive)
+        return
     if guided:
         if not input_path:
             print("Please provide --input <path> for guided learning.")

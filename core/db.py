@@ -14,6 +14,7 @@ DB_FILES = {
     "memories": config.MEMORIES_DB_FILE,
     "logic": config.LOGIC_DB_FILE,
     "reasoning": config.REASONING_DB_FILE,
+    "recoll_log": config.RECOLL_LOG_DB_FILE,
 }
 
 for _db_path in DB_FILES.values():

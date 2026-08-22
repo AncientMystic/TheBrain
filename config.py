@@ -15,6 +15,7 @@ EMBEDDINGS_DB_FILE = str(DATA_DIR / "embeddings.db")
 HYPERGRAPH_DB_FILE = str(DATA_DIR / "hypergraph.db")
 EXTERNAL_GRAPH_DB_FILE = str(DATA_DIR / "external-graph.db")
 OCR_CACHE_DB_FILE = str(DATA_DIR / "ocr_cache.db")
+RECOLL_LOG_DB_FILE = str(DATA_DIR / "recoll_log.db")
 MEMORIES_DB_FILE = str(DATA_DIR / "memories.db")
 LOGIC_DB_FILE = str(DATA_DIR / "logic.db")
 REASONING_DB_FILE = str(DATA_DIR / "reasoning.db")
@@ -235,3 +236,12 @@ USE_ASYNC_LLM = False   # Set True if aiohttp installed and LM Studio supports a
 INCREMENTAL_EXTRACTION = False  # Track per-chunk extraction state to allow resume
 LOGIC_EXECUTOR_ENABLED = True  # Use logic modules to influence query processing
 REPORT_COHERENCE_PASS = True   # Run final coherence check on deep research reports
+
+
+# --- Recoll integration ---
+USE_RECOLL = os.environ.get("USE_RECOLL", "false").lower() == "true"
+RECOLL_CONFDIR = os.environ.get("RECOLL_CONFDIR", "")
+RECOLL_EXTRA_DBS = os.environ.get("RECOLL_EXTRA_DBS", "")  # space-separated list
+RECOLL_DEFAULT_LIMIT = int(os.environ.get("RECOLL_DEFAULT_LIMIT", "20"))
+RECOLL_MAX_ROUNDS = int(os.environ.get("RECOLL_MAX_ROUNDS", "10"))
+RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "true"
