@@ -245,3 +245,13 @@ RECOLL_EXTRA_DBS = os.environ.get("RECOLL_EXTRA_DBS", "")  # space-separated lis
 RECOLL_DEFAULT_LIMIT = int(os.environ.get("RECOLL_DEFAULT_LIMIT", "20"))
 RECOLL_MAX_ROUNDS = int(os.environ.get("RECOLL_MAX_ROUNDS", "10"))
 RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "true"
+
+# Recoll Fast Mode
+RECOLL_BIN = os.environ.get("RECOLL_BIN", "recollq")
+RECOLL_DB = os.environ.get("RECOLL_DB", "")  # empty = use Recoll default
+RECOLL_MAX_RESULTS = int(os.environ.get("RECOLL_MAX_RESULTS", "50"))
+PREVIEW_CHAR_WINDOW = int(os.environ.get("PREVIEW_CHAR_WINDOW", "1000"))
+PREVIEW_PAGE_WINDOW = int(os.environ.get("PREVIEW_PAGE_WINDOW", "1"))
+RECOLL_FAST_LLM_BATCH_CHUNKS = int(os.environ.get("RECOLL_FAST_LLM_BATCH_CHUNKS", "4"))
+
+RECOLL_AUTO_KEYWORD_LIMIT = int(os.environ.get("RECOLL_AUTO_KEYWORD_LIMIT", "20"))

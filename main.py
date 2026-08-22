@@ -35,6 +35,7 @@ from scripts.init_schemas import init_all
 from memory import retrieve_memories, store_memory
 from logic import retrieve_logic_modules, decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
+from recoll_fast import process_recoll_fast, collect_seed_keywords
 from deep_research.recoll_guided_learning import run_recoll_guided_learning
 
 
@@ -246,7 +247,98 @@ def main():
             input_path = sys.argv[idx]
 
     validate_config()
+    recoll_fast = "--recoll-fast" in sys.argv
+    recoll_query = None
+    if "--recoll-query" in sys.argv:
+        idx = sys.argv.index("--recoll-query") + 1
+        if idx < len(sys.argv):
+            recoll_query = sys.argv[idx]
+    recoll_limit = None
+    if "--recoll-limit" in sys.argv:
+        idx = sys.argv.index("--recoll-limit") + 1
+        if idx < len(sys.argv):
+            try:
+                recoll_limit = int(sys.argv[idx])
+            except ValueError:
+                print("Invalid --recoll-limit value, using default.")
+    preview_chars = None
+    if "--preview-chars" in sys.argv:
+        idx = sys.argv.index("--preview-chars") + 1
+        if idx < len(sys.argv):
+            try:
+                preview_chars = int(sys.argv[idx])
+            except ValueError:
+                print("Invalid --preview-chars value, using default.")
+
     init_all()
+
+    if recoll_fast:
+        interactive = "--interactive" in sys.argv
+        if recoll_query:
+            # Process a single query automatically
+            try:
+                process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
+            except ImportError:
+                print("recoll_fast module not found. Please run the setup script.")
+            return
+        else:
+            if interactive:
+                print("Recoll Fast interactive mode. Type 'exit' to quit.")
+                while True:
+                    try:
+                        q = input("Recoll query> ").strip()
+                    except (KeyboardInterrupt, EOFError):
+                        break
+                    if q.lower() in ("exit", "quit"):
+                        break
+                    if not q:
+                        continue
+                    recoll_query = q
+                    try:
+                        process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
+                    except ImportError:
+                        print("recoll_fast module not found. Please run the setup script.")
+            else:
+                # Automatic mode: collect seed keywords from existing knowledge
+                print("Recoll Fast automatic mode - collecting seed keywords...")
+                try:
+                    seeds = collect_seed_keywords(limit=config.RECOLL_AUTO_KEYWORD_LIMIT if hasattr(config, 'RECOLL_AUTO_KEYWORD_LIMIT') else 20)
+                    if not seeds:
+                        print("No seed keywords found in key_facts. Use --recoll-query or build knowledge first.")
+                        return
+                    print(f"Processing {len(seeds)} keywords automatically...")
+                    for kw in seeds:
+                        print(f"\n=== Processing keyword: {kw} ===")
+                        process_recoll_fast(kw, max_results=recoll_limit, preview_chars=preview_chars)
+                except ImportError:
+                    print("recoll_fast module not found. Please run the setup script.")
+            return
+
+    if recoll_query:
+        try:
+            process_recoll_fast(recoll_query, max_results=recoll_limit, preview_chars=preview_chars)
+        except ImportError:
+            print("recoll_fast module not found. Please run the setup script.")
+        return
+    else:
+        # Automatic mode: collect seed keywords from existing knowledge
+        print("Recoll Fast automatic mode - collecting seed keywords...")
+        try:
+            seeds = collect_seed_keywords(limit=config.RECOLL_AUTO_KEYWORD_LIMIT if hasattr(config, 'RECOLL_AUTO_KEYWORD_LIMIT') else 20)
+            if not seeds:
+                print("No seed keywords found in key_facts. Use --recoll-query or build knowledge first.")
+                return
+            print(f"Processing {len(seeds)} keywords automatically...")
+            for kw in seeds:
+                print(f"\n=== Processing keyword: {kw} ===")
+                try:
+                    process_recoll_fast(kw, max_results=recoll_limit, preview_chars=preview_chars)
+                except Exception as e:
+                    print(f"Error processing '{kw}': {e}")
+                    traceback.print_exc()
+        except ImportError:
+            print("recoll_fast module not found. Please run the setup script.")
+        return
 
     if server_mode:
         import uvicorn
