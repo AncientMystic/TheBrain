@@ -1,0 +1,155 @@
+import json
+import re
+import time
+import threading
+import itertools
+
+import requests
+
+import config
+
+_llm_cycle = itertools.cycle(config.LLM_ENDPOINTS)
+_llm_lock = threading.Lock()
+
+def _get_next_llm_endpoint():
+    with _llm_lock:
+        return next(_llm_cycle)
+
+def call_model(prompt, model=None, max_tokens=1024, temperature=None,
+               system="You are a helpful assistant.", endpoint=None):
+    if endpoint is None:
+        if model:
+            for ep in config.LLM_ENDPOINTS:
+                if ep["model"] == model:
+                    endpoint = ep
+                    break
+            if not endpoint:
+                endpoint = config.LLM_ENDPOINTS[0]
+        else:
+            endpoint = _get_next_llm_endpoint()
+            model = endpoint["model"]
+    else:
+        model = endpoint["model"]
+
+    if config.DEBUG_VERBOSE:
+        print(f"    (LLM call -> {endpoint['url']} model={model})")
+
+    if temperature is None:
+        temperature = 0.0
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    if config.USE_JSON_MODE:
+        payload["response_format"] = {"type": "json_object"}
+
+    for attempt in range(config.API_RETRY_ATTEMPTS):
+        try:
+            resp = requests.post(
+                f"{endpoint['url']}/chat/completions",
+                json=payload,
+                timeout=config.API_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                output = data["choices"][0]["message"]["content"]
+                if output:
+                    cleaned = re.sub(r'<thinking>.*?</thinking>', '', output, flags=re.DOTALL)
+                    cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL)
+                    return cleaned.strip()
+                else:
+                    if config.DEBUG_VERBOSE:
+                        print(f"    (Empty model response, attempt {attempt+1})")
+            else:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (LLM API error {resp.status_code}: {resp.text[:200]})")
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (LLM exception: {e})")
+        time.sleep(config.API_RETRY_BACKOFF * (2 ** attempt))
+    return ""
+
+
+def repair_json(raw: str) -> str:
+    raw = raw.strip()
+    raw = re.sub(r'^```(?:json)?', '', raw)
+    raw = re.sub(r'```$', '', raw).strip()
+    raw = raw.rstrip()
+    raw = re.sub(r',\s*([}\]])', r'\1', raw)
+    open_braces = raw.count('{')
+    close_braces = raw.count('}')
+    open_brackets = raw.count('[')
+    close_brackets = raw.count(']')
+    while open_braces > close_braces:
+        raw += '}'
+        close_braces += 1
+    while open_brackets > close_brackets:
+        raw += ']'
+        close_brackets += 1
+    return raw
+
+
+def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
+                    system="You are a meticulous assistant that returns only valid JSON.",
+                    unwrap_list=True, endpoint=None):
+    raw = call_model(prompt, model=model, max_tokens=max_tokens,
+                     temperature=temperature, system=system, endpoint=endpoint)
+    if not raw:
+        return None
+
+    raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.DOTALL)
+
+    try:
+        parsed = json.loads(raw)
+        if unwrap_list and isinstance(parsed, list):
+            if parsed and isinstance(parsed[0], dict):
+                return parsed[0]
+            return None
+        return parsed
+    except json.JSONDecodeError:
+        pass
+
+    repaired = repair_json(raw)
+    try:
+        parsed = json.loads(repaired)
+        if unwrap_list and isinstance(parsed, list):
+            if parsed and isinstance(parsed[0], dict):
+                return parsed[0]
+            return None
+        return parsed
+    except json.JSONDecodeError:
+        pass
+
+    json_match = re.search(r'\{.*\}', raw, flags=re.DOTALL)
+    if json_match:
+        try:
+            parsed = json.loads(json_match.group(0))
+            if unwrap_list and isinstance(parsed, list):
+                if parsed and isinstance(parsed[0], dict):
+                    return parsed[0]
+                return None
+            return parsed
+        except json.JSONDecodeError:
+            pass
+        repaired_block = repair_json(json_match.group(0))
+        try:
+            parsed = json.loads(repaired_block)
+            if unwrap_list and isinstance(parsed, list):
+                if parsed and isinstance(parsed[0], dict):
+                    return parsed[0]
+                return None
+            return parsed
+        except json.JSONDecodeError:
+            pass
+
+    if config.DEBUG_VERBOSE:
+        print("    (Failed to parse JSON from LLM response)")
+        print("    Raw response (first 500 chars):\n", raw[:500])
+    return None

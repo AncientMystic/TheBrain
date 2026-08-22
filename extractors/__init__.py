@@ -1,0 +1,1 @@
+from .registry import get_extractor, extract_text_from_file

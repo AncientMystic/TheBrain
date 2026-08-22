@@ -1,0 +1,16 @@
+PyMuPDF
+pytesseract
+Pillow
+openai
+requests
+numpy
+beautifulsoup4
+python-docx
+ebooklib
+striprtf
+nbformat
+python-magic
+markdown-it-py
+pyahocorasick
+fuzzywuzzy
+python-Levenshtein
