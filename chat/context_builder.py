@@ -1,5 +1,9 @@
-def build_context(facts, summaries=None, chunks=None):
+from chat.conversation import get_conversation_context
+
+def build_context(facts, summaries=None, chunks=None, conversation_history=None):
     parts = []
+    if conversation_history:
+        parts.append(f"[Conversation so far]\n{conversation_history}")
     for fact in facts:
         doc_name = fact.get("doc_name", "unknown")
         source_span = fact.get("source_span", "")

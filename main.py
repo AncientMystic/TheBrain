@@ -1,7 +1,23 @@
+import os
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 import sys, time, gc, json, traceback, sqlite3, re, os
 from pathlib import Path
 import numpy as np
 import config
+
+def validate_config():
+    """Check basic requirements and optionally progress bar availability."""
+    if not config.LLM_ENDPOINTS:
+        print("Error: No LLM endpoints configured.")
+        sys.exit(1)
+    if config.USE_PROGRESS_BARS:
+        try:
+            import tqdm
+            config.TQDM_AVAILABLE = True
+        except ImportError:
+            config.TQDM_AVAILABLE = False
+            print("tqdm not installed; falling back to normal prints.")
+
 from core import db
 from core.progress import ProgressTracker
 from core.file_utils import get_file_hash
@@ -123,7 +139,22 @@ def process_file(filepath, tracker, logic_context=""):
             if chunk_id:
                 cur_facts.execute("INSERT INTO fact_sources (fact_id, doc_hash, chunk_id, evidence_span, exact_quote) VALUES (?,?,?,?,?)",
                                   (fact_id, file_hash, chunk_id, span, span))
-        # similar inserts for entities, people, etc. omitted for brevity
+        # Store all categories
+        from main import _store_entity, _store_person, _store_location, _store_date, _store_event, _store_discovery, _store_gem
+        for entity in all_extracted.get("entities", []):
+            _store_entity(conn_facts, file_hash, filepath.name, entity)
+        for person in all_extracted.get("people", []):
+            _store_person(conn_facts, file_hash, filepath.name, person)
+        for location in all_extracted.get("locations", []):
+            _store_location(conn_facts, file_hash, filepath.name, location)
+        for date in all_extracted.get("dates", []):
+            _store_date(conn_facts, file_hash, filepath.name, date)
+        for event in all_extracted.get("events", []):
+            _store_event(conn_facts, file_hash, filepath.name, event)
+        for discovery in all_extracted.get("discoveries", []):
+            _store_discovery(conn_facts, file_hash, filepath.name, discovery)
+        for gem in all_extracted.get("gems", []):
+            _store_gem(conn_facts, file_hash, filepath.name, gem)
         conn_facts.commit(); conn_facts.close(); conn_index.close()
 
         print("  Building hypergraph...")
@@ -146,8 +177,55 @@ def process_file(filepath, tracker, logic_context=""):
         return False
 
 
+# Helper functions for storing extracted categories (moved here to avoid circular import)
+def _store_entity(conn, doc_hash, file_name, entity):
+    conn.execute("""INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, entity.get("entity_type", "OTHER"), entity.get("entity_name", ""),
+                  entity.get("normalized_name", ""), entity.get("source_span", ""), entity.get("confidence", 0.0)))
+
+def _store_person(conn, doc_hash, file_name, person):
+    conn.execute("""INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, person.get("person_name", ""), person.get("normalized_name", ""),
+                  person.get("role", ""), person.get("source_span", ""), person.get("confidence", 0.0)))
+
+def _store_location(conn, doc_hash, file_name, location):
+    conn.execute("""INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, location.get("location_name", ""), location.get("normalized_place", ""),
+                  location.get("location_type", ""), location.get("source_span", ""), location.get("confidence", 0.0)))
+
+def _store_date(conn, doc_hash, file_name, date):
+    conn.execute("""INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, date.get("date_text", ""), date.get("normalized_date", ""),
+                  date.get("date_type", ""), date.get("source_span", ""), date.get("confidence", 0.0)))
+
+def _store_event(conn, doc_hash, file_name, event):
+    conn.execute("""INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type,
+                                        description, significance, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, event.get("event_name", ""), event.get("normalized_name", ""),
+                  event.get("event_date", ""), event.get("event_type", ""), event.get("description", ""),
+                  event.get("significance", ""), event.get("source_span", ""), event.get("confidence", 0.0)))
+
+def _store_discovery(conn, doc_hash, file_name, discovery):
+    conn.execute("""INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description,
+                                             date, significance, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, discovery.get("discovery_name", ""), discovery.get("normalized_name", ""),
+                  discovery.get("description", ""), discovery.get("date", ""), discovery.get("significance", ""),
+                  discovery.get("source_span", ""), discovery.get("confidence", 0.0)))
+
+def _store_gem(conn, doc_hash, file_name, gem):
+    conn.execute("""INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
+                 (doc_hash, gem.get("gem_text", ""), gem.get("category", ""),
+                  gem.get("importance", 0.0), gem.get("source_span", ""), gem.get("confidence", 0.0)))
+
+
 def main():
-    # Set debug verbosity early
     if "--debug" in sys.argv:
         config.DEBUG_VERBOSE = True
 
@@ -157,69 +235,89 @@ def main():
     audit_mode = "--audit" in sys.argv
     logic_mode = "--logic" in sys.argv
     reasoning_mode = "--reasoning" in sys.argv
+    deep_research = "--deep-research" in sys.argv
     input_path = None
     if "--input" in sys.argv:
         idx = sys.argv.index("--input") + 1
         if idx < len(sys.argv):
             input_path = sys.argv[idx]
+
+    validate_config()
     init_all()
+
     if server_mode:
         import uvicorn
         from server import app as server_app
         print(f"Starting OpenAI-compatible server on http://{config.SERVER_HOST}:{config.SERVER_PORT}")
         uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
         return
+
     if audit_mode:
         audit_all()
         return
-    if chat_mode:
+
+    if chat_mode or deep_research:
+        # Chat mode (optionally with deep research)
         from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
-        print("Chat mode. Type 'exit' to quit.")
+        from chat.conversation import add_message, get_conversation_context
+        from deep_research.coordinator import DeepResearchCoordinator
+
+        print("Chat mode. Type 'exit' to quit. Add --deep-research to enable autonomous research.")
         session_id = f"cli_{int(time.time())}"
         while True:
             try:
                 query = input("You: ")
-                if query.lower() in ["exit","quit"]:
+                if query.lower() in ["exit", "quit"]:
                     break
                 if query.startswith("remember:"):
-                    content = query[len("remember:"):].strip()
-                    store_memory(session_id, content, memory_type="user_note")
+                    mem_content = query[len("remember:"):].strip()
+                    store_memory(session_id, mem_content, memory_type="user_note")
                     print("Memory stored.")
                     continue
-                if reasoning_mode:
+
+                add_message(session_id, "user", query)
+                conversation_history = get_conversation_context(session_id)
+
+                if deep_research:
+                    coordinator = DeepResearchCoordinator(session_id)
+                    report_path = coordinator.run(query)
+                    answer = f"Deep research report generated: {report_path}"
+                elif reasoning_mode:
                     answer, _ = orchestrate_reasoning(query)
-                    print(f"Assistant: {answer}")
-                    continue
-                logic_ids = decide_logic_modules(query, context=query[:1000])
-                logic_context = ""
-                if logic_ids:
-                    conn = db.db_connect("logic")
-                    cur = conn.cursor()
-                    for lid in logic_ids:
-                        cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
-                        row = cur.fetchone()
-                        if row:
-                            logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
-                    conn.close()
-                memories = retrieve_memories(query, top_k=5, session_id=session_id)
-                memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
-                analysis = analyze_query(query)
-                facts = retrieve_from_graph(analysis)
-                if len(facts) < config.CHAT_MIN_FACTS_BEFORE_FALLBACK:
-                    chunks = fallback_to_chunks(query)
                 else:
-                    chunks = []
-                context = build_context(facts, chunks=chunks)
-                if logic_context:
-                    context = logic_context + "\n\n" + context
-                if memory_text:
-                    context = memory_text + "\n\n" + context
-                answer = generate_answer(query, context)
-                print(f"Assistant: {answer}")
+                    logic_ids = decide_logic_modules(query, context=query[:1000])
+                    logic_context = ""
+                    if logic_ids:
+                        conn = db.db_connect("logic")
+                        cur = conn.cursor()
+                        for lid in logic_ids:
+                            cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
+                            row = cur.fetchone()
+                            if row:
+                                logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                        conn.close()
+                    memories = retrieve_memories(query, top_k=5, session_id=session_id)
+                    memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
+                    analysis = analyze_query(query)
+                    facts = retrieve_from_graph(analysis, max_depth=2)
+                    if len(facts) < config.CHAT_MIN_FACTS_BEFORE_FALLBACK:
+                        chunks = fallback_to_chunks(query)
+                    else:
+                        chunks = []
+                    context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
+                    if logic_context:
+                        context = logic_context + "\n\n" + context
+                    if memory_text:
+                        context = memory_text + "\n\n" + context
+                    answer = generate_answer(query, context, conversation_history=conversation_history)
+
+                add_message(session_id, "assistant", answer)
+                print(f"Assistant:\n{answer}\n---")
             except KeyboardInterrupt:
                 print("\nExiting chat.")
                 break
         return
+
     if logic_mode and input_path:
         from logic.learn import learn_logic_from_file
         input_path = Path(input_path)
@@ -229,47 +327,74 @@ def main():
             learn_logic_from_file(f)
         print("Logic learning complete.")
         return
+
     if guided:
         if not input_path:
             print("Please provide --input <path> for guided learning.")
             return
         input_path = Path(input_path)
         files = scan_files(input_path)
+        # Progress bar support
+        if config.USE_PROGRESS_BARS and config.TQDM_AVAILABLE:
+            try:
+                from tqdm import tqdm
+                files_iter = tqdm(files, desc="Processing files", unit="file")
+            except ImportError:
+                files_iter = files
+        else:
+            files_iter = files
         total = len(files)
         tracker = ProgressTracker()
         tracker.total_files = total
         tracker.processed_count = 0
         try:
-            for f in files:
-                logic_context = ""
-                if logic_mode:
-                    try:
-                        result = extract_text_from_file(f)
-                        first_text = result["text"][:1000]
-                        logic_ids = decide_logic_modules(first_text, context=first_text)
-                        if logic_ids:
-                            conn = db.db_connect("logic")
-                            cur = conn.cursor()
-                            for lid in logic_ids:
-                                cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
-                                row = cur.fetchone()
-                                if row:
-                                    logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
-                            conn.close()
-                    except Exception as e:
-                        print(f"  (Logic decision error: {e})")
-                success = process_file(f, tracker, logic_context=logic_context)
-                tracker.processed_count += 1
-                if success:
-                    print("    (Success)")
-                gc.collect()
-                time.sleep(0.1)
+            if config.PARALLEL_PROCESSING_ENABLED:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                import threading
+                lock = threading.Lock()
+
+                def process_with_lock(f):
+                    with lock:
+                        result = process_file(f, tracker, logic_context="")
+                    return result
+
+                with ThreadPoolExecutor(max_workers=config.PARALLEL_WORKERS) as executor:
+                    futures = [executor.submit(process_with_lock, f) for f in files]
+                    for future in as_completed(futures):
+                        tracker.processed_count += 1
+                        if future.result():
+                            print("    (Success)")
+            else:
+                for f in files_iter:
+                    logic_context = ""
+                    if logic_mode:
+                        try:
+                            result = extract_text_from_file(f)
+                            first_text = result["text"][:1000]
+                            logic_ids = decide_logic_modules(first_text, context=first_text)
+                            if logic_ids:
+                                conn = db.db_connect("logic")
+                                cur = conn.cursor()
+                                for lid in logic_ids:
+                                    cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
+                                    row = cur.fetchone()
+                                    if row:
+                                        logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                                conn.close()
+                        except Exception as e:
+                            print(f"  (Logic decision error: {e})")
+                    success = process_file(f, tracker, logic_context=logic_context)
+                    tracker.processed_count += 1
+                    if success:
+                        print("    (Success)")
+                    gc.collect()
+                    time.sleep(0.1)
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)
         print(f"\nGuided learning complete. Processed {tracker.processed_count} files.")
-    else:
-        print("No mode specified.")
+        return
+    print("No mode specified.")
 
 
 if __name__ == "__main__":

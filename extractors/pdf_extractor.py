@@ -16,7 +16,7 @@ from core.text_utils import normalise_text
 def _ocr_page(pix):
     try:
         img = Image.open(io.BytesIO(pix))
-        return pytesseract.image_to_string(img, config='--psm 6')
+        return pytesseract.image_to_string(img, config=f'--psm 6 -l {config.OCR_LANG}')
     except Exception as e:
         print(f"      (OCR page error: {e})")
         return ""

@@ -19,6 +19,12 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     # Load existing global nodes
     cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
     existing_nodes = [dict(row) for row in cur.fetchall()]
+    # Build in-memory exact match map (normalized name -> id, type -> id)
+    exact_match_map = {}
+    for node in existing_nodes:
+        norm_name = normalize_name(node["canonical_name"])
+        key = (node["node_type"], norm_name)
+        exact_match_map[key] = node["global_node_id"]
 
     # ---- Prepare all candidate names for embedding ----
     all_names = []
@@ -78,15 +84,41 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     embeddings = get_embeddings_batch(unique_names, batch_size=config.EMBEDDING_BATCH_SIZE)
     name_to_embedding = {name: emb for name, emb in zip(unique_names, embeddings) if emb is not None}
 
+    # Precompute embedding matrix for existing global nodes for fast fuzzy matching
+    existing_embeddings = []
+    existing_emb_ids = []
+    for node in existing_nodes:
+        if node.get("embedding") is not None:
+            existing_embeddings.append(np.frombuffer(node["embedding"], dtype=np.float32))
+            existing_emb_ids.append(node["global_node_id"])
+    if existing_embeddings:
+        existing_emb_matrix = np.stack(existing_embeddings)
+    else:
+        existing_emb_matrix = None
+
     local_to_global = {}
 
     def get_or_create_global_node(node_type, name, attributes=None):
         key = (node_type, normalize_name(name))
         if key in local_to_global:
             return local_to_global[key]
+        # Fast exact match using in-memory map
+        norm_name = normalize_name(name)
+        exact_key = (node_type, norm_name)
+        if exact_key in exact_match_map:
+            local_to_global[key] = exact_match_map[exact_key]
+            # Update aliases if new name not in aliases
+            cur.execute("SELECT aliases_json FROM global_nodes WHERE global_node_id=?", (exact_match_map[exact_key],))
+            row = cur.fetchone()
+            aliases = json.loads(row[0]) if row and row[0] else []
+            if name not in aliases:
+                aliases.append(name)
+                cur.execute("UPDATE global_nodes SET aliases_json=? WHERE global_node_id=?", (json.dumps(aliases), exact_match_map[exact_key]))
+            return exact_match_map[exact_key]
 
         name_emb = name_to_embedding.get(name)
-        match_id = find_matching_global_node(name, node_type, existing_nodes, name_embedding=name_emb)
+        match_id = find_matching_global_node(name, node_type, existing_nodes, name_embedding=name_emb,
+                                                     existing_emb_matrix=existing_emb_matrix, existing_emb_ids=existing_emb_ids)
         if match_id is not None:
             local_to_global[key] = match_id
             cur.execute("SELECT aliases_json FROM global_nodes WHERE global_node_id=?", (match_id,))

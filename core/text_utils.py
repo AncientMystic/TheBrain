@@ -1,3 +1,4 @@
+import config
 import re
 from collections import Counter
 
@@ -55,55 +56,58 @@ def get_bigrams(tokens):
     return set(zip(tokens, tokens[1:])) if len(tokens) >= 2 else set()
 
 
-def chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> list[str]:
+def chunk_text(text, chunk_size=None, overlap=None):
     """
-    Split text into overlapping chunks, trying to break at sentence boundaries.
-
-    Args:
-        text: input text.
-        chunk_size: max characters per chunk.
-        overlap: character overlap between consecutive chunks.
-
-    Returns:
-        List of chunk strings.
+    Split text into chunks of approximately chunk_size characters,
+    with a specified overlap between chunks. Splits at sentence boundaries
+    when possible, then falls back to fixed-size splitting.
     """
     if chunk_size is None:
-        chunk_size = __import__('config').CHUNK_SIZE
+        import config
+        chunk_size = config.CHUNK_SIZE
     if overlap is None:
-        overlap = __import__('config').CHUNK_OVERLAP
+        import config
+        overlap = config.CHUNK_OVERLAP
 
     text = normalise_text(text)
     if not text:
         return []
-
     if len(text) <= chunk_size:
         return [text]
 
-    # Split into sentences for better boundaries (roughly)
+    # Try sentence-based chunking
     sentences = re.split(r'(?<=[.!?])\s+', text)
     chunks = []
     current = ""
     for sent in sentences:
         if len(current) + len(sent) + 1 > chunk_size and current:
             chunks.append(current.strip())
-            # Keep overlap from previous chunk
+            # Keep overlap by starting with the tail of current
             if overlap > 0:
-                overlap_text = current[-overlap:] if len(current) > overlap else current
-                current = overlap_text
+                overlap_len = min(overlap, len(current))
+                current = current[-overlap_len:]
             else:
                 current = ""
-        current += " " + sent if current else sent
+        current = (current + " " + sent).strip() if current else sent
 
     if current.strip():
         chunks.append(current.strip())
 
-    # If chunks are too large due to long sentence, hard split
+    # Further split any chunks that are too long (e.g., very long sentences)
     final_chunks = []
     for chunk in chunks:
         while len(chunk) > chunk_size:
-            final_chunks.append(chunk[:chunk_size].strip())
-            chunk = chunk[chunk_size - overlap:] if overlap else chunk[chunk_size:]
-        if chunk.strip():
+            # Find a good split point
+            split_at = chunk.rfind(' ', 0, chunk_size)
+            if split_at == -1:
+                split_at = chunk_size
+            final_chunks.append(chunk[:split_at].strip())
+            # Move to next part, taking overlap from previous chunk
+            if overlap > 0:
+                chunk = chunk[max(0, split_at - overlap):].strip()
+            else:
+                chunk = chunk[split_at:].strip()
+        if chunk:
             final_chunks.append(chunk.strip())
 
     return final_chunks

@@ -27,7 +27,7 @@ LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "smcleod/text-embedding-mxbai-embed-large-v1")
 
-LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://10.0.0.33:1234/v1")
+LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://localhost:1234/v1")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "lfm2.5-vl-3b-absolute-heresy-i1:2")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "smcleod/text-embedding-mxbai-embed-large-v1:2")
 
@@ -50,7 +50,12 @@ if not LLM_ENDPOINTS:
 if not EMBEDDING_ENDPOINTS:
     EMBEDDING_ENDPOINTS = [{"url": LM_STUDIO_URL, "model": EMBEDDING_MODEL, "api_key": "not-needed"}]
 
-LLM_ENDPOINT_CAPACITIES = [4, 2, 1]
+if not LLM_ENDPOINTS:
+    raise RuntimeError("No LLM endpoints configured. Check LM_STUDIO_URL and MODEL_NAME.")
+if not EMBEDDING_ENDPOINTS:
+    raise RuntimeError("No embedding endpoints configured. Check LM_STUDIO_URL and EMBEDDING_MODEL.")
+
+LLM_ENDPOINT_CAPACITIES = [2, 1, 1]
 while len(LLM_ENDPOINT_CAPACITIES) < len(LLM_ENDPOINTS):
     LLM_ENDPOINT_CAPACITIES.append(1)
 LLM_ENDPOINT_CAPACITIES = LLM_ENDPOINT_CAPACITIES[:len(LLM_ENDPOINTS)]
@@ -62,10 +67,10 @@ EMBEDDING_TIMEOUT = 240
 
 USE_JSON_MODE = False
 
-LLM_EXTRACTION_CACHE = False
+LLM_EXTRACTION_CACHE = True
 LLM_CACHE_DB = "index"
 
-LLM_BATCH_CHUNKS = 2
+LLM_BATCH_CHUNKS = int(os.environ.get("LLM_BATCH_CHUNKS", "4"))
 CHUNK_EXTRACTION_WORKERS = 3
 
 NOVELTY_ENABLED = True
@@ -74,6 +79,7 @@ NOVELTY_NEW_ENTITY_RATIO = 0.0
 
 FULL_DOC_PAGES = None
 OCR_DPI = 80
+OCR_LANG = "eng"  # OCR language(s), e.g., "eng+spa"
 TITLE_PAGE_DPI = 120
 TITLE_PAGE_COUNT = 3
 MIN_TEXT_CHARS_FOR_OCR_SKIP = 200
@@ -82,7 +88,7 @@ CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 200
 MAX_CHUNKS_PER_LLM_CALL = LLM_BATCH_CHUNKS
 
-EMBEDDING_BATCH_SIZE = 16
+EMBEDDING_BATCH_SIZE = int(os.environ.get('EMBEDDING_BATCH_SIZE', '32'))
 
 MAX_TOPICS_PER_KEYWORD = 8
 WEAK_DOC_COUNT = 3
@@ -119,3 +125,113 @@ IGNORE_DIRS = {
 IGNORE_FILES = {
     '.DS_Store', 'Thumbs.db'
 }
+
+
+# --- New settings for enhancements ---
+# Conversation
+CONVERSATION_MAX_TURNS = 10          # number of recent turns to include
+CONVERSATION_SUMMARY_THRESHOLD = 20  # when to summarize older turns
+
+# Deep research
+DEEP_RESEARCH_MAX_DEPTH = 3          # maximum graph expansion depth
+DEEP_RESEARCH_MAX_SUBTOPICS = 5      # max subtopics per level
+DEEP_RESEARCH_REPORT_DIR = str(DATA_DIR / "reports")
+DEEP_RESEARCH_MIN_FACTS = 20         # minimum facts before report generation
+DEEP_RESEARCH_MIN_CONFIDENCE = 0.6   # confidence threshold for inclusion
+
+# Fast extractor (ONNX NER)
+FAST_EXTRACTOR_ENABLED = True
+FAST_EXTRACTOR_MODEL_NAME = "optimum/bert-base-NER"
+FAST_EXTRACTOR_MODEL_DIR = str(BASE_DIR / "models" / "ner_onnx")
+FAST_EXTRACTOR_CONFIDENCE_THRESHOLD = 0.7  # below this, LLM verification used
+FAST_EXTRACTOR_LOW_CONFIDENCE_RATIO = 0.2   # max ratio of items to send to LLM
+
+# Performance
+RETRIEVAL_CACHE_ENABLED = True
+RETRIEVAL_CACHE_TTL = 300             # seconds
+EMBEDDING_BATCH_SIZE = 32             # increase for better throughput
+
+
+# --- Optional model roles (leave empty to use default endpoints) ---
+SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "")
+SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "")
+SMALL_MODEL_ENDPOINT = None  # filled dynamically
+
+LARGE_MODEL_URL = os.environ.get("LARGE_MODEL_URL", "")
+LARGE_MODEL_NAME = os.environ.get("LARGE_MODEL_NAME", "")
+LARGE_MODEL_ENDPOINT = None
+
+AUDIT_MODEL_URL = os.environ.get("AUDIT_MODEL_URL", "")
+AUDIT_MODEL_NAME = os.environ.get("AUDIT_MODEL_NAME", "")
+AUDIT_MODEL_ENDPOINT = None
+
+# --- Parallel processing ---
+PARALLEL_PROCESSING_ENABLED = False
+PARALLEL_WORKERS = 2
+
+# --- Graph optimization ---
+BATCH_GLOBAL_NODE_LOOKUPS = True  # use in-memory map for exact matches
+
+# --- Adaptive verification ---
+ADAPTIVE_VERIFICATION = True
+VERIFICATION_ESCALATION_THRESHOLD = 0.6  # if initial confidence below this, escalate
+
+# --- Contradiction handling ---
+AUTO_RESOLVE_CONTRADICTIONS = False  # if False, move to review queue instead of deleting
+
+# --- Progress bars ---
+USE_PROGRESS_BARS = True
+TQDM_AVAILABLE = False  # will be set at runtime
+
+# --- Retry fallback ---
+LLM_BATCH_RETRY_SINGLE = True  # on batch failure, retry each chunk individually
+
+# --- Deep research enhancements ---
+DEEP_RESEARCH_INTERACTIVE = True  # ask user to continue on subtopics
+DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 2
+
+# --- Audit model selection ---
+AUDIT_MODEL = None  # will be set from AUDIT_MODEL_ENDPOINT if exists
+
+
+# Fill small/large/audit endpoints if specified
+for _endpoint in LLM_ENDPOINTS:
+    if SMALL_MODEL_URL and SMALL_MODEL_NAME:
+        SMALL_MODEL_ENDPOINT = {"url": SMALL_MODEL_URL, "model": SMALL_MODEL_NAME, "api_key": "not-needed"}
+    if LARGE_MODEL_URL and LARGE_MODEL_NAME:
+        LARGE_MODEL_ENDPOINT = {"url": LARGE_MODEL_URL, "model": LARGE_MODEL_NAME, "api_key": "not-needed"}
+    if AUDIT_MODEL_URL and AUDIT_MODEL_NAME:
+        AUDIT_MODEL_ENDPOINT = {"url": AUDIT_MODEL_URL, "model": AUDIT_MODEL_NAME, "api_key": "not-needed"}
+if SMALL_MODEL_ENDPOINT and SMALL_MODEL_ENDPOINT not in LLM_ENDPOINTS:
+    LLM_ENDPOINTS.append(SMALL_MODEL_ENDPOINT)
+if LARGE_MODEL_ENDPOINT and LARGE_MODEL_ENDPOINT not in LLM_ENDPOINTS:
+    LLM_ENDPOINTS.append(LARGE_MODEL_ENDPOINT)
+if AUDIT_MODEL_ENDPOINT and AUDIT_MODEL_ENDPOINT not in LLM_ENDPOINTS:
+    LLM_ENDPOINTS.append(AUDIT_MODEL_ENDPOINT)
+
+USE_LLM_HTTP_SESSION = os.environ.get('USE_LLM_HTTP_SESSION', 'true').lower() == 'true'
+
+FTS_ENABLED = os.environ.get('FTS_ENABLED', 'true').lower() == 'true'
+
+
+# Comprehensive upgrade settings
+USE_ASYNC_LLM = False
+INCLUDE_HYPERGRAPH_IN_EXPANSION = True
+MEMORY_DECAY_ENABLED = True
+MEMORY_DECAY_FACTOR = 0.0001  # decay per second (approx half-life ~2h)
+FTS_ENABLED = True
+USE_LLM_HTTP_SESSION = True
+PARALLEL_PROCESSING_ENABLED = False
+PARALLEL_WORKERS = 2
+ADAPTIVE_VERIFICATION = True
+VERIFICATION_ESCALATION_THRESHOLD = 0.6
+AUTO_RESOLVE_CONTRADICTIONS = False
+USE_PROGRESS_BARS = True
+TQDM_AVAILABLE = False
+
+
+# Advanced settings
+USE_ASYNC_LLM = False   # Set True if aiohttp installed and LM Studio supports async
+INCREMENTAL_EXTRACTION = False  # Track per-chunk extraction state to allow resume
+LOGIC_EXECUTOR_ENABLED = True  # Use logic modules to influence query processing
+REPORT_COHERENCE_PASS = True   # Run final coherence check on deep research reports

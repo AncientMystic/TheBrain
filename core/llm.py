@@ -1,3 +1,4 @@
+import random
 import json
 import re
 import time
@@ -5,8 +6,26 @@ import threading
 import itertools
 
 import requests
+import aiohttp
+import asyncio
+
+_requests_session = None
+
+def _select_endpoint_by_type(endpoint_type=None):
+    """Return endpoint based on type ('small', 'large', 'audit') if configured."""
+    if endpoint_type == "small" and config.SMALL_MODEL_ENDPOINT:
+        return config.SMALL_MODEL_ENDPOINT
+    if endpoint_type == "large" and config.LARGE_MODEL_ENDPOINT:
+        return config.LARGE_MODEL_ENDPOINT
+    if endpoint_type == "audit" and config.AUDIT_MODEL_ENDPOINT:
+        return config.AUDIT_MODEL_ENDPOINT
+    return None
+
+
 
 import config
+from core.logger import get_logger
+logger = get_logger(__name__)
 
 _llm_cycle = itertools.cycle(config.LLM_ENDPOINTS)
 _llm_lock = threading.Lock()
@@ -16,9 +35,13 @@ def _get_next_llm_endpoint():
         return next(_llm_cycle)
 
 def call_model(prompt, model=None, max_tokens=1024, temperature=None,
-               system="You are a helpful assistant.", endpoint=None):
+               system="You are a helpful assistant.", endpoint=None, endpoint_type=None):
     if endpoint is None:
-        if model:
+        selected = _select_endpoint_by_type(endpoint_type)
+        if selected:
+            endpoint = selected
+            model = endpoint["model"]
+        elif model:
             for ep in config.LLM_ENDPOINTS:
                 if ep["model"] == model:
                     endpoint = ep
@@ -32,7 +55,7 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
         model = endpoint["model"]
 
     if config.DEBUG_VERBOSE:
-        print(f"    (LLM call -> {endpoint['url']} model={model})")
+        logger.debug(f"LLM call -> {endpoint['url']} model={model}")
 
     if temperature is None:
         temperature = 0.0
@@ -52,11 +75,21 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
 
     for attempt in range(config.API_RETRY_ATTEMPTS):
         try:
-            resp = requests.post(
-                f"{endpoint['url']}/chat/completions",
-                json=payload,
-                timeout=config.API_TIMEOUT,
-            )
+            global _requests_session
+            if config.USE_LLM_HTTP_SESSION:
+                if _requests_session is None:
+                    _requests_session = requests.Session()
+                resp = _requests_session.post(
+                    f"{endpoint['url']}/chat/completions",
+                    json=payload,
+                    timeout=config.API_TIMEOUT,
+                )
+            else:
+                resp = requests.post(
+                    f"{endpoint['url']}/chat/completions",
+                    json=payload,
+                    timeout=config.API_TIMEOUT,
+                )
             if resp.status_code == 200:
                 data = resp.json()
                 output = data["choices"][0]["message"]["content"]
@@ -66,14 +99,14 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
                     return cleaned.strip()
                 else:
                     if config.DEBUG_VERBOSE:
-                        print(f"    (Empty model response, attempt {attempt+1})")
+                        logger.warning(f"Empty model response, attempt {attempt+1}")
             else:
                 if config.DEBUG_VERBOSE:
-                    print(f"    (LLM API error {resp.status_code}: {resp.text[:200]})")
+                    logger.error(f"LLM API error {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
             if config.DEBUG_VERBOSE:
-                print(f"    (LLM exception: {e})")
-        time.sleep(config.API_RETRY_BACKOFF * (2 ** attempt))
+                logger.exception(f"LLM exception: {e}")
+        time.sleep(config.API_RETRY_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5))
     return ""
 
 
@@ -98,9 +131,9 @@ def repair_json(raw: str) -> str:
 
 def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
                     system="You are a meticulous assistant that returns only valid JSON.",
-                    unwrap_list=True, endpoint=None):
+                    unwrap_list=True, endpoint=None, endpoint_type=None):
     raw = call_model(prompt, model=model, max_tokens=max_tokens,
-                     temperature=temperature, system=system, endpoint=endpoint)
+                     temperature=temperature, system=system, endpoint=endpoint, endpoint_type=endpoint_type)
     if not raw:
         return None
 
@@ -150,6 +183,6 @@ def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
             pass
 
     if config.DEBUG_VERBOSE:
-        print("    (Failed to parse JSON from LLM response)")
-        print("    Raw response (first 500 chars):\n", raw[:500])
+        logger.error("Failed to parse JSON from LLM response")
+        logger.debug(f"Raw response (first 500 chars): {raw[:500]}")
     return None

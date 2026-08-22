@@ -1,3 +1,5 @@
+import config
+import json
 from core import db
 
 
@@ -105,6 +107,19 @@ def detect_contradictions():
 
 
 def resolve_contradictions(contradictions):
+    if not config.AUTO_RESOLVE_CONTRADICTIONS:
+        # Move to review queue instead of deleting
+        conn = db.db_connect("reasoning")
+        cur = conn.cursor()
+        for c in contradictions:
+            details = json.dumps(c)
+            cur.execute("INSERT INTO contradiction_log (status, details) VALUES ('review_needed', ?)", (details,))
+        conn.commit()
+        conn.close()
+        print(f"Moved {len(contradictions)} contradictions to review queue (no auto-delete).")
+        return []
+    # Original auto-resolution logic below (kept for when AUTO_RESOLVE_CONTRADICTIONS=True)
+def resolve_contradictions(contradictions):
     """
     Auto-resolve contradictions by deleting the lower-confidence triple or fact.
     For external_graph, we delete the edge with lower confidence.
@@ -123,6 +138,10 @@ def resolve_contradictions(contradictions):
             conn.execute("DELETE FROM kg_triples WHERE id=?", (delete_id,))
             conn.commit()
             conn.close()
+            conn_log = db.db_connect("reasoning")
+            conn_log.execute("INSERT INTO contradiction_log (triple_a_id, triple_b_id, status, resolved_by) VALUES (?, ?, 'resolved', 'auto')", (id_a, id_b))
+            conn_log.commit()
+            conn_log.close()
             resolutions.append(f"Resolved kg_triples contradiction: deleted id {delete_id} (lower confidence)")
 
         elif source == "key_facts":
@@ -135,6 +154,10 @@ def resolve_contradictions(contradictions):
             conn.execute("DELETE FROM key_facts WHERE fact_id=?", (delete_id,))
             conn.commit()
             conn.close()
+            conn_log = db.db_connect("reasoning")
+            conn_log.execute("INSERT INTO contradiction_log (status, resolved_by) VALUES ('resolved', 'auto')")
+            conn_log.commit()
+            conn_log.close()
             resolutions.append(f"Resolved key_facts contradiction: deleted fact_id {delete_id}")
 
         elif source == "external_graph":
@@ -147,6 +170,10 @@ def resolve_contradictions(contradictions):
             conn.execute("DELETE FROM global_edges WHERE edge_id=?", (delete_id,))
             conn.commit()
             conn.close()
+            conn_log = db.db_connect("reasoning")
+            conn_log.execute("INSERT INTO contradiction_log (status, resolved_by) VALUES ('resolved', 'auto')")
+            conn_log.commit()
+            conn_log.close()
             resolutions.append(f"Resolved external_graph contradiction: deleted edge_id {delete_id}")
 
     return resolutions

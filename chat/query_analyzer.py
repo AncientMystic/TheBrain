@@ -1,6 +1,7 @@
 import re
 from core.text_utils import tokenize
 from extraction.rule_annotator import pre_annotate
+from chat.query_intent import detect_intent
 
 
 def analyze_query(query: str) -> dict:
@@ -20,4 +21,5 @@ def analyze_query(query: str) -> dict:
         "original": query,
         "keywords": keywords,
         "entities": entities,
+        "intent": detect_intent(query),
     }

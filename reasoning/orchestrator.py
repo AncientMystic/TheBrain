@@ -76,8 +76,8 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                 # Find global node
                 conn = db.db_connect("external_graph")
                 cur = conn.cursor()
-                cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR aliases_json LIKE ? LIMIT 1",
-                            (ent_name, f'%"{ent_name}"%'))
+                cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
+                            (ent_name, ent_name))
                 row = cur.fetchone()
                 if row:
                     gid = row[0]

@@ -1,8 +1,27 @@
+import numpy as np
+import json
+import time
 from core import db
 from core.embeddings import get_embedding
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
-import numpy as np
+from graph.expansion import expand_facts_via_multi_hop
+from logic.retrieve import retrieve_logic_modules
+from memory.retrieve import retrieve_memories
 import config
+
+_fact_cache = {}
+_fact_cache_ttl = {}
+
+def _cached_get_facts(key, ttl=300):
+    now = time.time()
+    if key in _fact_cache and now - _fact_cache_ttl.get(key, 0) < ttl:
+        return _fact_cache[key]
+    return None
+
+def _cache_facts(key, facts, ttl=300):
+    _fact_cache[key] = facts
+    _fact_cache_ttl[key] = time.time()
+
 
 
 def retrieve_from_graph(query_analysis, top_k=20):
@@ -27,8 +46,8 @@ def retrieve_from_graph(query_analysis, top_k=20):
             continue
         conn = db.db_connect("external_graph")
         cur = conn.cursor()
-        cur.execute("SELECT global_node_id, canonical_name FROM global_nodes WHERE canonical_name=? OR aliases_json LIKE ? LIMIT 1",
-                    (ent_name, f'%"{ent_name}"%'))
+        cur.execute("SELECT global_node_id, canonical_name FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
+                    (ent_name, ent_name))
         row = cur.fetchone()
         if row:
             gid, canonical = row
@@ -60,7 +79,7 @@ def fallback_to_chunks(query, top_k=None):
         return []
     conn = db.db_connect("embeddings")
     cur = conn.cursor()
-    cur.execute("SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings")
+    cur.execute("SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings LIMIT ?", (top_k * 10,))
     rows = cur.fetchall()
     conn.close()
     results = []
@@ -72,3 +91,34 @@ def fallback_to_chunks(query, top_k=None):
         results.append((sim, chunk_id, doc_hash, chunk_text))
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]
+
+
+def re_rank_facts(facts, query, top_k=None):
+    """Re-rank facts using memory and logic modules for better relevance."""
+    if not facts:
+        return facts
+    # Get relevant logic modules
+    logic_mods = retrieve_logic_modules(query, top_k=3)
+    logic_keywords = set()
+    for sim, lid, name, category, summary, content in logic_mods:
+        for word in summary.split()[:5]:
+            if len(word) > 3:
+                logic_keywords.add(word.lower())
+    # Get recent memories
+    memories = retrieve_memories(query, top_k=3)
+    memory_keywords = set()
+    for sim, mid, content, mtype in memories:
+        for word in content.split()[:10]:
+            if len(word) > 3:
+                memory_keywords.add(word.lower())
+    # Score facts based on keyword overlap with logic/memory
+    for fact in facts:
+        fact_text = fact.get("fact_text", "").lower()
+        score = fact.get("confidence", 0)
+        overlap = len(set(fact_text.split()) & logic_keywords) + len(set(fact_text.split()) & memory_keywords)
+        fact["_relevance_boost"] = overlap * 0.05
+        fact["_final_score"] = score + fact["_relevance_boost"]
+    facts.sort(key=lambda x: x.get("_final_score", 0), reverse=True)
+    if top_k:
+        return facts[:top_k]
+    return facts

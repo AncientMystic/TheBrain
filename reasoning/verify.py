@@ -160,12 +160,12 @@ def verify_fidelis(claim: Dict, kg) -> bool:
 
     conn = db.db_connect("external_graph")
     cur = conn.cursor()
-    cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR aliases_json LIKE ?",
-                (subject, f'%"{subject}"%'))
+    cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?)",
+                (subject, subject))
     subj_node = cur.fetchone()
     if subj_node:
-        cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR aliases_json LIKE ?",
-                    (obj, f'%"{obj}"%'))
+        cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?)",
+                    (obj, obj))
         obj_node = cur.fetchone()
         if obj_node:
             cur.execute("SELECT edge_id FROM global_edges WHERE source_node_id=? AND target_node_id=? AND relation_type=?",
@@ -281,4 +281,32 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
     rcot = verify_rcot(claim.get("conclusion", claim.get("object", "")), kg)
     results.append({"layer": "rcot", "verified": rcot, "confidence": 0.7 if rcot else 0.0})
 
+    return results
+
+
+def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
+    """Adaptive verification: first cheap checks, escalate if confidence low."""
+    results = []
+    # Cheap checks
+    if source_text and claim.get("source_span"):
+        results.append({
+            "layer": "text_grounding",
+            "verified": claim["source_span"] in source_text,
+            "confidence": 1.0 if claim["source_span"] in source_text else 0.0,
+        })
+    sym = verify_symstep(claim, [])
+    results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
+
+    # Compute initial confidence
+    initial_conf = sum(v["confidence"] for v in results if v["verified"]) / max(1, len([v for v in results if v["verified"]]))
+    if initial_conf >= threshold:
+        return results
+
+    # Escalate to heavier checks
+    vericot = verify_vericot(claim.get("text", ""), source_text, kg)
+    results.append({"layer": "vericot", "verified": vericot, "confidence": 0.8 if vericot else 0.0})
+    fidelis = verify_fidelis(claim, kg)
+    results.append({"layer": "fidelis", "verified": fidelis, "confidence": 0.9 if fidelis else 0.0})
+    rcot = verify_rcot(claim.get("conclusion", claim.get("object", "")), kg)
+    results.append({"layer": "rcot", "verified": rcot, "confidence": 0.7 if rcot else 0.0})
     return results

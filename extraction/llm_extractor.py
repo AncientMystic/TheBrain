@@ -13,10 +13,28 @@ from core import db
 from core.llm import call_model_json
 from core.embeddings import get_embeddings_batch
 from extraction.rule_annotator import pre_annotate
+from fast_extractor.hybrid_extractor import FastExtractor
+from extraction.cleaners import *
+
+
 
 # ============================================================
 #  FEW-SHOT EXAMPLES
 # ============================================================
+
+def _get_extraction_endpoint_type(category):
+    """Determine endpoint_type for extraction based on available models.
+    If small model configured, use it for initial extraction; else None (default)."""
+    if config.SMALL_MODEL_ENDPOINT:
+        return "small"
+    return None
+
+def _get_verification_endpoint_type():
+    """If large model configured, use it for verification."""
+    if config.LARGE_MODEL_ENDPOINT:
+        return "large"
+    return None
+
 FEW_SHOT_FACTS = """
 Example 1:
 Excerpt: "Marie Curie discovered radium in 1898."
@@ -74,7 +92,10 @@ You are a meticulous knowledge extraction agent.
 Read {num_chunks} document excerpts below and extract ALL relevant facts, entities, and relationships for each excerpt.
 
 STRICT RULES:
-- For each excerpt, extract only information explicitly stated in that excerpt.
+- For each excerpt, we provide pre-extracted entities/people/locations/dates from a fast automated system.
+  - Verify each pre-extracted item against the text. Correct or remove any that are wrong.
+  - Add any missing entities/people/locations/dates.
+- Extract facts and relationships that are NOT already covered by the pre-extractions.
 - For each fact, write `fact_text` as a concise, self-contained sentence (max 200 chars) in your own words.
 - `source_span` must be a very short exact substring (3-10 words, max 100 chars) from the excerpt.
 - `canonical_value` is a normalized short value (max 80 chars), never a nested object.
@@ -95,6 +116,9 @@ JSON Schema for each chunk:
 Few-shot examples:
 """ + FEW_SHOT_FACTS + """
 
+Pre-extracted items:
+{pre_extractions}
+
 Excerpts:
 {chunks_text}
 
@@ -106,7 +130,9 @@ You are a meticulous knowledge extraction agent.
 Read {num_chunks} document excerpts below and extract ALL relevant people, locations, and dates for each excerpt.
 
 STRICT RULES:
-- For each excerpt, extract only information explicitly stated in that excerpt.
+- For each excerpt, we provide pre-extracted people/locations/dates from a fast automated system.
+  - Verify each pre-extracted item against the text. Correct or remove any that are wrong.
+  - Add any missing people/locations/dates.
 - `person_name` is the full name, `role` a short description (max 80 chars).
 - `location_name` is the canonical place name, `location_type` one of city|country|state|landmark|other.
 - `date_text` is the original mention (max 100 chars), `normalized_date` a normalized ISO-like form, `date_type` a short type.
@@ -126,6 +152,9 @@ JSON Schema for each chunk:
 
 Few-shot examples:
 """ + FEW_SHOT_PEOPLE + """
+
+Pre-extracted items:
+{pre_extractions}
 
 Excerpts:
 {chunks_text}
@@ -165,6 +194,7 @@ Excerpts:
 Return only JSON.
 """
 
+
 SYSTEM_PROMPT = (
     "You are a meticulous knowledge extraction agent. "
     "Extract only verifiable information explicitly stated in the given excerpts. "
@@ -178,6 +208,7 @@ SYSTEM_PROMPT = (
 # ============================================================
 #  CACHE
 # ============================================================
+
 def _hash_text(text):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
@@ -242,352 +273,7 @@ def _set_cached(chunk_hash, category, model, max_tokens, result_dict, prompt_tem
 # ============================================================
 #  HELPERS
 # ============================================================
-def _truncate(value, max_len):
-    if not isinstance(value, str):
-        return value
-    if len(value) <= max_len:
-        return value
-    return value[:max_len-3] + "..."
 
-def _safe_str(value, max_len):
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        value = str(value)
-    return _truncate(value, max_len)
-
-def _normalize_text_for_compare(text):
-    return re.sub(r'\s+', ' ', str(text).lower()).strip()
-
-def _is_verbatim_copy(fact_text, source_span):
-    fact_text = fact_text or ""
-    source_span = source_span or ""
-    if not fact_text or not source_span:
-        return False
-    ft = _normalize_text_for_compare(fact_text)
-    ss = _normalize_text_for_compare(source_span)
-    if ft in ss or ss in ft:
-        return True
-    ft_tokens = set(ft.split())
-    ss_tokens = set(ss.split())
-    if not ft_tokens or not ss_tokens:
-        return False
-    overlap = len(ft_tokens & ss_tokens) / max(len(ft_tokens), len(ss_tokens))
-    return overlap > 0.9 and abs(len(ft) - len(ss)) < 50
-
-
-# ============================================================
-#  IMPROVED CLEANING HELPERS
-# ============================================================
-def _shorten_source_span(span, max_words=4):
-    if not span:
-        return ""
-    span = _safe_str(span, 200)
-    words = span.split()
-    if len(words) <= max_words:
-        return span
-    return " ".join(words[:max_words]) + " ..."
-
-def _normalize_name_text(name):
-    if not name:
-        return ""
-    name = re.sub(r'[^\w\s]', '', name.lower())
-    name = re.sub(r'\s+', ' ', name).strip()
-    return name
-
-def _is_redundant_span(span, text):
-    if not span or not text:
-        return False
-    span_norm = _normalize_text_for_compare(span)
-    text_norm = _normalize_text_for_compare(text)
-    if span_norm == text_norm:
-        return True
-    span_tokens = set(span_norm.split())
-    text_tokens = set(text_norm.split())
-    if not span_tokens or not text_tokens:
-        return False
-    overlap = len(span_tokens & text_tokens) / max(len(span_tokens), len(text_tokens))
-    return overlap > 0.8
-
-def _is_atomic(text):
-    """Reject if text contains conjunctions joining two claims."""
-    if not text:
-        return True
-    lower = text.lower()
-    conjunctions = [" and ", " or ", " also ", " but ", " while ", " whereas "]
-    for conj in conjunctions:
-        if conj in lower:
-            # Simple heuristic: if after conjunction there is another subject/predicate,
-            # treat as non-atomic.
-            # We just flag any occurrence; user can refine later.
-            return False
-    return True
-
-def _clean_facts(facts):
-    cleaned = []
-    for f in facts:
-        if not isinstance(f, dict):
-            continue
-        fact_text = _safe_str(f.get("fact_text"), 200)
-        source_span = _safe_str(f.get("source_span"), 200)
-
-        # Atomicity gate
-        if not _is_atomic(fact_text):
-            continue
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, fact_text):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, fact_text):
-                    source_span = " ".join(fact_text.split()[:3])
-
-        if _is_verbatim_copy(fact_text, source_span):
-            continue
-
-        f["fact_text"] = fact_text
-        f["canonical_value"] = _safe_str(f.get("canonical_value"), 80)
-        f["source_span"] = source_span
-        f["fact_type"] = _safe_str(f.get("fact_type"), 80)
-        try:
-            f["confidence"] = float(f.get("confidence", 0.0))
-        except:
-            f["confidence"] = 0.0
-        if fact_text.strip():
-            cleaned.append(f)
-    return cleaned
-
-# Similar modifications to _clean_entities, _clean_people, etc.:
-# - Use _normalize_name_text for normalized fields.
-# - Shorten source_span if >4 words or redundant.
-# - Apply _is_atomic to any text field that should be atomic (fact_text, event_name, discovery_name, gem_text).
-# For brevity, I'll provide one example and note that you should apply the same pattern to all.
-
-def _clean_entities(entities):
-    cleaned = []
-    for e in entities:
-        if not isinstance(e, dict):
-            continue
-        entity_name = _safe_str(e.get("entity_name"), 150)
-        normalized = _normalize_name_text(entity_name)
-        source_span = _safe_str(e.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, entity_name):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, entity_name):
-                    source_span = " ".join(entity_name.split()[:3])
-
-        e["entity_name"] = entity_name
-        e["normalized_name"] = normalized
-        e["source_span"] = source_span
-        e["entity_type"] = _safe_str(e.get("entity_type"), 40)
-        try:
-            e["confidence"] = float(e.get("confidence", 0.0))
-        except:
-            e["confidence"] = 0.0
-        if entity_name.strip():
-            cleaned.append(e)
-    return cleaned
-
-def _clean_people(people):
-    cleaned = []
-    for p in people:
-        if not isinstance(p, dict):
-            continue
-        person_name = _safe_str(p.get("person_name"), 150)
-        normalized = _normalize_name_text(person_name)
-        source_span = _safe_str(p.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, person_name):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, person_name):
-                    source_span = " ".join(person_name.split()[:3])
-
-        p["person_name"] = person_name
-        p["normalized_name"] = normalized
-        p["role"] = _safe_str(p.get("role"), 80)
-        p["source_span"] = source_span
-        try:
-            p["confidence"] = float(p.get("confidence", 0.0))
-        except:
-            p["confidence"] = 0.0
-        if person_name.strip():
-            cleaned.append(p)
-    return cleaned
-
-def _clean_locations(locations):
-    cleaned = []
-    for l in locations:
-        if not isinstance(l, dict):
-            continue
-        location_name = _safe_str(l.get("location_name"), 150)
-        normalized = _normalize_name_text(location_name)
-        source_span = _safe_str(l.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, location_name):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, location_name):
-                    source_span = " ".join(location_name.split()[:3])
-
-        l["location_name"] = location_name
-        l["normalized_place"] = normalized
-        l["location_type"] = _safe_str(l.get("location_type"), 40)
-        l["source_span"] = source_span
-        try:
-            l["confidence"] = float(l.get("confidence", 0.0))
-        except:
-            l["confidence"] = 0.0
-        if location_name.strip():
-            cleaned.append(l)
-    return cleaned
-
-def _clean_dates(dates):
-    cleaned = []
-    for d in dates:
-        if not isinstance(d, dict):
-            continue
-        date_text = _safe_str(d.get("date_text"), 100)
-        normalized_date = _safe_str(d.get("normalized_date"), 50)
-        source_span = _safe_str(d.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, date_text):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, date_text):
-                    source_span = " ".join(date_text.split()[:3])
-
-        d["date_text"] = date_text
-        d["normalized_date"] = normalized_date
-        d["date_type"] = _safe_str(d.get("date_type"), 40)
-        d["source_span"] = source_span
-        try:
-            d["confidence"] = float(d.get("confidence", 0.0))
-        except:
-            d["confidence"] = 0.0
-        if date_text.strip():
-            cleaned.append(d)
-    return cleaned
-
-def _clean_events(events):
-    cleaned = []
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        event_name = _safe_str(ev.get("event_name"), 150)
-        normalized = _normalize_name_text(event_name)
-        source_span = _safe_str(ev.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, event_name):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, event_name):
-                    source_span = " ".join(event_name.split()[:3])
-
-        ev["event_name"] = event_name
-        ev["normalized_name"] = normalized
-        ev["event_date"] = _safe_str(ev.get("event_date"), 50)
-        ev["event_type"] = _safe_str(ev.get("event_type"), 80)
-        ev["description"] = _safe_str(ev.get("description"), 200)
-        ev["significance"] = _safe_str(ev.get("significance"), 200)
-        ev["source_span"] = source_span
-        try:
-            ev["confidence"] = float(ev.get("confidence", 0.0))
-        except:
-            ev["confidence"] = 0.0
-        if event_name.strip():
-            cleaned.append(ev)
-    return cleaned
-
-def _clean_discoveries(discoveries):
-    cleaned = []
-    for disc in discoveries:
-        if not isinstance(disc, dict):
-            continue
-        discovery_name = _safe_str(disc.get("discovery_name"), 150)
-        normalized = _normalize_name_text(discovery_name)
-        source_span = _safe_str(disc.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, discovery_name):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, discovery_name):
-                    source_span = " ".join(discovery_name.split()[:3])
-
-        disc["discovery_name"] = discovery_name
-        disc["normalized_name"] = normalized
-        disc["description"] = _safe_str(disc.get("description"), 200)
-        disc["date"] = _safe_str(disc.get("date"), 50)
-        disc["significance"] = _safe_str(disc.get("significance"), 200)
-        disc["source_span"] = source_span
-        try:
-            disc["confidence"] = float(disc.get("confidence", 0.0))
-        except:
-            disc["confidence"] = 0.0
-        if discovery_name.strip():
-            cleaned.append(disc)
-    return cleaned
-
-def _clean_gems(gems):
-    cleaned = []
-    for g in gems:
-        if not isinstance(g, dict):
-            continue
-        gem_text = _safe_str(g.get("gem_text"), 200)
-        source_span = _safe_str(g.get("source_span"), 200)
-
-        if source_span:
-            if len(source_span.split()) > 4 or _is_redundant_span(source_span, gem_text):
-                source_span = _shorten_source_span(source_span, max_words=4)
-                if _is_redundant_span(source_span, gem_text):
-                    source_span = " ".join(gem_text.split()[:3])
-
-        g["gem_text"] = gem_text
-        g["category"] = _safe_str(g.get("category"), 80)
-        g["source_span"] = source_span
-        try:
-            g["importance"] = float(g.get("importance", 0.0))
-        except:
-            g["importance"] = 0.0
-        try:
-            g["confidence"] = float(g.get("confidence", 0.0))
-        except:
-            g["confidence"] = 0.0
-        if gem_text.strip():
-            cleaned.append(g)
-    return cleaned
-
-def _clean_relationships(rels):
-    cleaned = []
-    for r in rels:
-        if not isinstance(r, dict):
-            continue
-        source_node = _safe_str(r.get("source_node"), 150)
-        target_node = _safe_str(r.get("target_node"), 150)
-        evidence_span = _safe_str(r.get("evidence_span"), 200)
-
-        # For relationships, evidence_span can be slightly longer but still short
-        if evidence_span:
-            if len(evidence_span.split()) > 5:
-                evidence_span = _shorten_source_span(evidence_span, max_words=5)
-
-        r["source_node"] = source_node
-        r["target_node"] = target_node
-        r["relation_type"] = _safe_str(r.get("relation_type"), 80)
-        r["evidence_span"] = evidence_span
-        try:
-            r["confidence"] = float(r.get("confidence", 0.0))
-        except:
-            r["confidence"] = 0.0
-        if source_node.strip() and target_node.strip():
-            cleaned.append(r)
-    return cleaned
-
-
-# ============================================================
-#  NOVELTY GATING
-# ============================================================
 def _extract_candidate_texts(annotations):
     texts = []
     for key in ["locations", "people", "organizations", "dates", "years", "events"]:
@@ -649,6 +335,7 @@ def _compute_novelty_flags(chunks, chunk_embeddings):
 # ============================================================
 #  BATCH EXTRACTION
 # ============================================================
+
 def _format_chunks_text(chunks):
     return "\n\n".join(f"Chunk {i}:\n\"\"\"\n{chunk}\n\"\"\"" for i, chunk in enumerate(chunks))
 
@@ -697,7 +384,34 @@ def _extract_category_batch(category, chunks, model, logic_context="", endpoint=
     print("    (JSON repair failed; returning empty result for this category batch)")
     return {}
 
-def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None):
+
+
+def _format_pre_extractions_for_prompt(pre_list):
+    """Format pre-extracted items for prompt inclusion."""
+    if not pre_list:
+        return "None"
+    lines = []
+    for i, pre in enumerate(pre_list):
+        if not pre:
+            continue
+        lines.append(f"Chunk {i}:")
+        for key, label in [("entities", "Entities"), ("people", "People"), ("locations", "Locations"), ("dates", "Dates"), ("organizations", "Organizations")]:
+            items = pre.get(key, [])
+            if items:
+                lines.append(f"  {label}:")
+                for item in items[:20]:
+                    if isinstance(item, dict):
+                        text = item.get("text") or item.get("entity_name") or item.get("person_name") or item.get("location_name") or item.get("date_text") or str(item)
+                        conf = item.get("confidence", 0.0)
+                        lines.append(f"    - {text} (conf: {conf:.2f})")
+    return "\n".join(lines)
+
+
+def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, actual_model=None, batch_pre_extractions=None):
+    """Process a batch using the three original prompts, enhanced with pre-extractions."""
+    if actual_model is None:
+        actual_model = model
+
     results = [{
         "facts": [], "entities": [], "relationships": [],
         "people": [], "locations": [], "dates": [],
@@ -711,50 +425,54 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None):
     ]
 
     for category, field_keys in categories:
-        uncached_indices = []
-        for i, chunk in enumerate(batch_chunks):
-            chunk_hash = _hash_text(chunk)
-            prompt_template = {
-                "facts_entities_relationships": FACTS_ENTITIES_PROMPT_BATCH,
-                "people_locations_dates": PEOPLE_LOCATIONS_DATES_PROMPT_BATCH,
-                "events_discoveries_gems": EVENTS_DISCOVERIES_GEMS_PROMPT_BATCH,
-            }[category]
-            cached = _get_cached(chunk_hash, category, model, 0, prompt_template)
-            if cached is None:
-                uncached_indices.append(i)
-            else:
-                for key in field_keys:
-                    if key in cached:
-                        results[i][key] = cached[key]
+        prompt_template = {
+            "facts_entities_relationships": FACTS_ENTITIES_PROMPT_BATCH,
+            "people_locations_dates": PEOPLE_LOCATIONS_DATES_PROMPT_BATCH,
+            "events_discoveries_gems": EVENTS_DISCOVERIES_GEMS_PROMPT_BATCH,
+        }[category]
 
-        if not uncached_indices:
+        # Build pre-extractions string if available
+        pre_str = _format_pre_extractions_for_prompt(batch_pre_extractions) if batch_pre_extractions else "None"
+
+        # Cache logic can be skipped for simplicity; we'll always call LLM (or use cache in _extract_category_batch)
+        # We'll use the existing _extract_category_batch but pass pre_str via replacing placeholder.
+        # Since _extract_category_batch currently replaces {chunks_text} and {logic_context}, we need to modify it.
+        # For now, we'll handle by temporarily modifying the prompt inside this loop.
+        prompt = prompt_template.replace("{num_chunks}", str(len(batch_chunks)))
+        prompt = prompt.replace("{chunks_text}", _format_chunks_text(batch_chunks))
+        prompt = prompt.replace("{logic_context}", logic_context if logic_context else "")
+        prompt = prompt.replace("{pre_extractions}", pre_str)
+
+        # Call LLM directly (skip _extract_category_batch for simplicity; we don't need its retry wrapper here)
+        resp = call_model_json(prompt, model=actual_model, max_tokens=8192 if category=="facts_entities_relationships" else 4096,
+                               system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
+        if resp is None:
+            # fallback to original no pre-extraction prompt
+            fallback_prompt = prompt_template.replace("{num_chunks}", str(len(batch_chunks)))
+            fallback_prompt = fallback_prompt.replace("{chunks_text}", _format_chunks_text(batch_chunks))
+            fallback_prompt = fallback_prompt.replace("{logic_context}", logic_context if logic_context else "")
+            fallback_prompt = fallback_prompt.replace("{pre_extractions}", "None")
+            resp = call_model_json(fallback_prompt, model=actual_model, max_tokens=8192 if category=="facts_entities_relationships" else 4096,
+                                   system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
+        if resp is None:
+            print(f"    (Category {category} extraction failed; continuing)")
             continue
 
-        resp = _extract_category_batch(category, batch_chunks, model, logic_context, endpoint)
-        if resp is None:
-            resp = {}
         if isinstance(resp, list):
             if resp and isinstance(resp[0], dict):
                 resp = resp[0]
             else:
                 resp = {}
 
-        for i in uncached_indices:
+        for i in range(len(batch_chunks)):
             key = f"chunk_{i}"
             chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
             chunk_data = _normalize_chunk_data(chunk_data)
-            chunk_hash = _hash_text(batch_chunks[i])
-            prompt_template = {
-                "facts_entities_relationships": FACTS_ENTITIES_PROMPT_BATCH,
-                "people_locations_dates": PEOPLE_LOCATIONS_DATES_PROMPT_BATCH,
-                "events_discoveries_gems": EVENTS_DISCOVERIES_GEMS_PROMPT_BATCH,
-            }[category]
-            _set_cached(chunk_hash, category, model, 0, chunk_data, prompt_template)
             for field in field_keys:
                 if field in chunk_data:
                     results[i][field] = chunk_data[field]
 
-    # Cleaning
+    # Apply cleaners
     for i in range(len(results)):
         results[i]["facts"] = _clean_facts(results[i]["facts"])
         results[i]["entities"] = _clean_entities(results[i]["entities"])
@@ -768,8 +486,10 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None):
 
     return results
 
-
-def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context=""):
+def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context="", doc_type=None):
+    """Extract from chunks using fast pre-extraction + focused LLM prompts."""
+    if max_workers is None:
+        max_workers = config.CHUNK_EXTRACTION_WORKERS
     _init_cache()
 
     if chunk_embeddings is None:
@@ -778,7 +498,25 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
 
     flags = _compute_novelty_flags(chunks, chunk_embeddings)
 
-    selected_items = [(i, chunks[i]) for i in range(len(chunks)) if flags[i]]
+    # Fast pre-extraction (if enabled)
+    fast_pre_results = None
+    if config.FAST_EXTRACTOR_ENABLED:
+        try:
+            print("  (Running fast extractor pre-pass...)")
+            fast_extractor = FastExtractor()
+            fast_pre_results = []
+            for chunk in chunks:
+                fast_pre_results.append(fast_extractor.extract(chunk))
+        except Exception as e:
+            print(f"    (Fast extractor error: {e}); falling back to full LLM extraction.")
+            fast_pre_results = None
+
+    selected_items = []
+    for i in range(len(chunks)):
+        if flags[i]:
+            pre = fast_pre_results[i] if fast_pre_results else None
+            selected_items.append((i, chunks[i], pre))
+
     skipped_count = len(chunks) - len(selected_items)
     if skipped_count > 0:
         print(f"  (Novelty gating: skipping {skipped_count} redundant chunks out of {len(chunks)})")
@@ -798,16 +536,24 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
         batch = selected_items[i:i+batch_size]
         batches.append(batch)
 
-    # Build task queue
     task_queue = queue.Queue()
     for batch_idx, batch in enumerate(batches):
-        batch_texts = [text for _, text in batch]
-        task_queue.put((batch_idx, batch_texts))
+        batch_texts = [text for _, text, _ in batch]
+        batch_pre = [pre for _, _, pre in batch]
+        task_queue.put((batch_idx, batch_texts, batch_pre))
 
     results = {}
     lock = threading.Lock()
 
-    # Create worker threads per endpoint capacity
+    # Progress bar for chunk batches
+    pbar = None
+    if config.USE_PROGRESS_BARS and config.TQDM_AVAILABLE:
+        try:
+            from tqdm import tqdm
+            pbar = tqdm(total=len(batches), desc="  Extracting chunks", unit="batch")
+        except ImportError:
+            pbar = None
+
     workers = []
     for ep_idx, endpoint in enumerate(config.LLM_ENDPOINTS):
         capacity = config.LLM_ENDPOINT_CAPACITIES[ep_idx] if ep_idx < len(config.LLM_ENDPOINT_CAPACITIES) else 1
@@ -815,11 +561,19 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             def worker(ep=endpoint):
                 while True:
                     try:
-                        batch_idx, batch_texts = task_queue.get_nowait()
+                        batch_idx, batch_texts, batch_pre = task_queue.get_nowait()
                     except queue.Empty:
                         break
                     try:
-                        batch_results = _process_batch(batch_texts, model=None, logic_context=logic_context, endpoint=ep)
+                        actual_model = ep["model"]
+                        batch_results = _process_batch(
+                            batch_texts,
+                            model=None,
+                            logic_context=logic_context,
+                            endpoint=ep,
+                            actual_model=actual_model,
+                            batch_pre_extractions=batch_pre,
+                        )
                         with lock:
                             results[batch_idx] = batch_results
                     except Exception as e:
@@ -833,22 +587,24 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                             results[batch_idx] = empty
                     finally:
                         task_queue.task_done()
+                        if pbar:
+                            pbar.update(1)
 
             t = threading.Thread(target=worker, daemon=True)
             t.start()
             workers.append(t)
 
-    # Wait for all tasks to be processed
     try:
         task_queue.join()
     except KeyboardInterrupt:
         print("\n  (KeyboardInterrupt received: stopping chunk processing...)")
-        # daemon threads will be killed when process exits
         raise
 
-    # Map results back to all_results in correct order
+    if pbar:
+        pbar.close()
+
     for batch_idx in sorted(results.keys()):
-        batch_indices = [idx for idx, _ in batches[batch_idx]]
+        batch_indices = [idx for idx, _, _ in batches[batch_idx]]
         batch_results = results[batch_idx]
         for original_idx, res in zip(batch_indices, batch_results):
             all_results[original_idx] = res

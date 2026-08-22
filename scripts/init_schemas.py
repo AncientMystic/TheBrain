@@ -83,6 +83,26 @@ def init_key_facts_db():
         source_id INTEGER PRIMARY KEY AUTOINCREMENT, fact_id INTEGER NOT NULL, doc_hash TEXT NOT NULL,
         chunk_id INTEGER, evidence_span TEXT, exact_quote TEXT)""")
     cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS key_facts_fts USING fts5(fact_text, canonical_value, source_span)")
+    # Triggers to keep FTS in sync
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS key_facts_ai AFTER INSERT ON key_facts BEGIN
+            INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+            VALUES (new.fact_id, new.fact_text, new.canonical_value, new.source_span);
+        END;
+    """)
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS key_facts_ad AFTER DELETE ON key_facts BEGIN
+            DELETE FROM key_facts_fts WHERE rowid = old.fact_id;
+        END;
+    """)
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS key_facts_au AFTER UPDATE ON key_facts BEGIN
+            DELETE FROM key_facts_fts WHERE rowid = old.fact_id;
+            INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+            VALUES (new.fact_id, new.fact_text, new.canonical_value, new.source_span);
+        END;
+    """)
+
     for table, col in [("key_facts","doc_hash"),("key_facts","fact_type"),("entities","doc_hash"),("entities","entity_type"),
                        ("people","doc_hash"),("people","normalized_name"),("locations","doc_hash"),("locations","normalized_place"),
                        ("dates","doc_hash"),("dates","normalized_date"),("events","doc_hash"),("events","normalized_name"),
@@ -215,6 +235,24 @@ def init_logic_db():
 
 def init_reasoning_db():
     conn = db.db_connect("reasoning"); cur = conn.cursor()
+    cur.execute("""CREATE TABLE IF NOT EXISTS research_nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        research_id TEXT NOT NULL,
+        node_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        content TEXT,
+        confidence REAL DEFAULT 0.0,
+        metadata_json TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS research_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        research_id TEXT NOT NULL,
+        source_node_id INTEGER REFERENCES research_nodes(id),
+        target_node_id INTEGER REFERENCES research_nodes(id),
+        relation_type TEXT,
+        weight REAL DEFAULT 1.0,
+        evidence TEXT,
+        confidence REAL DEFAULT 0.0)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS reasoning_nodes (
         id INTEGER PRIMARY KEY AUTOINCREMENT, query_id TEXT, step_number INTEGER, node_type TEXT,
         content TEXT, formal_representation TEXT, confidence REAL, status TEXT DEFAULT 'pending',

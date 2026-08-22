@@ -1,3 +1,5 @@
+import math
+import time
 import numpy as np
 from core import db
 from core.embeddings import get_embedding
@@ -25,6 +27,10 @@ def retrieve_memories(query, top_k=5, session_id=None):
         if blob:
             emb = np.frombuffer(blob, dtype=np.float32)
             sim = float(np.dot(q, emb) / (q_norm * np.linalg.norm(emb) + 1e-8))
+        if config.MEMORY_DECAY_ENABLED:
+            age = time.time() - row['timestamp'] if 'timestamp' in row else 0
+            sim *= math.exp(-config.MEMORY_DECAY_FACTOR * age)
+
             results.append((sim, memory_id, content, memory_type))
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]

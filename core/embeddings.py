@@ -1,3 +1,4 @@
+import random
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -6,6 +7,8 @@ import numpy as np
 import requests
 
 import config
+from core.logger import get_logger
+logger = get_logger(__name__)
 from core import db
 
 
@@ -14,7 +17,7 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
     if not batch_texts:
         return results
     if config.DEBUG_VERBOSE:
-        print(f"    (Embedding batch -> {endpoint['url']} model={endpoint['model']})")
+        logger.debug(f"Embedding batch -> {endpoint['url']} model={endpoint['model']}")
     try:
         resp = requests.post(
             f"{endpoint['url']}/embeddings",
@@ -30,10 +33,10 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
                     results.append((batch_texts[idx], emb))
         else:
             if config.DEBUG_VERBOSE:
-                print(f"    (Batch embedding error {resp.status_code}: {resp.text[:200]})")
+                logger.error(f"Batch embedding error {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
         if config.DEBUG_VERBOSE:
-            print(f"    (Batch embedding exception: {e})")
+            logger.exception(f"Batch embedding exception: {e}")
     return results
 
 

@@ -6,12 +6,14 @@ from pydantic import BaseModel
 
 import config
 from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
+from chat.conversation import add_message, get_conversation_context
 from chat.responder import generate_answer_with_reasoning
 from memory.retrieve import retrieve_memories
 from logic.decision import decide_logic_modules
 from core.embeddings import get_embeddings_batch
 from core import db
 from reasoning.orchestrator import orchestrate_reasoning
+from deep_research.coordinator import DeepResearchCoordinator
 
 app = FastAPI(title="TheBrain OpenAI-Compatible API")
 app.add_middleware(
@@ -34,6 +36,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     session_id: Optional[str] = None
     reasoning: bool = False
+    deep_research: bool = False
 
 class EmbeddingRequest(BaseModel):
     input: Any
@@ -89,7 +92,7 @@ async def list_models():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionRequest):
-    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning)
+    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
@@ -105,7 +108,7 @@ async def chat_completions(req: ChatCompletionRequest):
 
 @app.post("/v1/completions")
 async def completions(req: ChatCompletionRequest):
-    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning)
+    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
         "id": f"cmpl-{uuid.uuid4()}",
         "object": "text_completion",
@@ -117,7 +120,7 @@ async def completions(req: ChatCompletionRequest):
 
 @app.post("/v1/responses")
 async def responses(req: ChatCompletionRequest):
-    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning)
+    answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
         "id": f"resp-{uuid.uuid4()}",
         "object": "response",
@@ -143,4 +146,12 @@ async def reasoning_endpoint(req: ChatCompletionRequest):
 
 @app.get("/v1/health")
 async def health():
-    return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS)}
+    statuses = []
+    for ep in config.LLM_ENDPOINTS:
+        try:
+            import requests as r
+            resp = r.get(f"{ep['url']}/models", timeout=5)
+            statuses.append({"url": ep["url"], "ok": resp.status_code == 200})
+        except Exception:
+            statuses.append({"url": ep["url"], "ok": False})
+    return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}

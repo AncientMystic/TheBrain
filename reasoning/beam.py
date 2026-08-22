@@ -1,5 +1,9 @@
+"""
+Reasoning beam search and verification.
+"""
+import config
 from reasoning.decompose import decompose_query
-from reasoning.verify import verify_claim
+from reasoning.verify import verify_claim, verify_claim_adaptive
 from reasoning.agents import KGQueryAgent
 from chat.query_analyzer import analyze_query
 from chat.retriever import retrieve_from_graph, fallback_to_chunks
@@ -57,7 +61,7 @@ def facts_to_claims(facts, top_k=5):
             "conclusion": f.get("fact_text", ""),
             "final_confidence": f.get("confidence", 0.8),
             "fact_id": f.get("fact_id"),
-            "verified": True  # already validated during ingestion
+            "verified": True
         })
     return claims
 
@@ -80,9 +84,11 @@ def beam_search(sub_questions, kg, beam_size=3, max_steps=10):
 
             scored = []
             for c in candidates:
-                results = verify_claim(c, source_text=context, kg=kg)
+                if config.ADAPTIVE_VERIFICATION:
+                    results = verify_claim_adaptive(c, source_text=context, kg=kg)
+                else:
+                    results = verify_claim(c, source_text=context, kg=kg)
                 confidence = sum(v["confidence"] for v in results if v["verified"])
-                # Fact claims are already validated; give them at least their fact confidence
                 if c.get("verified") and c.get("final_confidence", 0) > confidence:
                     confidence = c["final_confidence"]
                 c["final_confidence"] = confidence
@@ -116,6 +122,7 @@ def beam_search(sub_questions, kg, beam_size=3, max_steps=10):
 
 
 def reason_with_verification(query, kg=None, max_steps=10, beam_size=3):
+    """Run reasoning with verification."""
     if kg is None:
         kg = KGQueryAgent()
     sub_questions = decompose_query(query)
