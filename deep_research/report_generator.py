@@ -4,6 +4,7 @@ Creates comprehensive multi-page Markdown reports.
 """
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 import config
@@ -46,10 +47,18 @@ Write the section content now (start with '## {section_title}'):
 
 def generate_report(research_id, facts, chunks, output_dir):
     """Generate a full report and save to output_dir."""
-    os.makedirs(output_dir, exist_ok=True)
+    # Sanitize research_id and validate output_dir to prevent path traversal
+    safe_research_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(research_id))[:64] or "research"
+
+    allowed_root = os.path.abspath(os.path.normpath(config.DEEP_RESEARCH_REPORT_DIR))
+    base_dir = os.path.abspath(os.path.normpath(str(output_dir)))
+    if not (base_dir == allowed_root or base_dir.startswith(allowed_root + os.sep)):
+        base_dir = allowed_root
+    os.makedirs(base_dir, exist_ok=True)
+
     mindmap_text = get_mindmap_text(research_id)
     report_parts = []
-    report_parts.append(f"# Research Report: {research_id}\n")
+    report_parts.append(f"# Research Report: {safe_research_id}\n")
     report_parts.append(f"*Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
     report_parts.append("\n---\n")
 
@@ -63,8 +72,8 @@ def generate_report(research_id, facts, chunks, output_dir):
         report_parts.append("\n---\n")
 
     report_md = "\n".join(report_parts)
-    filename = f"research_{research_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-    filepath = Path(output_dir) / filename
+    filename = f"research_{safe_research_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    filepath = Path(base_dir) / filename
     filepath.write_text(report_md, encoding="utf-8")
     if config.REPORT_COHERENCE_PASS:
         print("  Running coherence pass...")
