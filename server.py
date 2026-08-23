@@ -92,7 +92,14 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
 
 @app.get("/v1/models")
 async def list_models():
-    models = [{"id": ep["model"], "object": "model"} for ep in config.LLM_ENDPOINTS]
+    models = []
+    for ep in config.LLM_ENDPOINTS:
+        models.append({
+            "id": ep["model"],
+            "object": "model",
+            "backend": ep.get("backend", "lmstudio"),
+            "url": ep.get("url", ""),
+        })
     return {"data": models, "object": "list"}
 
 @app.post("/v1/chat/completions")
@@ -154,9 +161,15 @@ async def health():
     statuses = []
     for ep in config.LLM_ENDPOINTS:
         try:
-            import requests as r
-            resp = r.get(f"{ep['url']}/models", timeout=5)
-            statuses.append({"url": ep["url"], "ok": resp.status_code == 200})
+            from core.backends import create_backend
+            provider = create_backend(ep)
+            ok = provider.health_check()
+            statuses.append({
+                "url": ep.get("url", ""),
+                "model": ep.get("model", ""),
+                "backend": ep.get("backend", "lmstudio"),
+                "ok": ok,
+            })
         except Exception:
-            statuses.append({"url": ep["url"], "ok": False})
+            statuses.append({"url": ep.get("url", ""), "ok": False})
     return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}

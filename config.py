@@ -30,6 +30,33 @@ LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "smcleod/text-embedding-mxbai-embed-large-v1")
 
+# Unified backend configuration
+BACKENDS = []
+# Backend config can be set via environment variable JSON or individual vars
+BACKEND_CONFIG_JSON = os.environ.get("BACKEND_CONFIG_JSON", "")
+if BACKEND_CONFIG_JSON:
+    try:
+        import json as _json
+        BACKENDS = _json.loads(BACKEND_CONFIG_JSON)
+    except Exception:
+        print("Warning: BACKEND_CONFIG_JSON is not valid JSON; ignoring.")
+else:
+    # Build default backends from legacy LM Studio and new env vars
+    _backend_url = os.environ.get("BACKEND_URL", LM_STUDIO_URL)
+    _backend_model = os.environ.get("BACKEND_MODEL", MODEL_NAME)
+    _backend_emb = os.environ.get("BACKEND_EMBEDDINGS_MODEL", EMBEDDING_MODEL)
+    _backend_type = os.environ.get("BACKEND_TYPE", "lmstudio")
+    _backend_key = os.environ.get("BACKEND_API_KEY", "not-needed")
+    BACKENDS.append({
+        "name": "default",
+        "backend": _backend_type,
+        "url": _backend_url,
+        "model": _backend_model,
+        "embeddings_model": _backend_emb,
+        "api_key": _backend_key,
+    })
+
+
 LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
@@ -39,14 +66,36 @@ MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
 LLM_ENDPOINTS = []
-for url, model in [(LM_STUDIO_URL, MODEL_NAME), (LM_STUDIO_URL_2, MODEL_NAME_2), (LM_STUDIO_URL_3, MODEL_NAME_3)]:
-    if url and model:
-        LLM_ENDPOINTS.append({"url": url, "model": model, "api_key": "not-needed"})
+if BACKENDS:
+    # Build LLM endpoints from BACKENDS list
+    for be in BACKENDS:
+        if be.get("model") and be.get("url"):
+            LLM_ENDPOINTS.append({
+                "url": be.get("url"),
+                "model": be.get("model"),
+                "api_key": be.get("api_key", "not-needed"),
+                "backend": be.get("backend", "lmstudio"),
+                "embeddings_model": be.get("embeddings_model", be.get("model")),
+            })
+else:
+    for url, model in [(LM_STUDIO_URL, MODEL_NAME), (LM_STUDIO_URL_2, MODEL_NAME_2), (LM_STUDIO_URL_3, MODEL_NAME_3)]:
+        if url and model:
+            LLM_ENDPOINTS.append({"url": url, "model": model, "api_key": "not-needed", "backend": "lmstudio"})
 
 EMBEDDING_ENDPOINTS = []
-for url, model in [(LM_STUDIO_URL, EMBEDDING_MODEL), (LM_STUDIO_URL_2, EMBEDDING_MODEL_2), (LM_STUDIO_URL_3, EMBEDDING_MODEL_3)]:
-    if url and model:
-        EMBEDDING_ENDPOINTS.append({"url": url, "model": model, "api_key": "not-needed"})
+if BACKENDS:
+    for be in BACKENDS:
+        if be.get("embeddings_model") and be.get("url"):
+            EMBEDDING_ENDPOINTS.append({
+                "url": be.get("url"),
+                "model": be.get("embeddings_model", be.get("model")),
+                "api_key": be.get("api_key", "not-needed"),
+                "backend": be.get("backend", "lmstudio"),
+            })
+else:
+    for url, model in [(LM_STUDIO_URL, EMBEDDING_MODEL), (LM_STUDIO_URL_2, EMBEDDING_MODEL_2), (LM_STUDIO_URL_3, EMBEDDING_MODEL_3)]:
+        if url and model:
+            EMBEDDING_ENDPOINTS.append({"url": url, "model": model, "api_key": "not-needed", "backend": "lmstudio"})
 
 if not LLM_ENDPOINTS:
     LLM_ENDPOINTS = [{"url": LM_STUDIO_URL, "model": MODEL_NAME, "api_key": "not-needed"}]

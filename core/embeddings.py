@@ -10,6 +10,7 @@ import config
 from core.logger import get_logger
 logger = get_logger(__name__)
 from core import db
+from core.backends import create_backend
 
 
 def _fetch_batch_with_endpoint(endpoint, batch_texts):
@@ -17,23 +18,14 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
     if not batch_texts:
         return results
     if config.DEBUG_VERBOSE:
-        logger.debug(f"Embedding batch -> {endpoint['url']} model={endpoint['model']}")
+        logger.debug(f"Embedding batch -> {endpoint['url']} model={endpoint['model']} backend={endpoint.get('backend','lmstudio')}")
     try:
-        resp = requests.post(
-            f"{endpoint['url']}/embeddings",
-            json={"input": batch_texts, "model": endpoint['model']},
-            timeout=config.EMBEDDING_TIMEOUT,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data.get('data', []):
-                idx = item.get('index', 0)
-                emb = item.get('embedding')
-                if emb is not None and idx < len(batch_texts):
-                    results.append((batch_texts[idx], emb))
-        else:
-            if config.DEBUG_VERBOSE:
-                logger.error(f"Batch embedding error {resp.status_code}: {resp.text[:200]}")
+        provider = create_backend(endpoint)
+        embeddings = provider.embeddings(batch_texts, model=endpoint.get('model'))
+        # Map embeddings back to texts
+        for i, emb in enumerate(embeddings):
+            if emb is not None and i < len(batch_texts):
+                results.append((batch_texts[i], emb))
     except Exception as e:
         if config.DEBUG_VERBOSE:
             logger.exception(f"Batch embedding exception: {e}")

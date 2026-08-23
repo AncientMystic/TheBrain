@@ -9,6 +9,8 @@ import requests
 import aiohttp
 import asyncio
 
+from core.backends import create_backend
+
 import threading
 _requests_local = threading.local()
 
@@ -80,34 +82,24 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
     if config.USE_JSON_MODE:
         payload["response_format"] = {"type": "json_object"}
 
+    # Build backend provider once for this endpoint
+    backend_provider = create_backend(endpoint)
     for attempt in range(config.API_RETRY_ATTEMPTS):
         try:
-            if config.USE_LLM_HTTP_SESSION:
-                session = _get_requests_session()
-                resp = session.post(
-                    f"{endpoint['url']}/chat/completions",
-                    json=payload,
-                    timeout=config.API_TIMEOUT,
-                )
-            else:
-                resp = requests.post(
-                    f"{endpoint['url']}/chat/completions",
-                    json=payload,
-                    timeout=config.API_TIMEOUT,
-                )
-            if resp.status_code == 200:
-                data = resp.json()
-                output = data["choices"][0]["message"]["content"]
-                if output:
-                    cleaned = re.sub(r'<thinking>.*?</thinking>', '', output, flags=re.DOTALL)
-                    cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL)
-                    return cleaned.strip()
-                else:
-                    if config.DEBUG_VERBOSE:
-                        logger.warning(f"Empty model response, attempt {attempt+1}")
+            output = backend_provider.chat(
+                payload["messages"],
+                model=model,
+                max_tokens=payload.get("max_tokens", 1024),
+                temperature=payload.get("temperature", 0.0),
+                system=system,
+            )
+            if output:
+                cleaned = re.sub(r'<thinking>.*?</thinking>', '', output, flags=re.DOTALL)
+                cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL)
+                return cleaned.strip()
             else:
                 if config.DEBUG_VERBOSE:
-                    logger.error(f"LLM API error {resp.status_code}: {resp.text[:200]}")
+                    logger.warning(f"Empty model response, attempt {attempt+1}")
         except Exception as e:
             if config.DEBUG_VERBOSE:
                 logger.exception(f"LLM exception: {e}")
