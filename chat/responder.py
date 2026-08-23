@@ -1,4 +1,5 @@
 from core.llm import call_model
+from core.model_router import get_chat_endpoint
 
 ANSWER_PROMPT = """
 You are a knowledgeable assistant.

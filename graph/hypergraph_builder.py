@@ -88,5 +88,13 @@ def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> No
     # If chunk_map contains chunk_index -> list of node_ids, we could add co-occurrence edges here.
     # For now, rely on explicit relationships.
 
+    # Populate doc_entity_nodes for entity-type nodes
+    for (node_type, normalized_name), node_id in node_id_map.items():
+        if node_type in ('ENTITY', 'PERSON', 'LOCATION', 'DATE', 'EVENT', 'DISCOVERY', 'GEM'):
+            cur.execute("""
+                INSERT OR IGNORE INTO doc_entity_nodes (doc_hash, entity_type, entity_name, node_id)
+                VALUES (?, ?, ?, ?)
+            """, (doc_hash, node_type, normalized_name, node_id))
+
     conn.commit()
     conn.close()

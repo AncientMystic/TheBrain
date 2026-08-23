@@ -73,13 +73,14 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
         result = []
 
     # Optional Recoll full-text search (additional source)
+    recoll_facts = []
     if config.USE_RECOLL:
         try:
             from core.recoll_client import RecollClient
             recoll_client = RecollClient()
             recoll_results, _ = recoll_client.search(query_analysis.get('original', ''), limit=5, fetch_text=False)
             for doc in recoll_results:
-                file_url = getattr(doc, "url", "")
+                file_url = doc.get("path") or doc.get("url", "")
                 file_path = file_url.replace("file://", "")
                 if file_path:
                     conn = db.db_connect("index")
@@ -94,7 +95,7 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
                     rows = cur.fetchall()
                     conn.close()
                     for row in rows:
-                        result.append({
+                        recoll_facts.append({
                             "fact_id": None,
                             "doc_hash": row["doc_hash"],
                             "doc_name": file_path,
@@ -111,7 +112,7 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
             if config.DEBUG_VERBOSE:
                 print(f"    (Recoll fallback error: {e})")
 
-    return unique_facts[:top_k]
+    return (unique_facts + recoll_facts)[:top_k]
 
 
 def fallback_to_chunks(query, top_k=None):

@@ -152,7 +152,7 @@ def run_recoll_guided_learning(process_file_callback, tracker, max_rounds=None, 
             results, count = recoll_client.search(query, limit=5, fetch_text=False)
             print(f"    Recoll returned {count} results, processing up to {len(results)}")
             for doc in results:
-                file_url = getattr(doc, "url", "")
+                file_url = doc.get("path") or doc.get("url", "")
                 file_path = _url_to_path(file_url)
                 if not file_path or not Path(file_path).exists():
                     if config.DEBUG_VERBOSE:

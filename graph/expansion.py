@@ -20,11 +20,15 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
     for depth in range(max_depth):
         new_facts = []
         for fact in current_frontier:
-            # get keywords from fact text and canonical value
+            # get keywords from fact text and canonical value using stopword-filtered tokens
+            from core.text_utils import tokenize, get_bigrams
             text = fact.get("fact_text", "")
             val = fact.get("canonical_value", "")
             combined = text + " " + val
-            keywords = [w for w in combined.split() if len(w) > 3][:5]
+            tokens = tokenize(combined)
+            keywords = tokens[:5] + list(get_bigrams(tokens))[:3]
+            conn = db.db_connect("external_graph")
+            cur = conn.cursor()
             for kw in keywords:
                 # related keywords via co-occurrence
                 for rel_kw, _ in get_related_keywords(kw, min_weight=0.3):
@@ -38,17 +42,13 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
                         new_facts.append(f)
                         seen_ids.add(f.get("fact_id"))
 
-            # expand via global graph nodes
-            # Extract entity names from fact text (simple heuristic: named entities)
-            # We'll use analyze_query from chat
+            # expand via global graph nodes using same connection
             from chat.query_analyzer import analyze_query
             analysis = analyze_query(text)
             for ent in analysis.get("entities", []):
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
                 if not ent_name:
                     continue
-                conn = db.db_connect("external_graph")
-                cur = conn.cursor()
                 cur.execute("""
                     SELECT global_node_id FROM global_nodes
                     WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value=?)
@@ -67,7 +67,7 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
                                 if f.get("fact_id") not in seen_ids:
                                     new_facts.append(f)
                                     seen_ids.add(f.get("fact_id"))
-                conn.close()
+            conn.close()
         if not new_facts:
             break
         all_facts.extend(new_facts)

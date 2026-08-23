@@ -30,12 +30,13 @@ def is_sufficient(query, context):
 
 
 def extract_keywords_from_fact(fact):
-    """Extract potential keywords from fact text or canonical value."""
+    """Extract potential keywords from fact text or canonical value using tokenizer."""
+    from core.text_utils import tokenize, get_bigrams
     text = fact.get("fact_text", "")
     val = fact.get("canonical_value", "")
     combined = text + " " + val
-    words = [w for w in combined.split() if len(w) > 3]
-    return words[:5]
+    tokens = tokenize(combined)
+    return tokens[:5] + list(get_bigrams(tokens))[:3]
 
 
 def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
@@ -69,13 +70,12 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
             # Use existing entity extraction from query_analyzer
             analysis = analyze_query(fact_text)
             entities = analysis.get("entities", [])
+            conn = db.db_connect("external_graph")
+            cur = conn.cursor()
             for ent in entities:
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
                 if not ent_name:
                     continue
-                # Find global node
-                conn = db.db_connect("external_graph")
-                cur = conn.cursor()
                 cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
                             (ent_name, ent_name))
                 row = cur.fetchone()
@@ -92,7 +92,7 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                                 if f.get("fact_id") not in seen_ids:
                                     new_facts.append(f)
                                     seen_ids.add(f.get("fact_id"))
-                conn.close()
+            conn.close()
 
         if not new_facts:
             break

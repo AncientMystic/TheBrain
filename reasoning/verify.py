@@ -130,19 +130,14 @@ def verify_vericot(step_text: str, context: str, kg) -> bool:
     if query_kg_triples(subject=subject, predicate=predicate, object_=obj):
         return True
 
-    # Derivation: retrieve all triples with subject and predicate, check if obj can be reached via transitive closure
-    all_triples = []
+    # Check materialized implied triples
     conn = db.db_connect("reasoning")
     cur = conn.cursor()
-    cur.execute("SELECT subject, predicate, object FROM kg_triples")
-    rows = cur.fetchall()
+    cur.execute("SELECT 1 FROM implied_triples WHERE subject=? AND predicate=? AND object=?",
+                (subject, predicate, obj))
+    found = cur.fetchone() is not None
     conn.close()
-    triples = set()
-    for row in rows:
-        triples.add(triple_to_key(row["subject"], row["predicate"], row["object"]))
-    implied = derive_implied_triples(triples)
-    target = triple_to_key(subject, predicate, obj)
-    return target in implied
+    return found
 
 
 # ============================================================
@@ -266,7 +261,7 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
         })
 
     # SymStep (with empty prior claims; orchestrator will pass actual)
-    sym = verify_symstep(claim, [])
+    sym = verify_symstep(claim, claim.get("_prior_claims", []))
     results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
 
     # VeriCoT
@@ -294,11 +289,11 @@ def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
             "verified": claim["source_span"] in source_text,
             "confidence": 1.0 if claim["source_span"] in source_text else 0.0,
         })
-    sym = verify_symstep(claim, [])
+    sym = verify_symstep(claim, claim.get("_prior_claims", []))
     results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
 
     # Compute initial confidence
-    initial_conf = sum(v["confidence"] for v in results if v["verified"]) / max(1, len([v for v in results if v["verified"]]))
+    initial_conf = sum(v["confidence"] for v in results if v["verified"]) / max(1, len(results))
     if initial_conf >= threshold:
         return results
 

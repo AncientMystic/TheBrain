@@ -28,6 +28,34 @@ def get_reasoning_path(query_id):
     conn.close()
     return nodes
 
+def rebuild_implied_triples():
+    """Rebuild materialized transitive closure from kg_triples."""
+    conn = db.db_connect("reasoning")
+    cur = conn.cursor()
+    cur.execute("SELECT subject, predicate, object FROM kg_triples")
+    triples = [tuple(row) for row in cur.fetchall()]
+    # Simple transitive closure for transitive predicates
+    transitive = {"is_a", "part_of", "located_in", "belongs_to", "works_for"}
+    closure = set(triples)
+    changed = True
+    while changed:
+        changed = False
+        for s1, p1, o1 in list(closure):
+            if p1 not in transitive:
+                continue
+            for s2, p2, o2 in list(closure):
+                if s2 == o1 and p2 == p1:
+                    new_triple = (s1, p1, o2)
+                    if new_triple not in closure:
+                        closure.add(new_triple)
+                        changed = True
+    # Clear and repopulate implied_triples
+    cur.execute("DELETE FROM implied_triples")
+    for s, p, o in closure:
+        cur.execute("INSERT OR IGNORE INTO implied_triples (subject, predicate, object) VALUES (?, ?, ?)",
+                    (s, p, o))
+    conn.commit(); conn.close()
+
 def store_kg_triple(subject, predicate, object_, source_document_id=None, confidence=0.0):
     conn = db.db_connect("reasoning")
     cur = conn.cursor()
@@ -37,6 +65,7 @@ def store_kg_triple(subject, predicate, object_, source_document_id=None, confid
     """, (subject, predicate, object_, source_document_id, confidence))
     triple_id = cur.lastrowid
     conn.commit(); conn.close()
+    rebuild_implied_triples()
     return triple_id
 
 def query_kg_triples(subject=None, predicate=None, object_=None):

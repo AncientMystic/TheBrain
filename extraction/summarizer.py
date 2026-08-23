@@ -37,7 +37,7 @@ def summarize_chunk(chunk_text: str, model: str | None = None) -> str:
 def summarize_document(chunks: list[str], model: str | None = None) -> tuple[str, list[str]]:
     """Generate chunk summaries, then global summary and key points."""
     chunk_summaries = []
-    for chunk in chunks[:10]:  # Limit to first 10 chunks for speed? But requirement says entire document. We can process all, but for large docs maybe sample? Keep all.
+    for chunk in chunks:  # process all chunks
         summary = summarize_chunk(chunk, model=model)
         if summary:
             chunk_summaries.append(summary)

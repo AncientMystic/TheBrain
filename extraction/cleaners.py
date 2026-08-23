@@ -1,3 +1,4 @@
+RELAXED_MODE = False
 """Utility functions for cleaning extracted data."""
 import re
 __all__ = [
@@ -79,6 +80,24 @@ def _clean_facts(facts):
             continue
         fact_text = _safe_str(f.get("fact_text"), 200)
         source_span = _safe_str(f.get("source_span"), 200)
+
+        if RELAXED_MODE:
+            # In relaxed mode, skip aggressive verbatim/redundancy checks.
+            # Just ensure fact_text is non-empty and confidence >= 0.0.
+            if not fact_text.strip():
+                continue
+            f["fact_text"] = fact_text
+            f["canonical_value"] = _safe_str(f.get("canonical_value"), 80)
+            f["source_span"] = source_span
+            f["fact_type"] = _safe_str(f.get("fact_type"), 80)
+            try:
+                f["confidence"] = float(f.get("confidence", 0.0))
+            except:
+                f["confidence"] = 0.0
+            cleaned.append(f)
+            continue
+
+        # Normal (strict) mode - original logic
         if source_span:
             if len(source_span.split()) > 4 or _is_redundant_span(source_span, fact_text):
                 source_span = _shorten_source_span(source_span, max_words=4)

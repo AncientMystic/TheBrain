@@ -50,7 +50,7 @@ def learn_logic_from_file(filepath: Path):
 
     chunks = chunk_document(text)
     modules = []
-    for chunk in chunks[:10]:  # limit to first 10 chunks for initial version
+    for chunk in chunks:  # process all chunks
         prompt = LOGIC_EXTRACTION_PROMPT.format(chunk_text=chunk)
         data = call_model_json(prompt, max_tokens=2048)
         if data and "modules" in data:

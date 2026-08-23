@@ -15,6 +15,7 @@ DB_FILES = {
     "logic": config.LOGIC_DB_FILE,
     "reasoning": config.REASONING_DB_FILE,
     "recoll_log": config.RECOLL_LOG_DB_FILE,
+    "verification_standards": config.VERIFICATION_STANDARDS_DB_FILE,
 }
 
 for _db_path in DB_FILES.values():

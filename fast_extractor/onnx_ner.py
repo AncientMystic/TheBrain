@@ -34,8 +34,22 @@ class OnnxNERExtractor:
             try:
                 from transformers import AutoTokenizer
                 self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-                self.id2label = {0: "O", 1: "B-PER", 2: "I-PER", 3: "B-ORG", 4: "I-ORG",
-                                 5: "B-LOC", 6: "I-LOC", 7: "B-MISC", 8: "I-MISC"}
+                # Try to load id2label from model config; fallback to default BERT-NER mapping
+                self.id2label = None
+                config_path = model_dir / "config.json"
+                if config_path.exists():
+                    try:
+                        import json
+                        with open(config_path, "r", encoding="utf-8") as cf:
+                            model_cfg = json.load(cf)
+                        id2label_raw = model_cfg.get("id2label")
+                        if id2label_raw:
+                            self.id2label = {int(k): v for k, v in id2label_raw.items()}
+                    except Exception:
+                        pass
+                if not self.id2label:
+                    self.id2label = {0: "O", 1: "B-PER", 2: "I-PER", 3: "B-ORG", 4: "I-ORG",
+                                     5: "B-LOC", 6: "I-LOC", 7: "B-MISC", 8: "I-MISC"}
             except ImportError:
                 print("transformers not installed, cannot load tokenizer.")
                 self.session = None

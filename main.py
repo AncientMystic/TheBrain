@@ -115,7 +115,7 @@ def process_file(filepath, tracker, logic_context=""):
                     all_extracted[key].extend(chunk_data[key])
 
         print("  Validating and deduplicating...")
-        validated_facts = [f for f in all_extracted["facts"] if f.get("source_span") and f.get("source_span") in text and f.get("confidence",0) >= 0.5]
+        validated_facts = [f for f in all_extracted["facts"] if f.get("source_span") and f.get("confidence",0) >= 0.5]
         all_extracted["facts"] = deduplicate_list(validated_facts, key_func=lambda f: normalize_key(f.get("fact_text","")))
         all_extracted["entities"] = deduplicate_list(all_extracted["entities"], key_func=lambda e: normalize_key(e.get("entity_name","")))
         all_extracted["people"] = deduplicate_list(all_extracted["people"], key_func=lambda p: normalize_key(p.get("person_name","")))
@@ -141,8 +141,18 @@ def process_file(filepath, tracker, logic_context=""):
             if chunk_id:
                 cur_facts.execute("INSERT INTO fact_sources (fact_id, doc_hash, chunk_id, evidence_span, exact_quote) VALUES (?,?,?,?,?)",
                                   (fact_id, file_hash, chunk_id, span, span))
+            # Populate entity_fact_index using canonical_value as entity key
+            if fact.get("canonical_value"):
+                try:
+                    from core.fact_normalizer import normalize_name
+                    norm = normalize_name(fact["canonical_value"])
+                    cur_facts.execute(
+                        "INSERT OR IGNORE INTO entity_fact_index (fact_id, entity_name, normalized_name) VALUES (?, ?, ?)",
+                        (fact_id, fact["canonical_value"], norm)
+                    )
+                except ImportError:
+                    pass
         # Store all categories
-        from main import _store_entity, _store_person, _store_location, _store_date, _store_event, _store_discovery, _store_gem
         for entity in all_extracted.get("entities", []):
             _store_entity(conn_facts, file_hash, filepath.name, entity)
         for person in all_extracted.get("people", []):
@@ -227,6 +237,128 @@ def _store_gem(conn, doc_hash, file_name, gem):
                   gem.get("importance", 0.0), gem.get("source_span", ""), gem.get("confidence", 0.0)))
 
 
+def review_contradictions():
+    """
+    Print unresolved contradictions from the review queue.
+    """
+    conn = db.db_connect("reasoning")
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, status, resolved_by, resolved_at, triple_a_id, triple_b_id, details
+        FROM contradiction_log
+        WHERE status = 'review_needed'
+        ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        print("No contradictions awaiting review.")
+        return
+
+    print(f"Found {len(rows)} contradictions in review queue:")
+    for row in rows:
+        details = row["details"] or row["resolved_by"] or ""
+        print(f"  ID {row['id']}: {details}")
+    print("\nUse --audit to run a new audit or manually review the database.")
+
+
+def promote_verified_file(file_hash, file_name, source_file=None):
+    """Mark a file as verified source and insert its key facts into standards."""
+    from core import db
+    import json
+    from core.fact_normalizer import normalize_name
+
+    # Ensure tracking table exists
+    conn_track = db.db_connect("verification_standards")
+    cur_track = conn_track.cursor()
+    cur_track.execute("""
+        CREATE TABLE IF NOT EXISTS verification_promotions (
+            doc_hash TEXT PRIMARY KEY,
+            promoted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            source_type TEXT,
+            standards_inserted INTEGER DEFAULT 0
+        )
+    """)
+    conn_track.commit()
+    cur_track.execute("SELECT 1 FROM verification_promotions WHERE doc_hash=?", (file_hash,))
+    already = cur_track.fetchone()
+    conn_track.close()
+    if already:
+        print(f"    Already promoted {file_name}; skipping.")
+        return
+
+    # Mark document as verified source
+    conn_idx = db.db_connect("index")
+    conn_idx.execute("UPDATE documents SET is_verified_source=1 WHERE file_hash=?", (file_hash,))
+    conn_idx.commit(); conn_idx.close()
+
+    # Socratic/PSYOP assessment
+    socratic_assessment = {
+        "source_hierarchy_level": 0,
+        "psych_score_total": 0,
+        "data_model_policy": "unknown",
+        "enforcement_vector": None,
+        "intentionality_triad": {},
+        "lived_experience_cluster": False,
+        "funding_gatekeeping_flags": {},
+        "summary": "Socratic assessment failed for verified source."
+    }
+    if source_file is not None:
+        try:
+            from reasoning.socratic_scorer import score_document
+            from extractors.registry import extract_text_from_file
+            _vtext = extract_text_from_file(source_file).get("text", "")
+            socratic_assessment = score_document(source_file.name, _vtext)
+            print("    (Socratic assessment complete)")
+        except Exception as e:
+            print(f"    (Socratic assessment error: {e})")
+
+    # Retrieve facts for this file
+    conn_kf = db.db_connect("key_facts")
+    cur_kf = conn_kf.cursor()
+    cur_kf.execute("SELECT fact_text, canonical_value, confidence FROM key_facts WHERE doc_hash=?", (file_hash,))
+    facts = cur_kf.fetchall()
+    conn_kf.close()
+
+    conn_std = db.db_connect("verification_standards")
+    cur_std = conn_std.cursor()
+    for fact_text, canonical_value, confidence in facts:
+        subject = canonical_value or fact_text
+        predicate = "has_fact"
+        obj = fact_text
+        standard_id = f"vf-{file_hash}-{normalize_name(fact_text)[:20]}"
+        cur_std.execute("""
+            INSERT OR REPLACE INTO verified_standards
+            (standard_id, statement, subject, predicate, object, negation,
+             truth_status, source_type, source_doc_hash, priority, confidence,
+             verified_by, socratic_assessment_json)
+            VALUES (?, ?, ?, ?, ?, 0, 'verified_true', 'verified_folder', ?, 1, ?, 'verified_folder', ?)
+        """, (standard_id, fact_text, subject, predicate, obj, file_hash,
+              confidence, json.dumps(socratic_assessment)))
+
+        conn_kf = db.db_connect("key_facts")
+        conn_kf.execute("UPDATE key_facts SET verification_status='verified_true', verified_by='verified_folder' WHERE fact_text=? AND doc_hash=?",
+                        (fact_text, file_hash))
+        conn_kf.commit(); conn_kf.close()
+
+    conn_std.commit(); conn_std.close()
+    print("    (Inserted extracted facts as verified standards with Socratic metadata)")
+
+    try:
+        from scripts.attach_supporting_evidence import attach_supporting_evidence_to_standards
+        attach_supporting_evidence_to_standards()
+    except Exception as e:
+        if config.DEBUG_VERBOSE:
+            print(f"    (Supporting evidence extraction error: {e})")
+
+    # Record promotion
+    conn_promo = db.db_connect("verification_standards")
+    conn_promo.execute("""
+        INSERT OR REPLACE INTO verification_promotions (doc_hash, promoted_at, source_type, standards_inserted)
+        VALUES (?, CURRENT_TIMESTAMP, 'verified_folder', ?)
+    """, (file_hash, len(facts)))
+    conn_promo.commit(); conn_promo.close()
 def main():
     if "--debug" in sys.argv:
         config.DEBUG_VERBOSE = True
@@ -235,6 +367,7 @@ def main():
     guided = "--guided-learning" in sys.argv
     chat_mode = "--chat" in sys.argv
     audit_mode = "--audit" in sys.argv
+    review_contradictions_mode = "--review-contradictions" in sys.argv
     logic_mode = "--logic" in sys.argv
     reasoning_mode = "--reasoning" in sys.argv
     deep_research = "--deep-research" in sys.argv
@@ -247,6 +380,17 @@ def main():
         idx = sys.argv.index("--input") + 1
         if idx < len(sys.argv):
             input_path = sys.argv[idx]
+
+    verified_flag = "--verified" in sys.argv
+    admin_facts = []
+    if "--fact" in sys.argv:
+        i = 0
+        while i < len(sys.argv):
+            if sys.argv[i] == "--fact" and i + 1 < len(sys.argv):
+                admin_facts.append(sys.argv[i + 1])
+                i += 2
+            else:
+                i += 1
 
     recoll_query = None
     if "--recoll-query" in sys.argv:
@@ -320,11 +464,9 @@ def main():
             return
         try:
             import recoll
-            from core.file_utils import get_file_hash
-            from extractors.registry import extract_text_from_file
             files = scan_files(input_path)
             print(f"Indexing {len(files)} files with Recoll...")
-            db = recoll.connect(writable=True)
+            recoll_db = recoll.connect(writable=True)
             for i, f in enumerate(files):
                 print(f"  Indexing {i+1}/{len(files)}: {f.name}")
                 try:
@@ -339,11 +481,11 @@ def main():
                     doc.text = text
                     file_hash = get_file_hash(str(f))
                     udi = f"thebrain:{file_hash}"
-                    if db.needUpdate(udi, file_hash):
-                        db.addOrUpdate(udi, doc)
+                    if recoll_db.needUpdate(udi, file_hash):
+                        recoll_db.addOrUpdate(udi, doc)
                 except Exception as e:
                     print(f"    Recoll indexing error: {e}")
-            db.close()
+            recoll_db.close()
             print("Recoll index build complete.")
         except ImportError as e:
             print(f"Recoll not available: {e}")
@@ -354,6 +496,10 @@ def main():
         from server import app as server_app
         print(f"Starting OpenAI-compatible server on http://{config.SERVER_HOST}:{config.SERVER_PORT}")
         uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
+        return
+
+    if review_contradictions_mode:
+        review_contradictions()
         return
 
     if audit_mode:
@@ -421,7 +567,7 @@ def main():
                 break
         return
 
-    if logic_mode and input_path:
+    if logic_mode and input_path and not guided:
         from logic.learn import learn_logic_from_file
         input_path = Path(input_path)
         files = [input_path] if input_path.is_file() else scan_files(input_path)
@@ -446,7 +592,63 @@ def main():
         return
 
     if guided:
+        # Process admin claims first (if any)
+        if admin_facts:
+            print(f"Processing {len(admin_facts)} admin claim(s)...")
+            from core.llm import call_model_json
+            from core.fact_normalizer import normalize_name
+            conn_std = db.db_connect("verification_standards")
+            cur_std = conn_std.cursor()
+            conn_kf = db.db_connect("key_facts")
+            cur_kf = conn_kf.cursor()
+            for idx, claim in enumerate(admin_facts):
+                # Use LLM to format into subject/predicate/object
+                prompt = f"""You are a fact formatter, not a fact checker.
+The following claim is TRUE by admin definition. Do NOT evaluate or dispute it.
+Format it into JSON with keys: statement, subject, predicate, object, negation (0 or 1).
+Claim: {claim}
+Return only JSON."""
+                data = call_model_json(prompt, max_tokens=256)
+                if not isinstance(data, dict):
+                    data = {}
+                statement = claim  # always preserve the original admin claim exactly
+                subject = data.get("subject") or claim
+                predicate = data.get("predicate") or "has_truth_value"
+                obj = data.get("object") or "true"
+                negation = int(data.get("negation", 0) or 0)
+                standard_id = f"admin-{idx}-{normalize_name(statement)[:20]}"
+                admin_socratic = {
+                    "source_hierarchy_level": 0,
+                    "psych_score_total": 0,
+                    "data_model_policy": "data",
+                    "enforcement_vector": None,
+                    "intentionality_triad": {},
+                    "lived_experience_cluster": False,
+                    "funding_gatekeeping_flags": {},
+                    "summary": "Admin claim: indisputable reference fact."
+                }
+                cur_std.execute("""
+                    INSERT OR REPLACE INTO verified_standards
+                    (standard_id, statement, subject, predicate, object, negation,
+                     truth_status, source_type, source_doc_hash, priority, verified_by,
+                     source_hierarchy_level, socratic_assessment_json)
+                    VALUES (?, ?, ?, ?, ?, ?, 'admin_claim', 'admin_claim', NULL, 0, 'admin_claim', 0, ?)
+                """, (standard_id, statement, subject, predicate, obj, negation,
+                      json.dumps(admin_socratic)))
+                # Also store as key_fact for normal retrieval
+                cur_kf.execute("""
+                    INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value,
+                                           source_span, confidence, verification_status, verified_by, negation)
+                    VALUES (?, ?, 'admin_claim', ?, ?, ?, 1.0, 'admin_claim', 'admin_claim', ?)
+                """, (f"admin-claim-{idx}", "admin_claim", statement, subject, predicate, negation))
+            conn_std.commit(); conn_std.close()
+            conn_kf.commit(); conn_kf.close()
+            print("Admin claims stored.")
+
         if not input_path:
+            if admin_facts:
+                print("No input folder specified, but admin claims were processed.")
+                return
             print("Please provide --input <path> for guided learning.")
             return
         input_path = Path(input_path)
@@ -474,10 +676,18 @@ def main():
                             conn.close()
                     except Exception as e:
                         print(f"  (Logic decision error: {e})")
+                file_hash = get_file_hash(f)
+                if tracker.is_processed(file_hash) and verified_flag:
+                    promote_verified_file(file_hash, f.name, source_file=f)
+                    tracker.processed_count += 1
+                    gc.collect()
+                    time.sleep(0.1)
+                    continue
                 success = process_file(f, tracker, logic_context=logic_context)
                 tracker.processed_count += 1
-                if success:
-                    print("    (Success)")
+                if success and verified_flag:
+                    file_hash = get_file_hash(f)
+                    promote_verified_file(file_hash, f.name, source_file=f)
                 gc.collect()
                 time.sleep(0.1)
         except KeyboardInterrupt:

@@ -5,6 +5,7 @@ Orchestrates agents to explore a topic and generate a comprehensive report.
 import uuid
 import json
 from core import db
+from core.llm import call_model_json
 from chat import analyze_query, retrieve_from_graph, fallback_to_chunks
 from graph.expansion import expand_facts_via_multi_hop
 from deep_research.mindmap import init_mindmap_db, add_research_node, add_research_edge, get_mindmap_text

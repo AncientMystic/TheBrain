@@ -3,6 +3,7 @@ Simple logic module executor.
 Applies relevant logic modules to modify retrieval or answer generation.
 """
 from core import db
+import config
 from logic.retrieve import retrieve_logic_modules
 
 def execute_logic_modules(query, context, top_k=3):

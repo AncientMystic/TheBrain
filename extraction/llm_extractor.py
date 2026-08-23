@@ -12,6 +12,7 @@ import config
 from core import db
 from core.llm import call_model_json
 from core.embeddings import get_embeddings_batch
+from extraction.validation_queue import ValidationQueue
 from extraction.rule_annotator import pre_annotate
 from fast_extractor.hybrid_extractor import FastExtractor
 from extraction.cleaners import *
@@ -443,34 +444,54 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
         prompt = prompt.replace("{logic_context}", logic_context if logic_context else "")
         prompt = prompt.replace("{pre_extractions}", pre_str)
 
-        # Call LLM directly (skip _extract_category_batch for simplicity; we don't need its retry wrapper here)
-        resp = call_model_json(prompt, model=actual_model, max_tokens=8192 if category=="facts_entities_relationships" else 4096,
-                               system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
-        if resp is None:
-            # fallback to original no pre-extraction prompt
-            fallback_prompt = prompt_template.replace("{num_chunks}", str(len(batch_chunks)))
-            fallback_prompt = fallback_prompt.replace("{chunks_text}", _format_chunks_text(batch_chunks))
-            fallback_prompt = fallback_prompt.replace("{logic_context}", logic_context if logic_context else "")
-            fallback_prompt = fallback_prompt.replace("{pre_extractions}", "None")
-            resp = call_model_json(fallback_prompt, model=actual_model, max_tokens=8192 if category=="facts_entities_relationships" else 4096,
-                                   system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
-        if resp is None:
-            print(f"    (Category {category} extraction failed; continuing)")
-            continue
-
-        if isinstance(resp, list):
-            if resp and isinstance(resp[0], dict):
-                resp = resp[0]
+        # Cache-aware per-chunk processing
+        uncached_indices = []
+        cached_results = {}
+        for i, chunk_text in enumerate(batch_chunks):
+            chunk_hash = _hash_text(chunk_text)
+            cached = _get_cached(chunk_hash, category, actual_model, 8192 if category=="facts_entities_relationships" else 4096, prompt_template)
+            if cached is not None:
+                cached_results[i] = cached
             else:
-                resp = {}
+                uncached_indices.append(i)
 
+        if uncached_indices:
+            # Build prompt for uncached chunks only
+            uncached_chunks = [batch_chunks[i] for i in uncached_indices]
+            uncached_pre = [batch_pre_extractions[i] for i in uncached_indices] if batch_pre_extractions else None
+            prompt = prompt_template.replace("{num_chunks}", str(len(uncached_chunks)))
+            prompt = prompt.replace("{chunks_text}", _format_chunks_text(uncached_chunks))
+            prompt = prompt.replace("{logic_context}", logic_context if logic_context else "")
+            prompt = prompt.replace("{pre_extractions}", _format_pre_extractions_for_prompt(uncached_pre) if uncached_pre else "None")
+
+            resp = call_model_json(prompt, model=actual_model, max_tokens=8192 if category=="facts_entities_relationships" else 4096,
+                                   system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
+            if resp is None:
+                print(f"    (Category {category} extraction failed for uncached chunks; continuing)")
+                continue
+
+            if isinstance(resp, list):
+                if resp and isinstance(resp[0], dict):
+                    resp = resp[0]
+                else:
+                    resp = {}
+
+            for idx, original_idx in enumerate(uncached_indices):
+                key = f"chunk_{idx}"
+                chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
+                chunk_data = _normalize_chunk_data(chunk_data)
+                # Cache this chunk's result
+                chunk_hash = _hash_text(batch_chunks[original_idx])
+                _set_cached(chunk_hash, category, actual_model, 8192 if category=="facts_entities_relationships" else 4096, chunk_data, prompt_template)
+                cached_results[original_idx] = chunk_data
+
+        # Merge cached and newly fetched results
         for i in range(len(batch_chunks)):
-            key = f"chunk_{i}"
-            chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
-            chunk_data = _normalize_chunk_data(chunk_data)
-            for field in field_keys:
-                if field in chunk_data:
-                    results[i][field] = chunk_data[field]
+            if i in cached_results:
+                chunk_data = cached_results[i]
+                for field in field_keys:
+                    if field in chunk_data:
+                        results[i][field] = chunk_data[field]
 
     # Apply cleaners
     for i in range(len(results)):
@@ -609,4 +630,26 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
         for original_idx, res in zip(batch_indices, batch_results):
             all_results[original_idx] = res
 
+    if config.ENABLE_ASYNC_VALIDATION:
+        print("  Running validation queue on extracted items...")
+        vq = ValidationQueue()
+        vq.start()
+        # Flatten items with metadata
+        for chunk_idx, chunk_data in enumerate(all_results):
+            for key in ["facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems"]:
+                for item in chunk_data.get(key, []):
+                    if isinstance(item, dict):
+                        item_copy = item.copy()
+                        item_copy["_chunk_idx"] = chunk_idx
+                        item_copy["_category"] = key
+                        vq.put(item_copy)
+        validated_results = vq.wait_and_get_results()
+        # Reconstruct all_results from validated items
+        for item in validated_results:
+            if isinstance(item, dict) and "_chunk_idx" in item and "_category" in item:
+                idx = item.pop("_chunk_idx")
+                cat = item.pop("_category")
+                if 0 <= idx < len(all_results):
+                    all_results[idx].setdefault(cat, [])
+                    all_results[idx][cat].append(item)
     return all_results

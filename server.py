@@ -42,11 +42,16 @@ class EmbeddingRequest(BaseModel):
     input: Any
     model: str = config.EMBEDDING_MODEL
 
-def _process_chat(messages, session_id=None, reasoning=False):
+def _process_chat(messages, session_id=None, reasoning=False, deep_research=False):
     user_msgs = [m.content for m in messages if m.role == "user"]
     query = user_msgs[-1] if user_msgs else ""
     if not query:
         return "", []
+
+    if deep_research:
+        coordinator = DeepResearchCoordinator(session_id)
+        report_path = coordinator.run(query)
+        return f"Deep research report generated: {report_path}", []
 
     if reasoning:
         answer, facts = orchestrate_reasoning(query)

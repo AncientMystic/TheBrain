@@ -83,6 +83,14 @@ def init_key_facts_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS fact_sources (
         source_id INTEGER PRIMARY KEY AUTOINCREMENT, fact_id INTEGER NOT NULL, doc_hash TEXT NOT NULL,
         chunk_id INTEGER, evidence_span TEXT, exact_quote TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS entity_fact_index (
+        fact_id INTEGER NOT NULL,
+        entity_name TEXT,
+        normalized_name TEXT,
+        PRIMARY KEY (fact_id, entity_name)
+    )""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_entity_fact_index_norm ON entity_fact_index(normalized_name)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_entity_fact_index_fact ON entity_fact_index(fact_id)")
     cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS key_facts_fts USING fts5(fact_text, canonical_value, source_span)")
     # Triggers to keep FTS in sync
     cur.execute("""
@@ -116,13 +124,20 @@ def init_key_facts_db():
 
 def init_embeddings_db():
     conn = db.db_connect("embeddings"); cur = conn.cursor()
+    # Migration: drop old embedding_cache if it has single-column PK
+    cur.execute("PRAGMA table_info(embedding_cache)")
+    cols = [row[1] for row in cur.fetchall()]
+    if cols and "model" not in cols:
+        cur.execute("DROP TABLE embedding_cache")
     cur.execute("""CREATE TABLE IF NOT EXISTS document_embeddings (
         doc_hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS chunk_embeddings (
         chunk_id INTEGER PRIMARY KEY, doc_hash TEXT NOT NULL, chunk_text TEXT NOT NULL,
         embedding BLOB NOT NULL, model TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS embedding_cache (
-        text TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        text TEXT NOT NULL, embedding BLOB NOT NULL, model TEXT NOT NULL,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (text, model))""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_doc_embeddings_doc_hash ON document_embeddings(doc_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_doc_hash ON chunk_embeddings(doc_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk_id ON chunk_embeddings(chunk_id)")
@@ -180,6 +195,24 @@ def init_external_graph_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS topic_hierarchy (
         parent TEXT NOT NULL, child TEXT NOT NULL, weight REAL DEFAULT 1.0, PRIMARY KEY (parent, child))""")
     cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS global_nodes_fts USING fts5(canonical_name, node_type)")
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS global_nodes_fts_ai AFTER INSERT ON global_nodes BEGIN
+            INSERT INTO global_nodes_fts(rowid, canonical_name, node_type)
+            VALUES (new.global_node_id, new.canonical_name, new.node_type);
+        END;
+    """)
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS global_nodes_fts_ad AFTER DELETE ON global_nodes BEGIN
+            DELETE FROM global_nodes_fts WHERE rowid = old.global_node_id;
+        END;
+    """)
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS global_nodes_fts_au AFTER UPDATE ON global_nodes BEGIN
+            DELETE FROM global_nodes_fts WHERE rowid = old.global_node_id;
+            INSERT INTO global_nodes_fts(rowid, canonical_name, node_type)
+            VALUES (new.global_node_id, new.canonical_name, new.node_type);
+        END;
+    """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_global_nodes_name ON global_nodes(canonical_name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_global_nodes_type ON global_nodes(node_type)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_global_edges_source ON global_edges(source_node_id)")
@@ -270,6 +303,11 @@ def init_reasoning_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS reasoning_paths (
         id INTEGER PRIMARY KEY AUTOINCREMENT, query_id TEXT, path TEXT, final_answer TEXT,
         confidence REAL, verification_summary TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS implied_triples (
+        subject TEXT, predicate TEXT, object TEXT,
+        PRIMARY KEY (subject, predicate, object))""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_implied_subject_pred ON implied_triples(subject, predicate)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_implied_object ON implied_triples(object)")
     cur.execute("""CREATE TABLE IF NOT EXISTS reasoning_dependencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT, step_id INTEGER REFERENCES reasoning_nodes(id),
         depends_on_id INTEGER REFERENCES reasoning_nodes(id), dependency_type TEXT, verified BOOLEAN)""")
@@ -278,12 +316,138 @@ def init_reasoning_db():
         layer TEXT, verified BOOLEAN, confidence REAL, details TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS contradiction_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, triple_a_id INTEGER, triple_b_id INTEGER,
-        status TEXT, resolved_by TEXT, resolved_at TEXT)""")
+        status TEXT, resolved_by TEXT, resolved_at TEXT,
+        details TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS agent_actions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, agent_name TEXT, action TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
         details TEXT)""")
     conn.commit(); conn.close()
     print("[init] reasoning.db ready")
+
+
+def init_verification_standards_db():
+    conn = db.db_connect("verification_standards")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS verified_standards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            standard_id TEXT UNIQUE,
+            statement TEXT NOT NULL,
+            subject TEXT,
+            predicate TEXT,
+            object TEXT,
+            negation INTEGER DEFAULT 0,
+            temporal_bounds_json TEXT,
+            truth_status TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_doc_hash TEXT,
+            source_span TEXT,
+            priority INTEGER DEFAULT 2,
+            confidence REAL DEFAULT 0.0,
+            source_hierarchy_level INTEGER,
+            data_model_policy TEXT,
+            psych_score_total INTEGER,
+            psych_score_breakdown_json TEXT,
+            enforcement_vector TEXT,
+            intentionality_triad_json TEXT,
+            lived_experience_cluster INTEGER DEFAULT 0,
+            funding_gatekeeping_flags_json TEXT,
+            socratic_assessment_json TEXT,
+            supporting_evidence_json TEXT,
+            provenance_json TEXT,
+            verified_by TEXT,
+            verified_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS verified_standard_sources (
+            source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_doc_hash TEXT UNIQUE,
+            file_path TEXT,
+            title TEXT,
+            source_hierarchy_level INTEGER,
+            socratic_assessment_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS standard_comparisons (
+            comparison_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_type TEXT NOT NULL,
+            fact_id INTEGER NOT NULL,
+            standard_id INTEGER,
+            relation TEXT,
+            method TEXT,
+            confidence REAL,
+            rationale TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS verification_promotions (
+            doc_hash TEXT PRIMARY KEY,
+            promoted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            source_type TEXT,
+            standards_inserted INTEGER DEFAULT 0
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_standards_statement ON verified_standards(statement)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_standards_subject_predicate ON verified_standards(subject, predicate, object)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_standards_source_type ON verified_standards(source_type)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_standards_truth_status ON verified_standards(truth_status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_comparisons_fact ON standard_comparisons(fact_type, fact_id)")
+    conn.commit()
+    conn.close()
+    print("[init] verification_standards.db ready")
+
+
+def _alter_table_if_needed(conn, table, column, definition):
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(%s)" % table)
+    cols = [row[1] for row in cur.fetchall()]
+    if column not in cols:
+        cur.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, definition))
+        conn.commit()
+
+def apply_existing_table_migrations():
+    """Add verification_status columns and temporal/negation columns."""
+    # key_facts
+    conn = db.db_connect("key_facts")
+    _alter_table_if_needed(conn, "key_facts", "verification_status", "TEXT DEFAULT 'unverified'")
+    _alter_table_if_needed(conn, "key_facts", "verified_by", "TEXT")
+    _alter_table_if_needed(conn, "key_facts", "verified_at", "TEXT")
+    _alter_table_if_needed(conn, "key_facts", "negation", "INTEGER DEFAULT 0")
+    _alter_table_if_needed(conn, "key_facts", "valid_from", "TEXT")
+    _alter_table_if_needed(conn, "key_facts", "valid_to", "TEXT")
+    conn.close()
+
+    # documents
+    conn = db.db_connect("index")
+    _alter_table_if_needed(conn, "documents", "is_verified_source", "INTEGER DEFAULT 0")
+    conn.close()
+
+    # global_edges
+    conn = db.db_connect("external_graph")
+    _alter_table_if_needed(conn, "global_edges", "verification_status", "TEXT DEFAULT 'unverified'")
+    _alter_table_if_needed(conn, "global_edges", "verified_by", "TEXT")
+    _alter_table_if_needed(conn, "global_edges", "verified_at", "TEXT")
+    _alter_table_if_needed(conn, "global_edges", "negation", "INTEGER DEFAULT 0")
+    _alter_table_if_needed(conn, "global_edges", "valid_from", "TEXT")
+    _alter_table_if_needed(conn, "global_edges", "valid_to", "TEXT")
+    conn.close()
+
+    # kg_triples
+    conn = db.db_connect("reasoning")
+    _alter_table_if_needed(conn, "kg_triples", "verification_status", "TEXT DEFAULT 'unverified'")
+    _alter_table_if_needed(conn, "kg_triples", "verified_by", "TEXT")
+    _alter_table_if_needed(conn, "kg_triples", "verified_at", "TEXT")
+    _alter_table_if_needed(conn, "kg_triples", "negation", "INTEGER DEFAULT 0")
+    _alter_table_if_needed(conn, "kg_triples", "valid_from", "TEXT")
+    _alter_table_if_needed(conn, "kg_triples", "valid_to", "TEXT")
+    conn.close()
+    print("[init] verification_status columns added to existing tables")
 
 
 def init_all():
@@ -299,6 +463,8 @@ def init_all():
     init_logic_db()
     init_reasoning_db()
     init_recoll_log_db()
+    init_verification_standards_db()
+    apply_existing_table_migrations()
     print("All databases ready.")
 
 

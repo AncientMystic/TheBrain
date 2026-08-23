@@ -24,6 +24,7 @@ def _select_endpoint_by_type(endpoint_type=None):
 
 
 import config
+from core.model_router import get_endpoint_for_group
 from core.logger import get_logger
 logger = get_logger(__name__)
 

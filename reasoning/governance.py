@@ -4,7 +4,7 @@ from core import db
 
 
 def quality_gate(claim):
-    if not claim.get("source_span") or len(claim.get("source_span", "").split()) > 4:
+    if not claim.get("source_span"):
         return False
     if not claim.get("subject") or not claim.get("predicate"):
         return False
@@ -56,7 +56,13 @@ def detect_contradictions():
         JOIN key_facts f2 ON f1.fact_type = f2.fact_type AND f1.fact_id < f2.fact_id
         WHERE f1.canonical_value IS NOT NULL AND f2.canonical_value IS NOT NULL
           AND f1.canonical_value = f2.canonical_value
-          AND f1.fact_text != f2.fact_text
+          AND (
+                (f1.negation IS NOT NULL AND f2.negation IS NOT NULL AND f1.negation != f2.negation)
+                OR
+                (f1.valid_from IS NOT NULL AND f2.valid_from IS NOT NULL AND f1.valid_from = f2.valid_from
+                 AND f1.valid_to IS NOT NULL AND f2.valid_to IS NOT NULL AND f1.valid_to = f2.valid_to
+                 AND f1.fact_text != f2.fact_text)
+              )
     """)
     rows = cur.fetchall()
     conn.close()
@@ -86,7 +92,11 @@ def detect_contradictions():
         JOIN global_nodes n1 ON e1.source_node_id = n1.global_node_id
         JOIN global_nodes n2a ON e1.target_node_id = n2a.global_node_id
         JOIN global_nodes n2b ON e2.target_node_id = n2b.global_node_id
-        WHERE e1.target_node_id != e2.target_node_id
+        WHERE e1.relation_type IN ('is_a', 'part_of')
+          AND e1.target_node_id != e2.target_node_id
+          AND e1.negation = e2.negation
+          AND e1.valid_from = e2.valid_from
+          AND e1.valid_to = e2.valid_to
     """)
     rows = cur.fetchall()
     conn.close()
@@ -107,24 +117,28 @@ def detect_contradictions():
 
 
 def resolve_contradictions(contradictions):
+    """
+    Handle contradictions based on AUTO_RESOLVE_CONTRADICTIONS.
+    If False, move to review queue (status='review_needed').
+    If True, auto-delete the lower-confidence item.
+    """
     if not config.AUTO_RESOLVE_CONTRADICTIONS:
-        # Move to review queue instead of deleting
+        # Move to review queue instead of deleting.
         conn = db.db_connect("reasoning")
         cur = conn.cursor()
         for c in contradictions:
+            # Store full details in resolved_by column (JSON) since we don't have a details column yet.
             details = json.dumps(c)
-            cur.execute("INSERT INTO contradiction_log (status, details) VALUES ('review_needed', ?)", (details,))
+            cur.execute(
+                "INSERT INTO contradiction_log (status, resolved_by, details) VALUES ('review_needed', 'review_queue', ?)",
+                (details,)
+            )
         conn.commit()
         conn.close()
         print(f"Moved {len(contradictions)} contradictions to review queue (no auto-delete).")
         return []
-    # Original auto-resolution logic below (kept for when AUTO_RESOLVE_CONTRADICTIONS=True)
-def resolve_contradictions(contradictions):
-    """
-    Auto-resolve contradictions by deleting the lower-confidence triple or fact.
-    For external_graph, we delete the edge with lower confidence.
-    Returns list of resolutions.
-    """
+
+    # Auto-resolution logic (only used when AUTO_RESOLVE_CONTRADICTIONS=True)
     resolutions = []
     for c in contradictions:
         source = c.get("source")
@@ -180,7 +194,7 @@ def resolve_contradictions(contradictions):
 
 
 def compute_confidence(verification_results):
-    weights = {'text_grounding': 0.1, 'symstep': 0.4, 'vericot': 0.3, 'fidelis': 0.2, 'rcot': 0.1}
+    weights = {'text_grounding': 0.1, 'symstep': 0.3, 'vericot': 0.3, 'fidelis': 0.2, 'rcot': 0.1}
     score = 0.0
     for result in verification_results:
         if result.get('verified'):
