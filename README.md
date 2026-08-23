@@ -403,6 +403,100 @@ python main.py --guided-learning --verified --input "A:/verified_standards"
 
 Extracted facts from this folder are marked `verified_true` and inserted into the standards corpus. Documents are promoted only once.
 
+Add this section to the README under **Usage**, near the verification facts and logic learning sections:
+
+
+### Bulk Import Facts and Logic Training Data
+
+The `import_data.py` helper imports pre-generated JSON datasets into TheBrain.
+
+Supported modes:
+
+- `--facts facts.json` — imports verified/admin facts into `verification_standards.db`
+- `--logic logic.json` — converts logic-training modules into temporary Markdown and runs the existing logic-learning pipeline
+- `--facts facts.json --logic logic.json` — imports both
+
+#### Facts JSON format
+
+```json
+{
+  "facts": [
+    {
+      "id": "fact-001",
+      "statement": "Water freezes at 0C under 1 atm",
+      "subject": "Water",
+      "predicate": "freezes_at",
+      "object": "0C",
+      "negation": 0,
+      "truth_status": "admin_claim",
+      "source_type": "admin_claim",
+      "priority": 0,
+      "confidence": 1.0,
+      "socratic_metadata": {},
+      "supporting_evidence": [],
+      "provenance": {}
+    }
+  ]
+}
+```
+
+#### Logic JSON format
+
+```json
+{
+  "logic_modules": [
+    {
+      "name": "Basic Percentage Calculation",
+      "category": "reasoning",
+      "summary": "A reusable process for calculating percentages accurately.",
+      "keywords": ["percentage", "math", "calculation"],
+      "content": "Step 1: Identify the base value. Step 2: Convert the percentage to a decimal. Step 3: Multiply.",
+      "examples": [
+        {
+          "input_text": "What is 25 percent of 80?",
+          "output_text": "Convert 25% to 0.25 and multiply 80 by 0.25. Result: 20."
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### Usage
+
+Dry-run validation without writing:
+
+```bash
+python import_data.py --facts facts.json --dry-run
+python import_data.py --logic logic.json --dry-run
+```
+
+Import only facts:
+
+```bash
+python import_data.py --facts facts.json
+```
+
+Import only logic training data:
+
+```bash
+python import_data.py --logic logic.json
+```
+
+Import both:
+
+```bash
+python import_data.py --facts facts.json --logic logic.json
+```
+
+Keep temporary logic files for inspection:
+
+```bash
+python import_data.py --logic logic.json --keep-temp
+```
+
+The script assumes the JSON files already contain safe, grounded facts and safe logic-training content. It does not call any LLM or external service for topic filtering.
+
 #### Admin Claim Ingestion
 
 Add individual indisputable claims directly:
