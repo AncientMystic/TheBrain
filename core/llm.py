@@ -9,7 +9,13 @@ import requests
 import aiohttp
 import asyncio
 
-_requests_session = None
+import threading
+_requests_local = threading.local()
+
+def _get_requests_session():
+    if not hasattr(_requests_local, "session"):
+        _requests_local.session = requests.Session()
+    return _requests_local.session
 
 def _select_endpoint_by_type(endpoint_type=None):
     """Return endpoint based on type ('small', 'large', 'audit') if configured."""
@@ -76,11 +82,9 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
 
     for attempt in range(config.API_RETRY_ATTEMPTS):
         try:
-            global _requests_session
             if config.USE_LLM_HTTP_SESSION:
-                if _requests_session is None:
-                    _requests_session = requests.Session()
-                resp = _requests_session.post(
+                session = _get_requests_session()
+                resp = session.post(
                     f"{endpoint['url']}/chat/completions",
                     json=payload,
                     timeout=config.API_TIMEOUT,

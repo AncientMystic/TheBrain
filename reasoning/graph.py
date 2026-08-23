@@ -56,17 +56,21 @@ def rebuild_implied_triples():
                     (s, p, o))
     conn.commit(); conn.close()
 
-def store_kg_triple(subject, predicate, object_, source_document_id=None, confidence=0.0):
+def store_kg_triples_batch(triples):
+    """Insert multiple kg_triples and rebuild closure once."""
+    if not triples:
+        return
     conn = db.db_connect("reasoning")
-    cur = conn.cursor()
-    cur.execute("""
+    conn.executemany("""
         INSERT INTO kg_triples (subject, predicate, object, source_document_id, confidence)
         VALUES (?, ?, ?, ?, ?)
-    """, (subject, predicate, object_, source_document_id, confidence))
-    triple_id = cur.lastrowid
+    """, triples)
     conn.commit(); conn.close()
     rebuild_implied_triples()
-    return triple_id
+
+
+def store_kg_triple(subject, predicate, object_, source_document_id=None, confidence=0.0):
+    return store_kg_triples_batch([(subject, predicate, object_, source_document_id, confidence)])
 
 def query_kg_triples(subject=None, predicate=None, object_=None):
     conn = db.db_connect("reasoning")

@@ -16,6 +16,7 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
     all_facts = list(initial_facts)
     seen_ids = {f.get("fact_id") for f in all_facts if f.get("fact_id")}
     current_frontier = initial_facts[:50]  # limit initial expansion
+    analysis_cache = {}
 
     for depth in range(max_depth):
         new_facts = []
@@ -44,11 +45,14 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
 
             # expand via global graph nodes using same connection
             from chat.query_analyzer import analyze_query
-            analysis = analyze_query(text)
+            if text not in analysis_cache:
+                analysis_cache[text] = analyze_query(text)
+            analysis = analysis_cache[text]
             for ent in analysis.get("entities", []):
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
                 if not ent_name:
                     continue
+                # Use cached connection already open; just execute
                 cur.execute("""
                     SELECT global_node_id FROM global_nodes
                     WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value=?)

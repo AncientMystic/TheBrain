@@ -77,15 +77,25 @@ class DeepResearchCoordinator:
         """Create mindmap nodes/edges from facts and entities."""
         # Root node
         root_id = add_research_node(self.research_id, "topic", query, content="Main query", confidence=1.0)
-        # Add fact nodes
+        # Add fact nodes and edges in batches
+        fact_nodes = []
+        fact_edges = []
         for fact in facts[:100]:
             fact_text = fact.get("fact_text", "")
-            fact_id = fact.get("fact_id")
             confidence = fact.get("confidence", 0.5)
             node_id = add_research_node(self.research_id, "fact", fact_text[:200], content=fact_text, confidence=confidence)
-            add_research_edge(self.research_id, root_id, node_id, "contains")
-        # Add entity nodes from analysis
-        # (simplified: use canonical_value as entity)
+            fact_nodes.append((node_id, fact_text))
+            fact_edges.append((root_id, node_id, "contains"))
+
+        # Insert edges via executemany (needs direct DB access)
+        conn = db.db_connect("reasoning")
+        conn.executemany("""
+            INSERT INTO research_edges (research_id, source_node_id, target_node_id, relation_type)
+            VALUES (?, ?, ?, ?)
+        """, [(self.research_id, src, tgt, rel) for (src, tgt, rel) in fact_edges])
+        conn.commit(); conn.close()
+
+        # Entity nodes
         for fact in facts[:50]:
             canonical = fact.get("canonical_value")
             if canonical:

@@ -130,28 +130,54 @@ def process_file(filepath, tracker, logic_context=""):
         cur_facts = conn_facts.cursor()
         conn_index = db.db_connect("index")
         cur_index = conn_index.cursor()
+        fact_rows = []
+        source_rows = []
+        entity_index_rows = []
         for fact in all_extracted["facts"]:
-            cur_facts.execute("INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified) VALUES (?,?,?,?,?,?,?,0)",
-                              (file_hash, filepath.name, fact.get("fact_type"), fact.get("fact_text"), fact.get("canonical_value"), fact.get("source_span"), fact.get("confidence",0.0)))
-            fact_id = cur_facts.lastrowid
+            fact_row = (
+                file_hash, filepath.name, fact.get("fact_type"),
+                fact.get("fact_text"), fact.get("canonical_value"),
+                fact.get("source_span"), fact.get("confidence", 0.0), 0
+            )
+            fact_rows.append(fact_row)
+
+        if fact_rows:
+            cur_facts.executemany(
+                "INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified) VALUES (?,?,?,?,?,?,?,?)",
+                fact_rows,
+            )
+
+        # Retrieve last inserted IDs (this is approximate because executemany doesn't return IDs)
+        cur_facts.execute("SELECT fact_id, source_span, canonical_value FROM key_facts WHERE doc_hash=? ORDER BY fact_id DESC LIMIT ?",
+                          (file_hash, len(fact_rows)))
+        inserted = cur_facts.fetchall()[::-1]
+
+        for fact, inserted_row in zip(all_extracted["facts"], inserted):
+            fact_id = inserted_row["fact_id"]
             span = fact.get("source_span","")
             cur_index.execute("SELECT chunk_id FROM document_chunks WHERE doc_hash=? AND chunk_text LIKE ? LIMIT 1", (file_hash, f"%{span}%"))
             row = cur_index.fetchone()
             chunk_id = row[0] if row else None
             if chunk_id:
-                cur_facts.execute("INSERT INTO fact_sources (fact_id, doc_hash, chunk_id, evidence_span, exact_quote) VALUES (?,?,?,?,?)",
-                                  (fact_id, file_hash, chunk_id, span, span))
-            # Populate entity_fact_index using canonical_value as entity key
+                source_rows.append((fact_id, file_hash, chunk_id, span, span))
             if fact.get("canonical_value"):
                 try:
                     from core.fact_normalizer import normalize_name
                     norm = normalize_name(fact["canonical_value"])
-                    cur_facts.execute(
-                        "INSERT OR IGNORE INTO entity_fact_index (fact_id, entity_name, normalized_name) VALUES (?, ?, ?)",
-                        (fact_id, fact["canonical_value"], norm)
-                    )
+                    entity_index_rows.append((fact_id, fact["canonical_value"], norm))
                 except ImportError:
                     pass
+
+        if source_rows:
+            cur_facts.executemany(
+                "INSERT INTO fact_sources (fact_id, doc_hash, chunk_id, evidence_span, exact_quote) VALUES (?,?,?,?,?)",
+                source_rows,
+            )
+        if entity_index_rows:
+            cur_facts.executemany(
+                "INSERT OR IGNORE INTO entity_fact_index (fact_id, entity_name, normalized_name) VALUES (?, ?, ?)",
+                entity_index_rows,
+            )
         # Store all categories
         for entity in all_extracted.get("entities", []):
             _store_entity(conn_facts, file_hash, filepath.name, entity)
@@ -305,14 +331,41 @@ def promote_verified_file(file_hash, file_name, source_file=None):
         "summary": "Socratic assessment failed for verified source."
     }
     if source_file is not None:
-        try:
-            from reasoning.socratic_scorer import score_document
-            from extractors.registry import extract_text_from_file
-            _vtext = extract_text_from_file(source_file).get("text", "")
-            socratic_assessment = score_document(source_file.name, _vtext)
-            print("    (Socratic assessment complete)")
-        except Exception as e:
-            print(f"    (Socratic assessment error: {e})")
+        # Check cache first
+        conn_vs = db.db_connect("verification_standards")
+        cur_vs = conn_vs.cursor()
+        cur_vs.execute("""
+            SELECT socratic_assessment_json
+            FROM verified_standard_sources
+            WHERE source_doc_hash=?
+        """, (file_hash,))
+        cached = cur_vs.fetchone()
+        conn_vs.close()
+        if cached and cached[0]:
+            try:
+                socratic_assessment = json.loads(cached[0])
+                print("    (Socratic assessment loaded from cache)")
+            except Exception:
+                pass
+        else:
+            try:
+                from reasoning.socratic_scorer import score_document
+                from extractors.registry import extract_text_from_file
+                _vtext = extract_text_from_file(source_file).get("text", "")
+                socratic_assessment = score_document(source_file.name, _vtext)
+                print("    (Socratic assessment complete)")
+                # Store cache
+                conn_vs = db.db_connect("verification_standards")
+                conn_vs.execute("""
+                    INSERT OR REPLACE INTO verified_standard_sources
+                    (source_doc_hash, file_path, title, source_hierarchy_level, socratic_assessment_json)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (file_hash, str(source_file), source_file.name,
+                      socratic_assessment.get("source_hierarchy_level", 0),
+                      json.dumps(socratic_assessment)))
+                conn_vs.commit(); conn_vs.close()
+            except Exception as e:
+                print(f"    (Socratic assessment error: {e})")
 
     # Retrieve facts for this file
     conn_kf = db.db_connect("key_facts")

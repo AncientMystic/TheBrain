@@ -2,6 +2,11 @@ import re
 from pathlib import Path
 import config
 
+# Precompiled patterns for performance
+_YEAR_RE = re.compile(r'\b(17|18|19|20)\d{2}\b')
+_DATE_RE = re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b', re.IGNORECASE)
+_PERSON_RE = re.compile(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b')
+
 # Load gazetteers lazily
 _gazetteers = None
 
@@ -62,12 +67,12 @@ def pre_annotate(text: str) -> dict:
     }
 
     # Years
-    for m in re.finditer(r'\b(17|18|19|20)\d{2}\b', text):
+    for m in _YEAR_RE.finditer(text):
         annotations["years"].append({"text": m.group(), "start": m.start(), "end": m.end()})
 
     # Full dates: January 1, 2020 or 1 January 2020
     date_pattern = r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b'
-    for m in re.finditer(date_pattern, text, re.IGNORECASE):
+    for m in _DATE_RE.finditer(text):
         annotations["dates"].append({"text": m.group(), "start": m.start(), "end": m.end()})
 
     # Locations: match gazetteer entries (exact word boundary)
@@ -80,7 +85,7 @@ def pre_annotate(text: str) -> dict:
 
     # People: capital word + capital word (simple heuristic)
     person_pattern = r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'
-    for m in re.finditer(person_pattern, text):
+    for m in _PERSON_RE.finditer(text):
         name = m.group()
         first = name.split()[0].lower()
         if first in gaz["first_names"] or len(gaz["first_names"]) == 0:

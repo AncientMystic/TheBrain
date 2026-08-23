@@ -36,11 +36,15 @@ def summarize_chunk(chunk_text: str, model: str | None = None) -> str:
 
 def summarize_document(chunks: list[str], model: str | None = None) -> tuple[str, list[str]]:
     """Generate chunk summaries, then global summary and key points."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     chunk_summaries = []
-    for chunk in chunks:  # process all chunks
-        summary = summarize_chunk(chunk, model=model)
-        if summary:
-            chunk_summaries.append(summary)
+    if chunks:
+        with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as executor:
+            futures = {executor.submit(summarize_chunk, chunk, model): idx for idx, chunk in enumerate(chunks)}
+            for future in as_completed(futures):
+                summary = future.result()
+                if summary:
+                    chunk_summaries.append(summary)
 
     if not chunk_summaries:
         return "", []

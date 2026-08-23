@@ -126,13 +126,20 @@ def fallback_to_chunks(query, top_k=None):
     cur.execute("SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings LIMIT ?", (top_k * 10,))
     rows = cur.fetchall()
     conn.close()
-    results = []
+    if not rows:
+        return []
     q = np.array(q_emb, dtype=np.float32)
     q_norm = np.linalg.norm(q)
-    for chunk_id, doc_hash, chunk_text, blob in rows:
-        emb = np.frombuffer(blob, dtype=np.float32)
-        sim = float(np.dot(q, emb) / (q_norm * np.linalg.norm(emb) + 1e-8))
-        results.append((sim, chunk_id, doc_hash, chunk_text))
+    chunk_data = [(r[0], r[1], r[2], r[3]) for r in rows]
+    embeddings = [np.frombuffer(r[3], dtype=np.float32) for r in rows]
+    matrix = np.vstack(embeddings)
+    norms = np.linalg.norm(matrix, axis=1)
+    norms[norms == 0] = 1e-8
+    sims = matrix @ q / (norms * (q_norm + 1e-8))
+    results = [
+        (float(sim), chunk_id, doc_hash, chunk_text)
+        for sim, (chunk_id, doc_hash, chunk_text, _) in zip(sims, chunk_data)
+    ]
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]
 

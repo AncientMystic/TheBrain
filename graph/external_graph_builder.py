@@ -8,23 +8,50 @@ from core.embeddings import get_embeddings_batch
 from graph.node_canonicalizer import find_matching_global_node, normalize_name
 
 
+_graph_cache = {
+    "existing_nodes": None,
+    "exact_match_map": None,
+    "existing_emb_matrix": None,
+    "existing_emb_ids": None,
+}
+
+
+def _get_graph_state(conn, cur):
+    if _graph_cache["existing_nodes"] is None:
+        cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
+        _graph_cache["existing_nodes"] = [dict(row) for row in cur.fetchall()]
+        _graph_cache["exact_match_map"] = {}
+        for node in _graph_cache["existing_nodes"]:
+            norm_name = normalize_name(node["canonical_name"])
+            key = (node["node_type"], norm_name)
+            _graph_cache["exact_match_map"][key] = node["global_node_id"]
+
+        existing_embeddings = []
+        existing_emb_ids = []
+        for node in _graph_cache["existing_nodes"]:
+            if node.get("embedding") is not None:
+                existing_embeddings.append(np.frombuffer(node["embedding"], dtype=np.float32))
+                existing_emb_ids.append(node["global_node_id"])
+        _graph_cache["existing_emb_matrix"] = np.stack(existing_embeddings) if existing_embeddings else None
+        _graph_cache["existing_emb_ids"] = existing_emb_ids
+    return (
+        _graph_cache["existing_nodes"],
+        _graph_cache["exact_match_map"],
+        _graph_cache["existing_emb_matrix"],
+        _graph_cache["existing_emb_ids"],
+    )
+
+
 def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
     """
     Upsert global nodes and edges from a document's extracted data.
     Batches all embedding calls to reduce latency.
+    Uses cached graph state to avoid reloading all nodes per document.
     """
     conn = db.db_connect("external_graph")
     cur = conn.cursor()
 
-    # Load existing global nodes
-    cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
-    existing_nodes = [dict(row) for row in cur.fetchall()]
-    # Build in-memory exact match map (normalized name -> id, type -> id)
-    exact_match_map = {}
-    for node in existing_nodes:
-        norm_name = normalize_name(node["canonical_name"])
-        key = (node["node_type"], norm_name)
-        exact_match_map[key] = node["global_node_id"]
+    existing_nodes, exact_match_map, existing_emb_matrix, existing_emb_ids = _get_graph_state(conn, cur)
 
     # ---- Prepare all candidate names for embedding ----
     all_names = []
@@ -210,4 +237,9 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
 
     conn.commit()
     conn.close()
+    # Invalidate graph cache so next document reloads updated nodes
+    _graph_cache["existing_nodes"] = None
+    _graph_cache["exact_match_map"] = None
+    _graph_cache["existing_emb_matrix"] = None
+    _graph_cache["existing_emb_ids"] = None
     print("  (Graph building complete)")

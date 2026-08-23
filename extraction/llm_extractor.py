@@ -10,6 +10,7 @@ import numpy as np
 
 import config
 from core import db
+_init_cache()
 from core.llm import call_model_json
 from core.embeddings import get_embeddings_batch
 from extraction.validation_queue import ValidationQueue
@@ -511,7 +512,8 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
     """Extract from chunks using fast pre-extraction + focused LLM prompts."""
     if max_workers is None:
         max_workers = config.CHUNK_EXTRACTION_WORKERS
-    _init_cache()
+    # _init_cache is now idempotent and called once at module import
+    pass
 
     if chunk_embeddings is None:
         print("  (No chunk embeddings provided; computing embeddings for novelty gating...)")

@@ -55,17 +55,25 @@ def get_embeddings_batch(texts, model=None, batch_size=None):
 
     conn = db.db_connect("embeddings")
     cur = conn.cursor()
-    for i, text in enumerate(texts):
+    # Batch cache lookup for efficiency
+    BATCH = 500
+    for start in range(0, len(texts), BATCH):
+        chunk = texts[start:start+BATCH]
+        placeholders = ",".join("?" for _ in chunk)
         cur.execute(
-            "SELECT embedding FROM embedding_cache WHERE text=? AND model=?",
-            (text, model),
+            f"SELECT text, embedding FROM embedding_cache WHERE model=? AND text IN ({placeholders})",
+            (model, *chunk),
         )
-        row = cur.fetchone()
-        if row:
-            result[i] = np.frombuffer(row[0], dtype=np.float32).tolist()
-        else:
-            uncached_indices.append(i)
-            uncached_texts.append(text)
+        rows = cur.fetchall()
+        cache_map = {row[0]: row[1] for row in rows}
+        for i in range(len(chunk)):
+            idx = start + i
+            text = chunk[i]
+            if text in cache_map:
+                result[idx] = np.frombuffer(cache_map[text], dtype=np.float32).tolist()
+            else:
+                uncached_indices.append(idx)
+                uncached_texts.append(text)
     conn.close()
 
     if not uncached_texts:
@@ -90,15 +98,18 @@ def get_embeddings_batch(texts, model=None, batch_size=None):
                 retrieved[text] = emb
 
     conn = db.db_connect("embeddings")
+    write_rows = []
     for i, text in zip(uncached_indices, uncached_texts):
         if text in retrieved:
             emb = retrieved[text]
             result[i] = emb
             blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes())
-            conn.execute(
-                "INSERT OR REPLACE INTO embedding_cache (text, embedding, model) VALUES (?, ?, ?)",
-                (text, blob, model),
-            )
+            write_rows.append((text, blob, model))
+    if write_rows:
+        conn.executemany(
+            "INSERT OR REPLACE INTO embedding_cache (text, embedding, model) VALUES (?, ?, ?)",
+            write_rows,
+        )
     conn.commit()
     conn.close()
 

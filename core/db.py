@@ -1,7 +1,31 @@
 import sqlite3
+import threading
 from pathlib import Path
 
 import config
+
+_conn_local = threading.local()
+
+class PooledConnection:
+    """Wraps sqlite3.Connection so close() returns it to the pool."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if not hasattr(_conn_local, "pool"):
+            _conn_local.pool = {}
+        db_type = getattr(self, "_db_type", None)
+        if db_type:
+            _conn_local.pool[db_type] = self._conn
+
+    def real_close(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
 DB_FILES = {
     "index": config.INDEX_DB_FILE,
@@ -22,15 +46,40 @@ for _db_path in DB_FILES.values():
     Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-def db_connect(db_type: str = "index") -> sqlite3.Connection:
-    if db_type not in DB_FILES:
-        raise ValueError(f"Unknown database type: {db_type}")
+def _make_connection(db_type: str) -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILES[db_type], timeout=60)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=60000")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA mmap_size=268435456")
     return conn
+
+
+def db_connect(db_type: str = "index") -> sqlite3.Connection:
+    if db_type not in DB_FILES:
+        raise ValueError(f"Unknown database type: {db_type}")
+    if not hasattr(_conn_local, "pool"):
+        _conn_local.pool = {}
+    if db_type in _conn_local.pool:
+        conn = _conn_local.pool.pop(db_type)
+    else:
+        conn = _make_connection(db_type)
+    pooled = PooledConnection(conn)
+    pooled._db_type = db_type
+    return pooled
+
+
+def close_all_connections():
+    """Close all pooled connections."""
+    if hasattr(_conn_local, "pool"):
+        for conn in _conn_local.pool.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _conn_local.pool.clear()
 
 
 def table_exists(conn, table_name):
