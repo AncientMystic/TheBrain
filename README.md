@@ -1,7 +1,7 @@
 # TheBrain
 
 TheBrain is a **local-first document intelligence and knowledge extraction engine**.  
-It ingests large collections of mixed-format documents (PDF, HTML, Markdown, DOCX, EPUB, RTF, Jupyter Notebook, plain text, source code, and more), extracts structured knowledge using local LLMs and embedding models via **LM Studio**, and stores it across multiple SQLite databases.
+It ingests large collections of mixed-format documents (PDF, HTML, Markdown, DOCX, EPUB, RTF, Jupyter Notebook, plain text, source code, and more), extracts structured knowledge using local LLMs and embedding models via **LM Studio**, **Ollama**, **Kobold.cpp**, or any **OpenAI-compatible backend**, and stores it across multiple SQLite databases.
 
 The system includes **graph-based retrieval**, **verification-first reasoning**, **long-term memory**, **learned logic modules**, an **OpenAI-compatible server**, automatic **audit/governance**, optional **deep research mode**, autonomous report generation, **Recoll full-text search integration**, and a **curated verification standard corpus** for truth anchoring and Socratic/PSYOP vetting.
 
@@ -17,6 +17,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - [ONNX NER Model](#onnx-ner-model)
   - [Recoll Setup (Optional)](#recoll-setup-optional)
 - [Configuration](#configuration)
+  - [Backend Providers](#backend-providers)
   - [LM Studio Endpoints](#lm-studio-endpoints)
   - [Optional Model Roles](#optional-model-roles)
   - [Concurrency and Chunking](#concurrency-and-chunking)
@@ -80,6 +81,9 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
 - **Curated truth anchors**  
   Admin claims and verified-folder facts form a trusted reference corpus. New information is compared against these standards, not treated as inherently true or false.
 
+- **Multi-backend support**  
+  Works with LM Studio, Ollama, Kobold.cpp, and any OpenAI-compatible API. Supports API-key authentication and per-backend model configuration.
+
 - **Knowledge graphs**  
   - `hypergraph.db` – intra-document nodes and edges.
   - `external-graph.db` – cross-document global nodes, aliases, edges, keyword-topic relations, co-occurrence, and cross-document links.
@@ -112,14 +116,14 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
 
 - **Performance optimizations**  
   - LLM extraction cache.
-  - HTTP session reuse.
-  - Embedding batch size configurable.
-  - FTS-backed keyword search.
-  - External graph embedding matrix.
-  - Configurable parallel file processing.
-  - Progress bars.
-  - Optional async LLM call flag.
-  - Multi-endpoint embedding generation with local cache.
+  - Thread-local HTTP sessions.
+  - SQLite connection pooling.
+  - Batch embedding cache reads/writes.
+  - External graph state caching.
+  - Vectorized chunk similarity.
+  - Batch fact/entity inserts.
+  - Precompiled regex patterns.
+  - Parallel chunk summarization.
 
 ---
 
@@ -129,7 +133,11 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
 
 - **Python 3.11+**
 - **Tesseract OCR** (optional, for scanned PDFs)
-- **LM Studio** running locally or on a network with at least one LLM and one embedding model loaded
+- At least one backend:
+  - **LM Studio** running locally or on a network, or
+  - **Ollama** running locally, or
+  - **Kobold.cpp**, or
+  - Any **OpenAI-compatible API**, including cloud services
 - *(Optional)* **ONNX Runtime** and **Hugging Face Hub** for the fast NER extractor
 - *(Optional)* **Recoll** with Python API or `recollq` CLI for full-text search
 
@@ -195,7 +203,69 @@ Set `FAST_EXTRACTOR_ENABLED = False` to disable.
 
 All settings live in `config.py`. Many can be overridden via environment variables.
 
+### Backend Providers
+
+TheBrain supports multiple backends through a unified provider abstraction.
+
+Built-in provider types:
+
+| Backend Type | Description |
+|--------------|-------------|
+| `lmstudio` | LM Studio OpenAI-compatible API |
+| `ollama` | Ollama native API |
+| `ollama_openai` | Ollama OpenAI-compatible API |
+| `koboldcpp` | Kobold.cpp OpenAI-compatible API |
+| `openai_compatible` | Generic OpenAI-compatible API with API key |
+
+Backends are defined in `config.BACKENDS`.
+
+Example for Ollama native API:
+
+```python
+BACKENDS = [
+    {
+        "name": "ollama-local",
+        "backend": "ollama",
+        "url": "http://localhost:11434",
+        "model": "llama3.1",
+        "embeddings_model": "nomic-embed-text",
+        "api_key": "not-needed",
+    }
+]
+```
+
+Example for OpenAI-compatible cloud API:
+
+```python
+BACKENDS = [
+    {
+        "name": "openai",
+        "backend": "openai_compatible",
+        "url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "embeddings_model": "text-embedding-3-small",
+        "api_key": "your-api-key-here",
+    }
+]
+```
+
+You can also provide backend configuration through environment variables:
+
+```text
+BACKEND_TYPE=ollama
+BACKEND_URL=http://localhost:11434
+BACKEND_MODEL=llama3.1
+BACKEND_EMBEDDINGS_MODEL=nomic-embed-text
+BACKEND_API_KEY=not-needed
+```
+
+For multiple backends, set `BACKEND_CONFIG_JSON` to a JSON array of backend objects.
+
+Example config files are provided in `configs/`.
+
 ### LM Studio Endpoints
+
+Legacy LM Studio configuration remains supported:
 
 ```python
 LM_STUDIO_URL = "http://localhost:1234/v1"
@@ -220,7 +290,7 @@ CHAT_MODEL_URL = ""
 CHAT_MODEL_NAME = ""
 ```
 
-If left empty, the main model is used.
+If left empty, the main backend model is used.
 
 ### Concurrency and Chunking
 
@@ -275,14 +345,19 @@ RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "t
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LM_STUDIO_URL` | `http://localhost:1234/v1` | Primary LLM endpoint |
-| `MODEL_NAME` | `lfm2.5-vl-3b-absolute-heresy-i1` | Primary LLM model |
-| `EMBEDDING_MODEL` | `smcleod/text-embedding-mxbai-embed-large-v1` | Embedding model |
+| `BACKEND_TYPE` | `lmstudio` | Backend type: `lmstudio`, `ollama`, `koboldcpp`, `openai_compatible` |
+| `BACKEND_URL` | `http://localhost:1234/v1` | Backend base URL |
+| `BACKEND_MODEL` | `lfm2.5-vl-3b-absolute-heresy-i1` | Main LLM model |
+| `BACKEND_EMBEDDINGS_MODEL` | `smcleod/text-embedding-mxbai-embed-large-v1` | Embedding model |
+| `BACKEND_API_KEY` | `not-needed` | API key for OpenAI-compatible backends |
+| `BACKEND_CONFIG_JSON` | empty | JSON array for multiple backends |
+| `LM_STUDIO_URL` | `http://localhost:1234/v1` | Legacy primary LM Studio URL |
+| `MODEL_NAME` | `lfm2.5-vl-3b-absolute-heresy-i1` | Legacy primary LLM model |
+| `EMBEDDING_MODEL` | `smcleod/text-embedding-mxbai-embed-large-v1` | Legacy embedding model |
 | `CHUNK_SIZE` | `2000` | Document chunk size |
 | `CHUNK_OVERLAP` | `200` | Chunk overlap |
 | `EMBEDDING_BATCH_SIZE` | `32` | Embedding batch size |
 | `LLM_BATCH_CHUNKS` | `1` | Chunks per LLM extraction call |
-| `NOVELTY_ENABLED` | `true` | Skip redundant chunks |
 | `RECOLL_BIN` | `recollq` | Path to Recoll CLI binary |
 | `RECOLL_DB` | empty | Recoll config directory |
 | `RECOLL_MAX_RESULTS` | `50` | Default max results for Recoll queries |
@@ -527,7 +602,9 @@ TheBrain/
 ├── config.py
 ├── audit/
 ├── chat/
+├── configs/              # Example backend configs
 ├── core/
+│   └── backends/         # Backend provider abstraction
 ├── deep_research/
 ├── extraction/
 ├── extractors/
@@ -642,6 +719,7 @@ All schemas are created automatically on first run.
 - No web UI; server API and CLI only.
 - Not battle-tested on very large heterogeneous corpora.
 - Socratic/PSYOP scoring quality depends on the selected LLM.
+- Backend-specific behavior, especially embedding formats, may vary between providers.
 
 ---
 
