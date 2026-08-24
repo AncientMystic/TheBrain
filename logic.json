@@ -1,0 +1,2044 @@
+{
+  "logic_modules": [
+    {
+      "name": "modus_ponens_reasoning",
+      "category": "reasoning",
+      "summary": "Modus ponens is a basic valid argument form. If a conditional statement is accepted and its antecedent is true, the consequent must be accepted.",
+      "keywords": ["modus ponens", "conditional", "deduction"],
+      "content": "Identify a conditional statement of the form 'If P then Q'. Confirm that P is asserted as true. Conclude Q. This pattern works regardless of the specific content.",
+      "examples": [
+        {
+          "input_text": "If it rains, the ground gets wet. It is raining. What follows?",
+          "output_text": "The ground gets wet."
+        },
+        {
+          "input_text": "If a number is divisible by 4, then it is even. 16 is divisible by 4. What can be concluded?",
+          "output_text": "16 is even."
+        }
+      ]
+    },
+    {
+      "name": "modus_tollens_reasoning",
+      "category": "reasoning",
+      "summary": "Modus tollens is a valid argument form that denies the consequent. If a conditional is true and the consequent is false, the antecedent must be false.",
+      "keywords": ["modus tollens", "conditional", "contrapositive"],
+      "content": "Identify a conditional 'If P then Q'. Observe that Q is false. Conclude that P is false. This is the contrapositive reasoning pattern.",
+      "examples": [
+        {
+          "input_text": "If the battery is charged, the lamp turns on. The lamp does not turn on. What follows?",
+          "output_text": "The battery is not charged."
+        },
+        {
+          "input_text": "If an animal is a bird, it has feathers. This animal does not have feathers. What follows?",
+          "output_text": "This animal is not a bird."
+        }
+      ]
+    },
+    {
+      "name": "hypothetical_syllogism",
+      "category": "reasoning",
+      "summary": "Hypothetical syllogism chains two conditionals. If A implies B and B implies C, then A implies C.",
+      "keywords": ["syllogism", "conditional chain", "transitivity"],
+      "content": "Identify conditional 'If A then B'. Identify conditional 'If B then C'. Combine them to conclude 'If A then C'. The intermediate term B drops out.",
+      "examples": [
+        {
+          "input_text": "If the program compiles, then it produces a build file. If it produces a build file, then it can be tested. What can be concluded?",
+          "output_text": "If the program compiles, then it can be tested."
+        },
+        {
+          "input_text": "If a shape is a square, then it is a rectangle. If a shape is a rectangle, then it is a quadrilateral. What follows?",
+          "output_text": "If a shape is a square, then it is a quadrilateral."
+        }
+      ]
+    },
+    {
+      "name": "disjunctive_syllogism",
+      "category": "reasoning",
+      "summary": "Disjunctive syllogism works with an 'or' statement. If one option is false, the other must be true.",
+      "keywords": ["disjunction", "elimination", "or"],
+      "content": "Identify a statement of the form 'P or Q'. Confirm that P is false. Conclude Q. This assumes the 'or' is inclusive but works when the options are exhaustive.",
+      "examples": [
+        {
+          "input_text": "The switch is either on or off. The switch is not on. What follows?",
+          "output_text": "The switch is off."
+        },
+        {
+          "input_text": "The file is either in folder A or folder B. The file is not in folder A. What follows?",
+          "output_text": "The file is in folder B."
+        }
+      ]
+    },
+    {
+      "name": "de_morgans_laws",
+      "category": "reasoning",
+      "summary": "De Morgan's laws transform negations of conjunctions and disjunctions. They state that not (A and B) is equivalent to not A or not B, and not (A or B) is equivalent to not A and not B.",
+      "keywords": ["negation", "conjunction", "disjunction", "equivalence"],
+      "content": "To negate an 'and' statement, negate each part and change 'and' to 'or'. To negate an 'or' statement, negate each part and change 'or' to 'and'.",
+      "examples": [
+        {
+          "input_text": "Write the negation of 'The test is long and difficult'.",
+          "output_text": "The test is not long or the test is not difficult."
+        },
+        {
+          "input_text": "Write the negation of 'The path is muddy or icy'.",
+          "output_text": "The path is not muddy and the path is not icy."
+        }
+      ]
+    },
+    {
+      "name": "categorical_syllogism",
+      "category": "reasoning",
+      "summary": "A categorical syllogism draws a conclusion about two categories using a shared middle term. It follows patterns such as all A are B, all B are C, therefore all A are C.",
+      "keywords": ["syllogism", "category", "all", "some"],
+      "content": "Identify two premises that share a common term. Determine how the subject and predicate are related through the shared term. Apply valid syllogistic forms such as Barbara or Celarent.",
+      "examples": [
+        {
+          "input_text": "All squares are rectangles. All rectangles are polygons. What conclusion follows?",
+          "output_text": "All squares are polygons."
+        },
+        {
+          "input_text": "No reptiles are mammals. All snakes are reptiles. What conclusion follows?",
+          "output_text": "No snakes are mammals."
+        }
+      ]
+    },
+    {
+      "name": "truth_table_equivalence",
+      "category": "reasoning",
+      "summary": "Truth tables can test whether two logical expressions are equivalent. If the expressions have the same truth value in every possible case, they are equivalent.",
+      "keywords": ["truth table", "equivalence", "boolean"],
+      "content": "List all combinations of truth values for the variables. Evaluate each expression under those combinations. Compare the resulting columns. If the columns match, the expressions are equivalent.",
+      "examples": [
+        {
+          "input_text": "Use a truth table to show that P implies Q is equivalent to not P or Q.",
+          "output_text": "For P true and Q true, both are true. For P true and Q false, both are false. For P false and Q true, both are true. For P false and Q false, both are true. The columns match, so they are equivalent."
+        },
+        {
+          "input_text": "Use a truth table to test whether not (P and Q) is equivalent to not P and not Q.",
+          "output_text": "For P true and Q true, first is false, second is false. For P true and Q false, first is true, second is false. The columns differ, so they are not equivalent."
+        }
+      ]
+    },
+    {
+      "name": "necessary_sufficient_conditions",
+      "category": "reasoning",
+      "summary": "A sufficient condition guarantees an outcome, while a necessary condition must be present for the outcome. Confusing them causes invalid reasoning.",
+      "keywords": ["necessary", "sufficient", "condition", "implication"],
+      "content": "For a statement 'If P then Q', P is sufficient for Q and Q is necessary for P. Test whether the outcome can occur without the condition. If yes, the condition is not necessary. Test whether the condition alone guarantees the outcome. If yes, it is sufficient.",
+      "examples": [
+        {
+          "input_text": "Having four sides is a necessary condition for being a square. Explain why it is not sufficient.",
+          "output_text": "Every square must have four sides, so it is necessary. But many four-sided shapes are not squares, so having four sides does not guarantee being a square."
+        },
+        {
+          "input_text": "Being divisible by 2 is a sufficient condition for being an even number. Explain.",
+          "output_text": "If a number is divisible by 2, it is by definition even, so the condition guarantees the outcome."
+        }
+      ]
+    },
+    {
+      "name": "prime_factorization",
+      "category": "skill",
+      "summary": "Prime factorization expresses a composite number as a product of prime numbers. It is useful for simplifying fractions and finding common factors.",
+      "keywords": ["prime", "factorization", "division"],
+      "content": "Start with the number. Divide by the smallest prime that divides it. Repeat with the quotient until the quotient is 1. Write the original number as the product of the prime divisors.",
+      "examples": [
+        {
+          "input_text": "Find the prime factorization of 60.",
+          "output_text": "60 divided by 2 is 30; 30 divided by 2 is 15; 15 divided by 3 is 5; 5 divided by 5 is 1. So 60 = 2 × 2 × 3 × 5."
+        },
+        {
+          "input_text": "Find the prime factorization of 84.",
+          "output_text": "84 divided by 2 is 42; 42 divided by 2 is 21; 21 divided by 3 is 7; 7 divided by 7 is 1. So 84 = 2 × 2 × 3 × 7."
+        }
+      ]
+    },
+    {
+      "name": "gcd_prime_factors",
+      "category": "skill",
+      "summary": "The greatest common divisor of two numbers is found by multiplying the lowest powers of prime factors they share. This method avoids listing all divisors.",
+      "keywords": ["gcd", "prime factors", "common divisor"],
+      "content": "Find the prime factorization of each number. Identify the common prime factors. For each common prime, take the smaller exponent. Multiply these together.",
+      "examples": [
+        {
+          "input_text": "Find the GCD of 36 and 48.",
+          "output_text": "36 = 2^2 × 3^2 and 48 = 2^4 × 3. Common primes are 2 and 3. Smaller exponents: 2^2 and 3^1. GCD = 4 × 3 = 12."
+        },
+        {
+          "input_text": "Find the GCD of 45 and 75.",
+          "output_text": "45 = 3^2 × 5, 75 = 3 × 5^2. Common primes: 3 and 5. Smaller exponents: 3^1 and 5^1. GCD = 15."
+        }
+      ]
+    },
+    {
+      "name": "lcm_prime_factors",
+      "category": "skill",
+      "summary": "The least common multiple of two numbers is found by multiplying the highest powers of all prime factors that appear in either number.",
+      "keywords": ["lcm", "prime factors", "multiple"],
+      "content": "Find prime factorization of each number. For every prime that appears, take the larger exponent. Multiply these together.",
+      "examples": [
+        {
+          "input_text": "Find the LCM of 12 and 18.",
+          "output_text": "12 = 2^2 × 3, 18 = 2 × 3^2. Highest powers: 2^2 and 3^2. LCM = 4 × 9 = 36."
+        },
+        {
+          "input_text": "Find the LCM of 8 and 20.",
+          "output_text": "8 = 2^3, 20 = 2^2 × 5. Highest powers: 2^3 and 5^1. LCM = 8 × 5 = 40."
+        }
+      ]
+    },
+    {
+      "name": "fraction_addition",
+      "category": "skill",
+      "summary": "To add fractions with unlike denominators, find a common denominator and convert each fraction. Then add the numerators and simplify if possible.",
+      "keywords": ["fraction", "common denominator", "addition"],
+      "content": "Find the least common denominator of the fractions. Rewrite each fraction with that denominator. Add the numerators and keep the denominator. Simplify the result.",
+      "examples": [
+        {
+          "input_text": "Add 1/4 and 1/6.",
+          "output_text": "The least common denominator of 4 and 6 is 12. 1/4 = 3/12, 1/6 = 2/12. Sum = 5/12."
+        },
+        {
+          "input_text": "Add 2/3 and 3/5.",
+          "output_text": "Common denominator 15. 2/3 = 10/15, 3/5 = 9/15. Sum = 19/15, which is 1 4/15."
+        }
+      ]
+    },
+    {
+      "name": "percentage_change",
+      "category": "skill",
+      "summary": "Percentage change compares the amount of change to the original value. Increase or decrease is calculated as change divided by original, multiplied by 100.",
+      "keywords": ["percent", "increase", "decrease", "change"],
+      "content": "Find the difference between new and original values. Divide the difference by the original value. Multiply by 100 to express as a percentage. Label as increase or decrease.",
+      "examples": [
+        {
+          "input_text": "A price rises from 40 to 50. What is the percentage increase?",
+          "output_text": "Change = 50 - 40 = 10. Original = 40. Percentage = 10/40 × 100 = 25% increase."
+        },
+        {
+          "input_text": "A temperature drops from 80 to 60. What is the percentage decrease?",
+          "output_text": "Change = 80 - 60 = 20. Original = 80. Percentage = 20/80 × 100 = 25% decrease."
+        }
+      ]
+    },
+    {
+      "name": "solve_linear_equation",
+      "category": "skill",
+      "summary": "A linear equation can be solved by isolating the variable using inverse operations. Perform the same operation on both sides to maintain equality.",
+      "keywords": ["linear equation", "isolate", "inverse operations"],
+      "content": "Simplify both sides if needed. Use addition or subtraction to move constant terms away from the variable. Use multiplication or division to isolate the variable. Check the solution by substitution.",
+      "examples": [
+        {
+          "input_text": "Solve 3x + 5 = 20.",
+          "output_text": "Subtract 5 from both sides: 3x = 15. Divide by 3: x = 5. Check: 3(5)+5=20."
+        },
+        {
+          "input_text": "Solve 2x - 7 = 11.",
+          "output_text": "Add 7 to both sides: 2x = 18. Divide by 2: x = 9. Check: 2(9)-7=11."
+        }
+      ]
+    },
+    {
+      "name": "solve_proportion",
+      "category": "skill",
+      "summary": "A proportion states that two ratios are equal. Cross multiplication transforms it into a simple equation.",
+      "keywords": ["proportion", "ratio", "cross multiply"],
+      "content": "Write the proportion as a/b = c/d. Cross multiply to get a×d = b×c. Solve the resulting equation for the unknown.",
+      "examples": [
+        {
+          "input_text": "Solve for x: x/6 = 3/9.",
+          "output_text": "Cross multiply: 9x = 18. Divide by 9: x = 2."
+        },
+        {
+          "input_text": "If 4 pens cost 10 units, how much do 10 pens cost? Set up 4/10 = 10/x.",
+          "output_text": "Cross multiply: 4x = 100. Divide by 4: x = 25 units."
+        }
+      ]
+    },
+    {
+      "name": "order_of_operations",
+      "category": "protocol",
+      "summary": "Arithmetic expressions follow a standard order: parentheses, exponents, multiplication and division, then addition and subtraction. Applying the order consistently prevents errors.",
+      "keywords": ["PEMDAS", "arithmetic", "operations"],
+      "content": "Evaluate expressions inside parentheses first. Evaluate exponents. Perform multiplication and division from left to right. Perform addition and subtraction from left to right.",
+      "examples": [
+        {
+          "input_text": "Evaluate 2 + 3 × 4.",
+          "output_text": "Multiplication first: 3 × 4 = 12. Then addition: 2 + 12 = 14."
+        },
+        {
+          "input_text": "Evaluate (5 + 3)^2 - 8 ÷ 2.",
+          "output_text": "Parentheses: 8^2 - 8 ÷ 2. Exponent: 64 - 8 ÷ 2. Division: 64 - 4 = 60."
+        }
+      ]
+    },
+    {
+      "name": "pythagorean_theorem",
+      "category": "reasoning",
+      "summary": "The Pythagorean theorem relates the sides of a right triangle. It states that the square of the hypotenuse equals the sum of the squares of the other two sides.",
+      "keywords": ["right triangle", "hypotenuse", "square"],
+      "content": "Identify the right angle and the hypotenuse opposite it. Use the formula a^2 + b^2 = c^2. Substitute known side lengths. Solve for the unknown side by taking the square root if needed.",
+      "examples": [
+        {
+          "input_text": "A right triangle has legs 3 and 4. Find the hypotenuse.",
+          "output_text": "c^2 = 3^2 + 4^2 = 9 + 16 = 25, so c = 5."
+        },
+        {
+          "input_text": "A right triangle has hypotenuse 13 and one leg 5. Find the other leg.",
+          "output_text": "13^2 = 5^2 + b^2, so 169 = 25 + b^2, b^2 = 144, b = 12."
+        }
+      ]
+    },
+    {
+      "name": "rectangle_area",
+      "category": "skill",
+      "summary": "The area of a rectangle is found by multiplying its length by its width. The result is expressed in square units.",
+      "keywords": ["area", "rectangle", "length", "width"],
+      "content": "Measure or identify the length and width in the same unit. Multiply length by width. State the answer in square units.",
+      "examples": [
+        {
+          "input_text": "A rectangle is 8 cm long and 3 cm wide. Find its area.",
+          "output_text": "Area = 8 × 3 = 24 square cm."
+        },
+        {
+          "input_text": "A rectangle has length 12 m and width 5 m. Find its area.",
+          "output_text": "Area = 12 × 5 = 60 square meters."
+        }
+      ]
+    },
+    {
+      "name": "circle_circumference",
+      "category": "skill",
+      "summary": "The circumference of a circle is the distance around it. It is found by multiplying pi by the diameter, or by 2 pi times the radius.",
+      "keywords": ["circle", "circumference", "pi", "diameter"],
+      "content": "Identify the radius or diameter. If radius is given, double it to get diameter. Multiply diameter by pi. Use 3.14 as an approximation when needed.",
+      "examples": [
+        {
+          "input_text": "A circle has radius 7 cm. Find its circumference using 22/7 for pi.",
+          "output_text": "Diameter = 14 cm. Circumference = 14 × 22/7 = 44 cm."
+        },
+        {
+          "input_text": "A circle has diameter 10 m. Find its circumference using 3.14 for pi.",
+          "output_text": "Circumference = 10 × 3.14 = 31.4 m."
+        }
+      ]
+    },
+    {
+      "name": "circle_area",
+      "category": "skill",
+      "summary": "The area of a circle is found by multiplying pi by the square of the radius. It is expressed in square units.",
+      "keywords": ["circle", "area", "radius", "pi"],
+      "content": "Identify the radius. Square the radius. Multiply by pi. If only diameter is given, divide by 2 first.",
+      "examples": [
+        {
+          "input_text": "A circle has radius 5 cm. Find its area using 3.14 for pi.",
+          "output_text": "Area = 3.14 × 5^2 = 3.14 × 25 = 78.5 square cm."
+        },
+        {
+          "input_text": "A circle has diameter 10 m. Find its area using 3.14 for pi.",
+          "output_text": "Radius = 5 m. Area = 3.14 × 25 = 78.5 square m."
+        }
+      ]
+    },
+    {
+      "name": "rectangular_prism_volume",
+      "category": "skill",
+      "summary": "The volume of a rectangular prism is found by multiplying length, width, and height. The result is expressed in cubic units.",
+      "keywords": ["volume", "rectangular prism", "dimensions"],
+      "content": "Identify the three dimensions: length, width, height. Multiply them together. Ensure all dimensions use the same unit.",
+      "examples": [
+        {
+          "input_text": "A box is 2 m long, 3 m wide, and 4 m high. Find its volume.",
+          "output_text": "Volume = 2 × 3 × 4 = 24 cubic meters."
+        },
+        {
+          "input_text": "A prism is 5 cm long, 6 cm wide, and 2 cm high. Find its volume.",
+          "output_text": "Volume = 5 × 6 × 2 = 60 cubic cm."
+        }
+      ]
+    },
+    {
+      "name": "triangle_angle_sum",
+      "category": "reasoning",
+      "summary": "The interior angles of a triangle always add to 180 degrees. This fact can be used to find an unknown angle when the other two are known.",
+      "keywords": ["triangle", "angle sum", "degrees"],
+      "content": "Add the two known angles. Subtract their sum from 180 degrees. The result is the unknown angle.",
+      "examples": [
+        {
+          "input_text": "A triangle has angles 50° and 60°. Find the third angle.",
+          "output_text": "Third angle = 180 - (50 + 60) = 70°."
+        },
+        {
+          "input_text": "A triangle has angles 35° and 85°. Find the third angle.",
+          "output_text": "Third angle = 180 - (35 + 85) = 60°."
+        }
+      ]
+    },
+    {
+      "name": "unit_conversion_length",
+      "category": "skill",
+      "summary": "Converting between length units requires multiplying or dividing by the appropriate conversion factor. Keeping units aligned prevents mistakes.",
+      "keywords": ["conversion", "length", "units"],
+      "content": "Identify the conversion factor between the units. Multiply if converting from larger to smaller units; divide if converting from smaller to larger units.",
+      "examples": [
+        {
+          "input_text": "Convert 3 km to meters.",
+          "output_text": "1 km = 1000 m, so 3 km = 3000 m."
+        },
+        {
+          "input_text": "Convert 450 cm to meters.",
+          "output_text": "1 m = 100 cm, so 450 cm = 4.5 m."
+        }
+      ]
+    },
+    {
+      "name": "symmetry_identification",
+      "category": "identification",
+      "summary": "A shape has line symmetry if a line can divide it into two mirror-image halves. The number of symmetry lines depends on the shape.",
+      "keywords": ["symmetry", "mirror line", "shape"],
+      "content": "Examine the shape for possible lines that split it into identical halves. Test each candidate line by mentally folding the shape along it. Count all valid lines of symmetry.",
+      "examples": [
+        {
+          "input_text": "How many lines of symmetry does a square have?",
+          "output_text": "A square has four lines of symmetry: two diagonals and two lines through midpoints of opposite sides."
+        },
+        {
+          "input_text": "How many lines of symmetry does an equilateral triangle have?",
+          "output_text": "An equilateral triangle has three lines of symmetry, each from a vertex to the midpoint of the opposite side."
+        }
+      ]
+    },
+    {
+      "name": "speed_calculation",
+      "category": "skill",
+      "summary": "Speed is distance divided by time. This relationship can be rearranged to find distance or time when the other two quantities are known.",
+      "keywords": ["speed", "distance", "time"],
+      "content": "Write the formula speed = distance / time. Rearrange as needed: distance = speed × time, time = distance / speed. Substitute known values and solve.",
+      "examples": [
+        {
+          "input_text": "A car travels 150 km in 3 hours. Find its average speed.",
+          "output_text": "Speed = 150 km / 3 h = 50 km/h."
+        },
+        {
+          "input_text": "A cyclist moves at 15 km/h for 2 hours. How far does the cyclist travel?",
+          "output_text": "Distance = 15 × 2 = 30 km."
+        }
+      ]
+    },
+    {
+      "name": "acceleration_calculation",
+      "category": "skill",
+      "summary": "Acceleration is the change in velocity divided by time. It is measured in units of velocity per time.",
+      "keywords": ["acceleration", "velocity", "time"],
+      "content": "Find the change in velocity by subtracting initial velocity from final velocity. Divide the change by the time interval. Keep the sign to indicate direction.",
+      "examples": [
+        {
+          "input_text": "A ball speeds up from 0 m/s to 20 m/s in 4 seconds. Find its acceleration.",
+          "output_text": "Change in velocity = 20 - 0 = 20 m/s. Acceleration = 20 / 4 = 5 m/s²."
+        },
+        {
+          "input_text": "A train slows from 30 m/s to 10 m/s in 5 seconds. Find its acceleration.",
+          "output_text": "Change in velocity = 10 - 30 = -20 m/s. Acceleration = -20 / 5 = -4 m/s²."
+        }
+      ]
+    },
+    {
+      "name": "newton_second_law",
+      "category": "reasoning",
+      "summary": "Newton's second law states that force equals mass times acceleration. The formula can be rearranged to find any one quantity when the other two are known.",
+      "keywords": ["force", "mass", "acceleration"],
+      "content": "Use the formula F = m × a. To find mass, use m = F / a. To find acceleration, use a = F / m. Substitute known values.",
+      "examples": [
+        {
+          "input_text": "A 5 kg object accelerates at 2 m/s². What is the net force?",
+          "output_text": "F = 5 × 2 = 10 N."
+        },
+        {
+          "input_text": "A force of 20 N acts on a 4 kg object. What is its acceleration?",
+          "output_text": "a = 20 / 4 = 5 m/s²."
+        }
+      ]
+    },
+    {
+      "name": "kinetic_energy",
+      "category": "skill",
+      "summary": "Kinetic energy is the energy of motion. It is calculated as one half times mass times the square of velocity.",
+      "keywords": ["kinetic energy", "mass", "velocity"],
+      "content": "Use the formula KE = 0.5 × m × v^2. Square the velocity first, then multiply by half the mass. State the answer in joules.",
+      "examples": [
+        {
+          "input_text": "A 2 kg object moves at 3 m/s. Find its kinetic energy.",
+          "output_text": "KE = 0.5 × 2 × 3^2 = 1 × 9 = 9 J."
+        },
+        {
+          "input_text": "A 4 kg object moves at 5 m/s. Find its kinetic energy.",
+          "output_text": "KE = 0.5 × 4 × 25 = 2 × 25 = 50 J."
+        }
+      ]
+    },
+    {
+      "name": "density_calculation",
+      "category": "skill",
+      "summary": "Density is mass per unit volume. It is calculated by dividing mass by volume.",
+      "keywords": ["density", "mass", "volume"],
+      "content": "Identify the mass and volume. Use density = mass / volume. Ensure units are consistent, such as grams per cubic centimeter.",
+      "examples": [
+        {
+          "input_text": "A block has mass 200 g and volume 50 cm³. Find its density.",
+          "output_text": "Density = 200 / 50 = 4 g/cm³."
+        },
+        {
+          "input_text": "A liquid has mass 300 g and volume 150 mL. Find its density.",
+          "output_text": "Density = 300 / 150 = 2 g/mL."
+        }
+      ]
+    },
+    {
+      "name": "work_calculation",
+      "category": "skill",
+      "summary": "Work is done when a force moves an object through a distance in the direction of the force. It is calculated as force times distance.",
+      "keywords": ["work", "force", "distance"],
+      "content": "Identify the applied force and the distance moved in the force's direction. Multiply them. The answer is in joules.",
+      "examples": [
+        {
+          "input_text": "A force of 10 N pushes a box 3 m. How much work is done?",
+          "output_text": "Work = 10 × 3 = 30 J."
+        },
+        {
+          "input_text": "A force of 25 N moves a cart 4 m. How much work is done?",
+          "output_text": "Work = 25 × 4 = 100 J."
+        }
+      ]
+    },
+    {
+      "name": "ohms_law",
+      "category": "reasoning",
+      "summary": "Ohm's law relates voltage, current, and resistance in a simple circuit. It states that voltage equals current times resistance.",
+      "keywords": ["voltage", "current", "resistance", "ohms law"],
+      "content": "Use V = I × R. Rearrange to find I = V / R or R = V / I. Substitute the known electrical quantities.",
+      "examples": [
+        {
+          "input_text": "A circuit has current 2 A and resistance 5 Ω. Find the voltage.",
+          "output_text": "V = 2 × 5 = 10 V."
+        },
+        {
+          "input_text": "A circuit has voltage 12 V and resistance 4 Ω. Find the current.",
+          "output_text": "I = 12 / 4 = 3 A."
+        }
+      ]
+    },
+    {
+      "name": "archimedes_buoyancy",
+      "category": "reasoning",
+      "summary": "Archimedes' principle states that a submerged object experiences an upward buoyant force equal to the weight of the fluid it displaces. An object floats if its weight is less than or equal to the buoyant force.",
+      "keywords": ["buoyancy", "Archimedes", "displacement"],
+      "content": "Determine the weight of the object. Determine the weight of the displaced fluid. If the displaced fluid weight is greater than or equal to the object's weight, the object floats; otherwise it sinks.",
+      "examples": [
+        {
+          "input_text": "A ball weighs 5 N and displaces 8 N of water when fully submerged. Does it float?",
+          "output_text": "The buoyant force is 8 N, which is greater than the object's weight of 5 N, so the ball floats."
+        },
+        {
+          "input_text": "A stone weighs 20 N and displaces 15 N of water when fully submerged. Does it float?",
+          "output_text": "The buoyant force is 15 N, less than the stone's weight of 20 N, so the stone sinks."
+        }
+      ]
+    },
+    {
+      "name": "balancing_equations",
+      "category": "protocol",
+      "summary": "Balancing chemical equations ensures the same number of each type of atom appears on both sides. Coefficients are adjusted without changing chemical formulas.",
+      "keywords": ["chemical equation", "balanced", "atoms", "coefficients"],
+      "content": "Count atoms of each element on both sides of the equation. Add coefficients in front of compounds to balance one element at a time. Recount and repeat until all elements balance.",
+      "examples": [
+        {
+          "input_text": "Balance H2 + O2 → H2O.",
+          "output_text": "Start with 2 H on left and 2 on right, but O is 2 on left and 1 on right. Place 2 before H2O: H2 + O2 → 2H2O. Now H is 2 on left and 4 on right, so place 2 before H2: 2H2 + O2 → 2H2O. Balanced."
+        },
+        {
+          "input_text": "Balance N2 + H2 → NH3.",
+          "output_text": "Place 2 before NH3 to balance N: N2 + H2 → 2NH3. H is 2 on left and 6 on right, so place 3 before H2: N2 + 3H2 → 2NH3. Balanced."
+        }
+      ]
+    },
+    {
+      "name": "molar_mass_calculation",
+      "category": "skill",
+      "summary": "Molar mass is the mass of one mole of a substance. It is found by adding the atomic masses of the atoms in the chemical formula.",
+      "keywords": ["molar mass", "atomic mass", "mole"],
+      "content": "Identify the elements in the formula and their counts. Multiply each element's atomic mass by its count. Sum the results.",
+      "examples": [
+        {
+          "input_text": "Find the molar mass of H2O. Atomic masses: H=1, O=16.",
+          "output_text": "2 × 1 + 16 = 18 g/mol."
+        },
+        {
+          "input_text": "Find the molar mass of CO2. Atomic masses: C=12, O=16.",
+          "output_text": "12 + 2 × 16 = 44 g/mol."
+        }
+      ]
+    },
+    {
+      "name": "mole_conversion",
+      "category": "skill",
+      "summary": "The number of moles is calculated by dividing the mass of a sample by its molar mass. This relationship links laboratory mass to chemical amount.",
+      "keywords": ["mole", "mass", "molar mass"],
+      "content": "Identify the sample mass and molar mass. Use moles = mass / molar mass. Ensure mass is in grams and molar mass in grams per mole.",
+      "examples": [
+        {
+          "input_text": "How many moles are in 36 g of H2O? Molar mass = 18 g/mol.",
+          "output_text": "Moles = 36 / 18 = 2 mol."
+        },
+        {
+          "input_text": "How many moles are in 22 g of CO2? Molar mass = 44 g/mol.",
+          "output_text": "Moles = 22 / 44 = 0.5 mol."
+        }
+      ]
+    },
+    {
+      "name": "ph_classification",
+      "category": "identification",
+      "summary": "The pH scale indicates how acidic or basic a solution is. Values below 7 are acidic, 7 is neutral, and values above 7 are basic.",
+      "keywords": ["pH", "acid", "base", "neutral"],
+      "content": "Compare the given pH value to 7. If less than 7, classify as acidic. If exactly 7, classify as neutral. If greater than 7, classify as basic.",
+      "examples": [
+        {
+          "input_text": "A solution has pH 3. Is it acidic, neutral, or basic?",
+          "output_text": "pH 3 is less than 7, so the solution is acidic."
+        },
+        {
+          "input_text": "A solution has pH 9. Is it acidic, neutral, or basic?",
+          "output_text": "pH 9 is greater than 7, so the solution is basic."
+        }
+      ]
+    },
+    {
+      "name": "liquid_density_layering",
+      "category": "reasoning",
+      "summary": "Liquids with higher density sink below liquids with lower density when combined. This principle explains layering.",
+      "keywords": ["density", "liquid", "layer"],
+      "content": "Compare the densities of the liquids. The liquid with the greatest density forms the bottom layer, and the least dense forms the top layer. Arrange them accordingly.",
+      "examples": [
+        {
+          "input_text": "Oil has density 0.9 g/mL, water 1.0 g/mL, and honey 1.4 g/mL. Which layer order forms?",
+          "output_text": "Honey bottom, water middle, oil top."
+        },
+        {
+          "input_text": "Liquid A density 0.8 g/mL and liquid B density 1.2 g/mL. Which is on top?",
+          "output_text": "Liquid A is less dense, so it stays on top of liquid B."
+        }
+      ]
+    },
+    {
+      "name": "conservation_mass_reactions",
+      "category": "reasoning",
+      "summary": "In a closed system, the total mass before a chemical reaction equals the total mass after the reaction. Atoms are rearranged but not created or destroyed.",
+      "keywords": ["conservation of mass", "reaction", "closed system"],
+      "content": "Add the masses of all reactants before the reaction. Add the masses of all products after the reaction. In a closed system, these totals must be equal.",
+      "examples": [
+        {
+          "input_text": "10 g of A reacts with 5 g of B in a closed container. What is the total mass of products?",
+          "output_text": "Total mass of products = 10 + 5 = 15 g."
+        },
+        {
+          "input_text": "If 8 g of X and 12 g of Y react completely in a closed flask, what total mass of products is expected?",
+          "output_text": "Total mass of products = 20 g."
+        }
+      ]
+    },
+    {
+      "name": "planet_order_sun",
+      "category": "identification",
+      "summary": "The planets in the solar system are ordered by their distance from the Sun. This sequence is a basic reference for astronomical classification.",
+      "keywords": ["planet", "solar system", "order"],
+      "content": "Recall the standard order: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune. Use this list to answer sequence questions.",
+      "examples": [
+        {
+          "input_text": "Which planet is third from the Sun?",
+          "output_text": "Earth is the third planet from the Sun."
+        },
+        {
+          "input_text": "Which planet comes after Mars in order from the Sun?",
+          "output_text": "Jupiter comes after Mars."
+        }
+      ]
+    },
+    {
+      "name": "lunar_phases",
+      "category": "identification",
+      "summary": "The Moon's phases follow a regular sequence as its illuminated side becomes more or less visible from Earth. The main phases are new, first quarter, full, and last quarter.",
+      "keywords": ["moon", "phase", "lunar cycle"],
+      "content": "Follow the sequence: new moon, waxing crescent, first quarter, waxing gibbous, full moon, waning gibbous, last quarter, waning crescent. Identify the next phase by moving forward in the cycle.",
+      "examples": [
+        {
+          "input_text": "What phase comes after a full moon?",
+          "output_text": "Waning gibbous comes after a full moon."
+        },
+        {
+          "input_text": "What phase comes after a first quarter?",
+          "output_text": "Waxing gibbous comes after a first quarter."
+        }
+      ]
+    },
+    {
+      "name": "seasons_earth_tilt",
+      "category": "reasoning",
+      "summary": "Earth's seasons are caused by the tilt of its axis as it orbits the Sun. Different hemispheres receive more direct sunlight at different times of year.",
+      "keywords": ["seasons", "tilt", "orbit", "hemisphere"],
+      "content": "Identify the hemisphere and time of year. When a hemisphere is tilted toward the Sun, it experiences summer; when tilted away, winter. Spring and fall occur during intermediate positions.",
+      "examples": [
+        {
+          "input_text": "Why does the Northern Hemisphere experience summer in June?",
+          "output_text": "In June, the Northern Hemisphere is tilted toward the Sun, receiving more direct sunlight, so it is summer."
+        },
+        {
+          "input_text": "When it is winter in the Southern Hemisphere, which season is it in the Northern Hemisphere?",
+          "output_text": "It is summer in the Northern Hemisphere."
+        }
+      ]
+    },
+    {
+      "name": "scale_model_proportions",
+      "category": "skill",
+      "summary": "Scale models represent real distances using proportional reductions. A scale factor converts real measurements to model measurements.",
+      "keywords": ["scale model", "proportion", "distance"],
+      "content": "Set up a proportion using the scale. Multiply the real measurement by the scale factor. Keep units consistent.",
+      "examples": [
+        {
+          "input_text": "A model uses a scale of 1 cm = 10,000 km. How many centimeters represent 50,000 km?",
+          "output_text": "50,000 / 10,000 = 5 cm."
+        },
+        {
+          "input_text": "A model uses 1 mm = 1,000 km. How many millimeters represent 8,000 km?",
+          "output_text": "8,000 / 1,000 = 8 mm."
+        }
+      ]
+    },
+    {
+      "name": "binary_to_decimal",
+      "category": "skill",
+      "summary": "Binary numbers use base 2. Each digit represents a power of two, and summing the powered values gives the decimal equivalent.",
+      "keywords": ["binary", "decimal", "base conversion"],
+      "content": "Write the binary digits with their place values from right to left as 2^0, 2^1, 2^2, etc. Multiply each digit by its place value. Sum the results.",
+      "examples": [
+        {
+          "input_text": "Convert binary 101 to decimal.",
+          "output_text": "1×2^2 + 0×2^1 + 1×2^0 = 4 + 0 + 1 = 5."
+        },
+        {
+          "input_text": "Convert binary 1101 to decimal.",
+          "output_text": "1×8 + 1×4 + 0×2 + 1×1 = 8 + 4 + 0 + 1 = 13."
+        }
+      ]
+    },
+    {
+      "name": "decimal_to_binary",
+      "category": "skill",
+      "summary": "Decimal numbers can be converted to binary by repeatedly dividing by 2 and recording remainders. The remainders read in reverse give the binary form.",
+      "keywords": ["decimal", "binary", "division", "remainder"],
+      "content": "Divide the decimal number by 2. Record the remainder. Repeat with the quotient until the quotient is 0. Read the remainders from bottom to top.",
+      "examples": [
+        {
+          "input_text": "Convert decimal 10 to binary.",
+          "output_text": "10 ÷ 2 = 5 remainder 0; 5 ÷ 2 = 2 remainder 1; 2 ÷ 2 = 1 remainder 0; 1 ÷ 2 = 0 remainder 1. Read from bottom: 1010."
+        },
+        {
+          "input_text": "Convert decimal 7 to binary.",
+          "output_text": "7 ÷ 2 = 3 remainder 1; 3 ÷ 2 = 1 remainder 1; 1 ÷ 2 = 0 remainder 1. Read from bottom: 111."
+        }
+      ]
+    },
+    {
+      "name": "boolean_and_operator",
+      "category": "reasoning",
+      "summary": "The Boolean AND operator returns true only when both operands are true. Otherwise it returns false.",
+      "keywords": ["boolean", "AND", "logic"],
+      "content": "Evaluate the truth values of both operands. If both are true, the result is true. If at least one is false, the result is false.",
+      "examples": [
+        {
+          "input_text": "Evaluate true AND false.",
+          "output_text": "False, because both operands are not true."
+        },
+        {
+          "input_text": "Evaluate true AND true.",
+          "output_text": "True, because both operands are true."
+        }
+      ]
+    },
+    {
+      "name": "boolean_or_operator",
+      "category": "reasoning",
+      "summary": "The Boolean OR operator returns true when at least one operand is true. It returns false only when both operands are false.",
+      "keywords": ["boolean", "OR", "logic"],
+      "content": "Evaluate the truth values of both operands. If at least one is true, the result is true. If both are false, the result is false.",
+      "examples": [
+        {
+          "input_text": "Evaluate false OR false.",
+          "output_text": "False, because both operands are false."
+        },
+        {
+          "input_text": "Evaluate false OR true.",
+          "output_text": "True, because at least one operand is true."
+        }
+      ]
+    },
+    {
+      "name": "conditional_statement_structure",
+      "category": "protocol",
+      "summary": "A conditional statement executes a block only when a condition is true. It follows the pattern if condition then action.",
+      "keywords": ["conditional", "if", "control flow"],
+      "content": "Write the condition to test. If the condition is true, perform the specified action. If the condition is false, skip the action or perform the else action.",
+      "examples": [
+        {
+          "input_text": "Write a conditional that prints 'pass' when score is 70 or above.",
+          "output_text": "If score >= 70, print 'pass'."
+        },
+        {
+          "input_text": "Write a conditional that prints 'even' when a number is divisible by 2.",
+          "output_text": "If number mod 2 = 0, print 'even'."
+        }
+      ]
+    },
+    {
+      "name": "loop_iteration_pattern",
+      "category": "protocol",
+      "summary": "A loop repeats a block of code for each item in a collection or while a condition holds. It avoids writing repeated instructions.",
+      "keywords": ["loop", "iteration", "repeat"],
+      "content": "Identify the collection or condition. For each element, perform the action. Ensure there is a stopping condition to avoid infinite repetition.",
+      "examples": [
+        {
+          "input_text": "Describe a loop that prints numbers from 1 to 5.",
+          "output_text": "Start at 1. While the number is less than or equal to 5, print the number and increment by 1."
+        },
+        {
+          "input_text": "Describe a loop that sums the numbers in a list.",
+          "output_text": "Start a total at 0. For each number in the list, add it to the total. After the loop, the total contains the sum."
+        }
+      ]
+    },
+    {
+      "name": "recursion_base_recursive_case",
+      "category": "reasoning",
+      "summary": "Recursion solves a problem by breaking it into smaller instances of the same problem. A recursive function needs a base case to stop and a recursive case to continue.",
+      "keywords": ["recursion", "base case", "recursive case"],
+      "content": "Identify the smallest input that can be solved directly; this is the base case. For all other inputs, express the solution in terms of a smaller input. Ensure each recursive call moves closer to the base case.",
+      "examples": [
+        {
+          "input_text": "Describe a recursive function to compute factorial of n.",
+          "output_text": "Base case: if n is 0, return 1. Recursive case: return n times factorial(n-1)."
+        },
+        {
+          "input_text": "Describe a recursive function to count down from n to 1.",
+          "output_text": "Base case: if n is 0, stop. Recursive case: print n, then call the function with n-1."
+        }
+      ]
+    },
+    {
+      "name": "binary_search_algorithm",
+      "category": "strategy",
+      "summary": "Binary search finds an item in a sorted list by repeatedly comparing the target to the middle element and discarding half the search space.",
+      "keywords": ["binary search", "sorted list", "algorithm"],
+      "content": "Find the middle element. If it matches the target, stop. If the target is smaller, search the left half; if larger, search the right half. Repeat until found or no elements remain.",
+      "examples": [
+        {
+          "input_text": "Use binary search to find 7 in the sorted list [1, 3, 5, 7, 9].",
+          "output_text": "Middle is 5. 7 > 5, so search [7,9]. Middle is 7. Found."
+        },
+        {
+          "input_text": "Use binary search to find 2 in the sorted list [1, 2, 3, 4].",
+          "output_text": "Middle is 2 (or 3 depending on choice). If middle is 3, 2 < 3, search [1,2]. Middle is 1, 2 > 1, search [2]. Found."
+        }
+      ]
+    },
+    {
+      "name": "comparison_sorting",
+      "category": "strategy",
+      "summary": "Comparison sorting arranges items by repeatedly comparing pairs and swapping them when out of order. A simple approach is bubble sort.",
+      "keywords": ["sort", "comparison", "order"],
+      "content": "Scan the list comparing adjacent pairs. If a pair is out of order, swap them. Repeat passes until no swaps are needed.",
+      "examples": [
+        {
+          "input_text": "Sort [3, 1, 2] using bubble sort.",
+          "output_text": "Pass 1: compare 3 and 1, swap to [1,3,2]; compare 3 and 2, swap to [1,2,3]. Pass 2: no swaps, done."
+        },
+        {
+          "input_text": "Sort [5, 2, 4] using bubble sort.",
+          "output_text": "Pass 1: 5 and 2 swap to [2,5,4]; 5 and 4 swap to [2,4,5]. Pass 2: no swaps, done."
+        }
+      ]
+    },
+    {
+      "name": "variable_assignment_update",
+      "category": "skill",
+      "summary": "A variable stores a value that can be used and updated during program execution. Assignment gives a variable a value; updating changes it based on its current value.",
+      "keywords": ["variable", "assignment", "update"],
+      "content": "Assign an initial value to the variable. To update, use the variable's current value in an expression and assign the result back to the variable. Example: total = total + amount.",
+      "examples": [
+        {
+          "input_text": "Start with x = 5. Update x by adding 3. What is x now?",
+          "output_text": "x = 5 + 3 = 8."
+        },
+        {
+          "input_text": "Start with count = 10. Update count by multiplying by 2. What is count now?",
+          "output_text": "count = 10 × 2 = 20."
+        }
+      ]
+    },
+    {
+      "name": "sort_records_by_field",
+      "category": "management",
+      "summary": "Records can be sorted by one or more fields to make them easier to search and analyze. Sorting arranges rows in ascending or descending order based on a selected field.",
+      "keywords": ["sort", "records", "field", "ascending"],
+      "content": "Identify the field to sort by. Arrange records so that the field values are in ascending or descending order. If two values are equal, use a secondary field if needed.",
+      "examples": [
+        {
+          "input_text": "Sort these records by age ascending: [name: A, age: 30], [name: B, age: 25], [name: C, age: 28].",
+          "output_text": "B (25), C (28), A (30)."
+        },
+        {
+          "input_text": "Sort these records by score descending: [name: X, score: 80], [name: Y, score: 95], [name: Z, score: 87].",
+          "output_text": "Y (95), Z (87), X (80)."
+        }
+      ]
+    },
+    {
+      "name": "filter_records_by_condition",
+      "category": "management",
+      "summary": "Filtering selects only the records that satisfy a given condition. This reduces a dataset to relevant entries.",
+      "keywords": ["filter", "condition", "records"],
+      "content": "Define the condition a record must meet. Examine each record and keep it if the condition is true. Discard or ignore records that do not meet the condition.",
+      "examples": [
+        {
+          "input_text": "Filter records with quantity greater than 5 from [(item A, qty 3), (item B, qty 7), (item C, qty 5)].",
+          "output_text": "item B, qty 7."
+        },
+        {
+          "input_text": "Filter records with status equal to 'active' from [(1, active), (2, inactive), (3, active)].",
+          "output_text": "Records 1 and 3."
+        }
+      ]
+    },
+    {
+      "name": "group_by_category",
+      "category": "management",
+      "summary": "Grouping arranges records into categories based on a shared attribute. It helps produce summaries such as counts or totals per group.",
+      "keywords": ["group", "category", "aggregate"],
+      "content": "Identify the category field. Place each record into the appropriate group. For each group, compute the desired summary such as count, sum, or average.",
+      "examples": [
+        {
+          "input_text": "Group fruits by color: apple red, banana yellow, cherry red.",
+          "output_text": "Red: apple, cherry; Yellow: banana."
+        },
+        {
+          "input_text": "Group transactions by type and sum amounts: A 10, B 20, A 5.",
+          "output_text": "Type A total: 15; Type B total: 20."
+        }
+      ]
+    },
+    {
+      "name": "find_duplicates",
+      "category": "identification",
+      "summary": "Duplicate records share the same value in a key field or across all fields. Identifying duplicates improves data quality.",
+      "keywords": ["duplicate", "record", "key"],
+      "content": "Choose a key field or combination of fields that should be unique. Compare records by that key. Flag or list records that have identical key values.",
+      "examples": [
+        {
+          "input_text": "Find duplicates by ID in [1, 2, 3, 2].",
+          "output_text": "ID 2 appears twice."
+        },
+        {
+          "input_text": "Find duplicate email values in [a@x, b@y, a@x].",
+          "output_text": "a@x appears twice."
+        }
+      ]
+    },
+    {
+      "name": "normalize_data_format",
+      "category": "protocol",
+      "summary": "Normalizing data ensures consistent representation of values, such as dates, capitalization, or units. Consistent formatting prevents errors in analysis.",
+      "keywords": ["normalization", "format", "consistency"],
+      "content": "Identify the field and the target standard format. Convert each value to that format. Apply the same rule to every record.",
+      "examples": [
+        {
+          "input_text": "Normalize these names to title case: 'john smith', 'ALICE BAKER'.",
+          "output_text": "John Smith, Alice Baker."
+        },
+        {
+          "input_text": "Normalize dates to YYYY-MM-DD: '01/02/2024' and 'Mar 5, 2024'.",
+          "output_text": "2024-01-02 and 2024-03-05."
+        }
+      ]
+    },
+    {
+      "name": "average_calculation",
+      "category": "skill",
+      "summary": "The average is a measure of central tendency. It is calculated by summing all values and dividing by the number of values.",
+      "keywords": ["average", "mean", "summary"],
+      "content": "Add all values together. Count how many values there are. Divide the sum by the count.",
+      "examples": [
+        {
+          "input_text": "Find the average of 4, 8, 6, 10.",
+          "output_text": "Sum = 28, count = 4, average = 7."
+        },
+        {
+          "input_text": "Find the average of 12, 15, 18.",
+          "output_text": "Sum = 45, count = 3, average = 15."
+        }
+      ]
+    },
+    {
+      "name": "data_validation_rules",
+      "category": "protocol",
+      "summary": "Data validation checks whether values meet defined rules before they are accepted. Rules can include type, range, and required field checks.",
+      "keywords": ["validation", "rule", "data quality"],
+      "content": "Define the acceptable rules for a field, such as numeric range or allowed text. Test each value against the rules. Accept values that pass and reject or flag those that fail.",
+      "examples": [
+        {
+          "input_text": "Validate that age must be between 0 and 120. Which values pass: 25, -5, 130?",
+          "output_text": "25 passes; -5 and 130 fail."
+        },
+        {
+          "input_text": "Validate that a code must be exactly three letters. Which pass: 'AB', 'ABC', 'A1C'?",
+          "output_text": "Only 'ABC' passes."
+        }
+      ]
+    },
+    {
+      "name": "lookup_table_creation",
+      "category": "management",
+      "summary": "A lookup table maps keys to values so information can be retrieved quickly without searching every record. It is useful for translating codes into descriptions.",
+      "keywords": ["lookup table", "key", "value", "mapping"],
+      "content": "Define unique keys and their corresponding values. When given a key, find the matching row and return its value. If no match exists, return a default or not found.",
+      "examples": [
+        {
+          "input_text": "Create a lookup table mapping country code to name: US, UK, DE. What does DE return?",
+          "output_text": "US: United States, UK: United Kingdom, DE: Germany. DE returns Germany."
+        },
+        {
+          "input_text": "Use a lookup table to convert grade letters to points: A=4, B=3, C=2. What is B?",
+          "output_text": "B returns 3."
+        }
+      ]
+    },
+    {
+      "name": "hierarchical_folder_structure",
+      "category": "management",
+      "summary": "A hierarchical folder structure groups related files into nested folders. This makes files easier to locate and maintain.",
+      "keywords": ["folder", "hierarchy", "organization"],
+      "content": "Start with a top-level folder. Create subfolders for major categories. Within each subfolder, create further folders as needed. Assign files to the most specific relevant folder.",
+      "examples": [
+        {
+          "input_text": "Design a folder structure for a project with documents, images, and code.",
+          "output_text": "Project/ contains Documents/, Images/, and Code/ subfolders."
+        },
+        {
+          "input_text": "Where should a file named budget_2024.xlsx go in a hierarchy with Finance and Reports folders?",
+          "output_text": "It could go in Finance/Reports/ or directly in Finance/ depending on the desired level of detail."
+        }
+      ]
+    },
+    {
+      "name": "file_naming_conventions",
+      "category": "protocol",
+      "summary": "A naming convention defines a consistent pattern for file names, often including date, project, and version. Consistent names prevent confusion.",
+      "keywords": ["naming convention", "file name", "version"],
+      "content": "Choose components to include, such as project, date, and version. Decide on order and separators. Apply the same pattern to every file.",
+      "examples": [
+        {
+          "input_text": "Create a file name for a project plan final version from project Atlas, date 2024-05-10.",
+          "output_text": "Atlas_2024-05-10_plan_v1_final.txt or similar."
+        },
+        {
+          "input_text": "Create a file name for a weekly report for team Beta, week 12.",
+          "output_text": "Beta_week12_report.txt."
+        }
+      ]
+    },
+    {
+      "name": "version_control_naming",
+      "category": "protocol",
+      "summary": "Version control in file names distinguishes successive edits of a file. A common method is appending v1, v2, or draft and final labels.",
+      "keywords": ["version control", "draft", "final", "naming"],
+      "content": "When saving a new version, keep the same base name and add a version suffix. Increase the version number for each major change. Mark final versions clearly.",
+      "examples": [
+        {
+          "input_text": "A document called proposal.txt is revised. What should the new version be named?",
+          "output_text": "proposal_v2.txt."
+        },
+        {
+          "input_text": "A presentation draft is completed. How should the final file be named to distinguish it from draft?",
+          "output_text": "presentation_final.pptx."
+        }
+      ]
+    },
+    {
+      "name": "archiving_files",
+      "category": "management",
+      "summary": "Archiving moves inactive files into a separate location or compressed package to keep active workspaces clean while preserving records.",
+      "keywords": ["archive", "inactive", "preserve"],
+      "content": "Identify files no longer needed for daily work. Move them to an archive folder or compress them into an archive file. Label the archive with a date or project name.",
+      "examples": [
+        {
+          "input_text": "What should you do with completed project files from last year?",
+          "output_text": "Move them to an archive folder labeled with the project name and year."
+        },
+        {
+          "input_text": "How can you save space while preserving old reports?",
+          "output_text": "Compress them into a zip archive and store it in the archive folder."
+        }
+      ]
+    },
+    {
+      "name": "subject_verb_agreement",
+      "category": "skill",
+      "summary": "A verb must agree with its subject in number. Singular subjects take singular verbs; plural subjects take plural verbs.",
+      "keywords": ["grammar", "subject", "verb", "agreement"],
+      "content": "Identify the subject and whether it is singular or plural. Choose the verb form that matches. Ignore words between the subject and verb when checking agreement.",
+      "examples": [
+        {
+          "input_text": "Choose the correct verb: 'The list of items ___ long.' (is/are)",
+          "output_text": "The subject is 'list', singular, so 'is' is correct: The list of items is long."
+        },
+        {
+          "input_text": "Choose the correct verb: 'The boxes ___ in the corner.' (is/are)",
+          "output_text": "The subject is 'boxes', plural, so 'are' is correct: The boxes are in the corner."
+        }
+      ]
+    },
+    {
+      "name": "pronoun_antecedent_agreement",
+      "category": "skill",
+      "summary": "A pronoun must agree with its antecedent in number and gender. This ensures sentences are clear and grammatically correct.",
+      "keywords": ["pronoun", "antecedent", "agreement"],
+      "content": "Find the noun a pronoun replaces. Match singular antecedents with singular pronouns and plural antecedents with plural pronouns. Use gender-neutral pronouns when appropriate.",
+      "examples": [
+        {
+          "input_text": "Correct: 'Every student must bring ___ book.' (their/his or her)",
+          "output_text": "Use 'their' for gender-neutral singular or 'his or her' in formal style: Every student must bring their book."
+        },
+        {
+          "input_text": "Correct: 'The girls finished ___ homework.' (her/their)",
+          "output_text": "The antecedent 'girls' is plural, so use 'their': The girls finished their homework."
+        }
+      ]
+    },
+    {
+      "name": "parallel_structure",
+      "category": "protocol",
+      "summary": "Parallel structure uses the same grammatical form for items in a series or list. It improves clarity and readability.",
+      "keywords": ["parallelism", "grammar", "list"],
+      "content": "Identify the series or list. Check that each item uses the same grammatical form, such as all nouns, all -ing verbs, or all infinitive phrases. Revise mismatches.",
+      "examples": [
+        {
+          "input_text": "Fix parallelism: 'She likes reading, to write, and drawing.'",
+          "output_text": "She likes reading, writing, and drawing."
+        },
+        {
+          "input_text": "Fix parallelism: 'The job requires punctuality, being organized, and to communicate well.'",
+          "output_text": "The job requires punctuality, organization, and communication."
+        }
+      ]
+    },
+    {
+      "name": "active_passive_voice",
+      "category": "identification",
+      "summary": "Active voice makes the subject perform the action; passive voice makes the subject receive the action. Active voice is usually clearer and more direct.",
+      "keywords": ["active voice", "passive voice", "subject"],
+      "content": "Check whether the subject performs the action or receives it. To convert passive to active, make the doer the subject and place the receiver after the verb.",
+      "examples": [
+        {
+          "input_text": "Identify the voice: 'The ball was thrown by the player.'",
+          "output_text": "Passive voice, because the subject 'ball' receives the action."
+        },
+        {
+          "input_text": "Convert to active: 'The report was written by the analyst.'",
+          "output_text": "The analyst wrote the report."
+        }
+      ]
+    },
+    {
+      "name": "topic_sentence_identification",
+      "category": "identification",
+      "summary": "A topic sentence states the main idea of a paragraph. It is usually general enough to cover the supporting details that follow.",
+      "keywords": ["topic sentence", "paragraph", "main idea"],
+      "content": "Read the paragraph and ask what it is mainly about. Look for a sentence that expresses that main idea, often at the beginning or end. Supporting sentences give details or examples.",
+      "examples": [
+        {
+          "input_text": "Identify the topic sentence: 'Many animals use camouflage. A chameleon changes color to match leaves. Some insects look like twigs.'",
+          "output_text": "The topic sentence is 'Many animals use camouflage.'"
+        },
+        {
+          "input_text": "Identify the topic sentence: 'Regular exercise improves mood. It also strengthens the heart. People who exercise often sleep better.'",
+          "output_text": "The topic sentence is 'Regular exercise improves mood.'"
+        }
+      ]
+    },
+    {
+      "name": "comma_in_series",
+      "category": "protocol",
+      "summary": "Use commas to separate three or more items in a series. The final comma before 'and' is optional but often used for clarity.",
+      "keywords": ["comma", "series", "punctuation"],
+      "content": "List the items in a sentence. Place a comma after each item except the last. Add 'and' before the final item.",
+      "examples": [
+        {
+          "input_text": "Punctuate: 'We bought apples oranges and bananas.'",
+          "output_text": "We bought apples, oranges, and bananas."
+        },
+        {
+          "input_text": "Punctuate: 'The flag is red white and blue.'",
+          "output_text": "The flag is red, white, and blue."
+        }
+      ]
+    },
+    {
+      "name": "sentence_fragment_identification",
+      "category": "identification",
+      "summary": "A sentence fragment is an incomplete sentence that lacks a main clause. It may be missing a subject, a verb, or both.",
+      "keywords": ["fragment", "sentence", "main clause"],
+      "content": "Check whether the group of words has a subject and a predicate and expresses a complete thought. If it is a subordinate clause alone or a phrase without a verb, it is a fragment.",
+      "examples": [
+        {
+          "input_text": "Identify if fragment: 'Although the test was long.'",
+          "output_text": "It is a fragment because it has a subordinate clause but no main clause."
+        },
+        {
+          "input_text": "Identify if fragment: 'The cat slept on the mat.'",
+          "output_text": "It is a complete sentence because it has a subject 'cat' and a predicate 'slept' and expresses a complete thought."
+        }
+      ]
+    },
+    {
+      "name": "logical_paragraph_order",
+      "category": "strategy",
+      "summary": "Logical paragraph order arranges sentences or paragraphs so that ideas flow from general to specific, chronological, or cause to effect. Good order improves comprehension.",
+      "keywords": ["paragraph", "order", "coherence"],
+      "content": "Identify the main point and supporting details. Arrange sentences in a sequence that builds understanding: introduce, explain, give examples, conclude. Check for signal words like first, next, as a result.",
+      "examples": [
+        {
+          "input_text": "Reorder for coherence: 'Finally, add water. First, gather ingredients. Next, mix the dry items.'",
+          "output_text": "First, gather ingredients. Next, mix the dry items. Finally, add water."
+        },
+        {
+          "input_text": "Reorder: 'As a result, the plant grew. The seed was planted in moist soil. It received sunlight each day.'",
+          "output_text": "The seed was planted in moist soil. It received sunlight each day. As a result, the plant grew."
+        }
+      ]
+    },
+    {
+      "name": "work_breakdown_structure",
+      "category": "management",
+      "summary": "A work breakdown structure divides a project into smaller, manageable deliverables. It helps assign work and estimate effort.",
+      "keywords": ["work breakdown", "project", "deliverable"],
+      "content": "Start with the project goal. Break it into major deliverables. Break each deliverable into smaller work packages. Continue until each package is assignable and estimable.",
+      "examples": [
+        {
+          "input_text": "Create a simple WBS for a bake sale.",
+          "output_text": "Bake sale: 1. Plan menu, 2. Buy ingredients, 3. Bake items, 4. Set up table, 5. Sell items."
+        },
+        {
+          "input_text": "Create a WBS for writing a report.",
+          "output_text": "Report project: 1. Research, 2. Outline, 3. Draft sections, 4. Review, 5. Finalize."
+        }
+      ]
+    },
+    {
+      "name": "critical_path_method",
+      "category": "strategy",
+      "summary": "The critical path is the sequence of dependent tasks that determines the project's minimum duration. Any delay on a critical task delays the project.",
+      "keywords": ["critical path", "dependency", "duration"],
+      "content": "List all tasks and their dependencies. Identify the longest path through the dependency network. The tasks on this path are critical; they cannot be delayed without delaying the project.",
+      "examples": [
+        {
+          "input_text": "Tasks: A(2 days) → B(3 days) → D(2 days). A → C(1 day) → D. What is the critical path and duration?",
+          "output_text": "Path A-B-D = 7 days; A-C-D = 5 days. Critical path is A-B-D, duration 7 days."
+        },
+        {
+          "input_text": "Tasks: X(1) → Y(4) → Z(1); X(1) → W(2) → Z(1). Critical path?",
+          "output_text": "X-Y-Z = 6 days; X-W-Z = 4 days. Critical path is X-Y-Z."
+        }
+      ]
+    },
+    {
+      "name": "risk_identification",
+      "category": "identification",
+      "summary": "Risk identification lists potential events that could affect a project. Each risk should be described with its cause and possible impact.",
+      "keywords": ["risk", "project", "impact"],
+      "content": "Brainstorm possible events in categories such as schedule, resources, and quality. For each risk, describe the cause and the impact on the project. Record them in a risk list.",
+      "examples": [
+        {
+          "input_text": "Identify two risks for an outdoor event.",
+          "output_text": "Risk 1: Rain causes low attendance and wet equipment. Risk 2: A vendor arrives late, delaying setup."
+        },
+        {
+          "input_text": "Identify two risks for a software upgrade project.",
+          "output_text": "Risk 1: Data migration takes longer than planned. Risk 2: Users need extra training, delaying adoption."
+        }
+      ]
+    },
+    {
+      "name": "stakeholder_communication_plan",
+      "category": "management",
+      "summary": "A communication plan defines who receives project information, what they receive, and how often. It prevents confusion and keeps stakeholders informed.",
+      "keywords": ["communication", "stakeholder", "frequency"],
+      "content": "List stakeholders or stakeholder groups. For each, define the information they need, the format, and the frequency. Share the plan and update it as needed.",
+      "examples": [
+        {
+          "input_text": "Create a communication plan for a monthly status report.",
+          "output_text": "Sponsor: high-level summary by email monthly. Team: detailed status in weekly meeting. Users: release notes by email at each milestone."
+        },
+        {
+          "input_text": "Create a communication plan for a construction project.",
+          "output_text": "Owner: budget and schedule report weekly. Crew: daily task assignments. Inspectors: inspection reports at each phase."
+        }
+      ]
+    },
+    {
+      "name": "prioritization_matrix",
+      "category": "strategy",
+      "summary": "A prioritization matrix classifies tasks by urgency and importance. It helps decide which tasks to do first, schedule, delegate, or drop.",
+      "keywords": ["priority", "urgent", "important", "matrix"],
+      "content": "Place each task into one of four quadrants: urgent and important, important but not urgent, urgent but not important, neither. Do the first quadrant immediately, schedule the second, delegate the third if possible, and eliminate the fourth.",
+      "examples": [
+        {
+          "input_text": "Classify: a report due tomorrow (urgent and important), planning next month (important not urgent), answering non-critical email (urgent not important), browsing news (neither).",
+          "output_text": "Do report now; schedule planning; delegate email if possible; avoid browsing news."
+        },
+        {
+          "input_text": "Classify: a fire alarm (urgent and important), exercise routine (important not urgent), phone call from unknown number (urgent not important), watching random videos (neither).",
+          "output_text": "Fire alarm: immediate; exercise: schedule; phone call: delegate or ignore; videos: avoid."
+        }
+      ]
+    },
+    {
+      "name": "smart_goals",
+      "category": "protocol",
+      "summary": "SMART goals are Specific, Measurable, Achievable, Relevant, and Time-bound. This format makes goals clear and trackable.",
+      "keywords": ["SMART", "goal", "specific", "measurable"],
+      "content": "Define the goal in specific terms. Add a measurable target. Ensure it is realistic and relevant. Set a deadline. Revise vague statements until all five criteria are met.",
+      "examples": [
+        {
+          "input_text": "Make this goal SMART: 'Get better at math.'",
+          "output_text": "Complete 30 algebra practice problems with 90% accuracy by the end of the month."
+        },
+        {
+          "input_text": "Make this goal SMART: 'Read more books.'",
+          "output_text": "Read one book every two weeks for the next three months."
+        }
+      ]
+    },
+    {
+      "name": "time_blocking",
+      "category": "strategy",
+      "summary": "Time blocking assigns specific blocks of time on a calendar to specific tasks or categories of work. It reduces multitasking and creates a realistic daily plan.",
+      "keywords": ["time blocking", "schedule", "focus"],
+      "content": "Review your tasks and estimate required time. Block out periods on your calendar for each task or task type. Protect those blocks from interruptions and adjust as needed.",
+      "examples": [
+        {
+          "input_text": "Plan a day with tasks: write report (2h), answer email (30m), study (1h).",
+          "output_text": "9:00-11:00 write report; 11:00-11:30 email; 1:00-2:00 study."
+        },
+        {
+          "input_text": "Plan a morning with exercise, breakfast, and reading.",
+          "output_text": "7:00-7:30 exercise; 7:30-8:00 breakfast; 8:00-8:30 reading."
+        }
+      ]
+    },
+    {
+      "name": "pomodoro_technique",
+      "category": "skill",
+      "summary": "The Pomodoro technique alternates focused work intervals with short breaks. It helps maintain concentration and reduce mental fatigue.",
+      "keywords": ["pomodoro", "focus", "break", "interval"],
+      "content": "Choose a task. Set a timer for 25 minutes and work without interruption. When the timer ends, take a 5-minute break. After four work intervals, take a longer break of 15 to 30 minutes.",
+      "examples": [
+        {
+          "input_text": "How should you use Pomodoro for a 2-hour study session?",
+          "output_text": "Use four 25-minute focused study blocks, each followed by a 5-minute break. After the fourth block, take a longer break."
+        },
+        {
+          "input_text": "How many Pomodoro intervals are in 100 minutes of working time?",
+          "output_text": "Each interval is 25 minutes, so 100 minutes equals 4 intervals."
+        }
+      ]
+    },
+    {
+      "name": "sq3r_reading_method",
+      "category": "strategy",
+      "summary": "SQ3R is a reading comprehension method: Survey, Question, Read, Recite, Review. It helps retain information from textbooks and articles.",
+      "keywords": ["SQ3R", "reading", "comprehension", "study"],
+      "content": "Survey the text by skimming headings and summaries. Turn headings into questions. Read to answer the questions. Recite key points from memory. Review the material periodically.",
+      "examples": [
+        {
+          "input_text": "How would you apply SQ3R to a chapter titled 'Photosynthesis'?",
+          "output_text": "Survey headings and diagrams. Ask 'How does photosynthesis work?' Read to answer. Recite the process from memory. Review key steps."
+        },
+        {
+          "input_text": "What is the first step of SQ3R?",
+          "output_text": "Survey the text to get an overview before reading in detail."
+        }
+      ]
+    },
+    {
+      "name": "spaced_repetition",
+      "category": "strategy",
+      "summary": "Spaced repetition schedules reviews of information at increasing intervals. This improves long-term retention by reviewing before forgetting occurs.",
+      "keywords": ["spaced repetition", "memory", "review"],
+      "content": "After learning new material, review it after a short interval, then after longer intervals such as one day, three days, one week, and two weeks. Focus more on items that are difficult to recall.",
+      "examples": [
+        {
+          "input_text": "Create a spaced repetition plan for new vocabulary words.",
+          "output_text": "Review after 1 day, then after 3 days, then after 7 days, then after 14 days."
+        },
+        {
+          "input_text": "Why is spaced repetition better than cramming?",
+          "output_text": "It strengthens memory by repeated retrieval over time, making forgetting less likely."
+        }
+      ]
+    },
+    {
+      "name": "cornell_note_taking",
+      "category": "skill",
+      "summary": "The Cornell method divides a page into sections for notes, cues, and a summary. This structure supports review and self-testing.",
+      "keywords": ["Cornell", "note-taking", "summary", "cues"],
+      "content": "Draw a vertical line about one-third from the left. Take notes on the right during class or reading. Write key questions or cues on the left afterward. Summarize the page at the bottom.",
+      "examples": [
+        {
+          "input_text": "How should a Cornell page be structured?",
+          "output_text": "Left column for cues/questions, right column for notes, bottom section for summary."
+        },
+        {
+          "input_text": "What goes in the left column of a Cornell note page?",
+          "output_text": "Key terms, questions, or cues that prompt recall of the notes."
+        }
+      ]
+    },
+    {
+      "name": "active_recall_practice",
+      "category": "skill",
+      "summary": "Active recall involves retrieving information from memory rather than rereading. It strengthens memory and reveals gaps in knowledge.",
+      "keywords": ["active recall", "retrieval", "practice"],
+      "content": "Close the source material. Write or say everything you remember about the topic. Check against the source. Repeat for points you missed.",
+      "examples": [
+        {
+          "input_text": "How would you use active recall for a list of definitions?",
+          "output_text": "Hide the definitions, try to write each term's meaning from memory, then compare with the source."
+        },
+        {
+          "input_text": "Why is rereading less effective than active recall?",
+          "output_text": "Rereading creates familiarity but not strong retrieval; active recall forces the brain to practice retrieving the information."
+        }
+      ]
+    },
+    {
+      "name": "dewey_decimal_classification",
+      "category": "identification",
+      "summary": "The Dewey Decimal system organizes books by subject into ten main classes, each assigned a number range. More specific subjects use decimal subdivisions.",
+      "keywords": ["Dewey Decimal", "classification", "subject"],
+      "content": "Identify the broad subject of the item. Match it to the appropriate main class number range, such as 000 general, 100 philosophy, 500 science, 800 literature. Use decimal subdivisions for narrower topics.",
+      "examples": [
+        {
+          "input_text": "Which Dewey class would a book on chemistry be in?",
+          "output_text": "Chemistry is in the 500s, specifically around 540."
+        },
+        {
+          "input_text": "Which Dewey class would a book on English grammar be in?",
+          "output_text": "English grammar is in the 400s, specifically around 425."
+        }
+      ]
+    },
+    {
+      "name": "alphabetical_author_shelving",
+      "category": "protocol",
+      "summary": "Fiction books are often shelved alphabetically by the author's last name. When last names are the same, first names or initials determine order.",
+      "keywords": ["alphabetical", "author", "shelving"],
+      "content": "Take the author's last name and compare letter by letter. Place names in alphabetical order. If last names match, use the first name or title to break the tie.",
+      "examples": [
+        {
+          "input_text": "Order these authors: Brown, Anderson, Clark.",
+          "output_text": "Anderson, Brown, Clark."
+        },
+        {
+          "input_text": "Order these authors: Smith, Jan; Smith, Adam; Smith, Lee.",
+          "output_text": "Smith, Adam; Smith, Jan; Smith, Lee."
+        }
+      ]
+    },
+    {
+      "name": "subject_heading_assignment",
+      "category": "identification",
+      "summary": "Subject headings are controlled terms assigned to a resource to describe its main topics. They help users find materials on the same subject.",
+      "keywords": ["subject heading", "catalog", "topic"],
+      "content": "Determine the primary and secondary topics of the resource. Choose standardized terms that represent those topics. Assign one or more headings as needed.",
+      "examples": [
+        {
+          "input_text": "What subject headings for a book about baking bread?",
+          "output_text": "Bread, Baking, Recipes."
+        },
+        {
+          "input_text": "What subject headings for a documentary about planets?",
+          "output_text": "Planets, Astronomy, Solar system."
+        }
+      ]
+    },
+    {
+      "name": "call_number_ordering",
+      "category": "protocol",
+      "summary": "Call numbers combine classification numbers and author letters to place books in a logical order. They are sorted first by number, then by letter.",
+      "keywords": ["call number", "ordering", "shelf order"],
+      "content": "Sort call numbers by the numeric part first. If numeric parts are equal, sort by the letter part alphabetically. Treat decimal numeric parts as decimal values.",
+      "examples": [
+        {
+          "input_text": "Order these call numbers: 510.1, 509, 510.05.",
+          "output_text": "509, 510.05, 510.1."
+        },
+        {
+          "input_text": "Order these call numbers: 813.01, 812.9, 813.0.",
+          "output_text": "812.9, 813.0, 813.01."
+        }
+      ]
+    },
+    {
+      "name": "biological_classification_hierarchy",
+      "category": "identification",
+      "summary": "Biological taxonomy classifies living things into a hierarchy: domain, kingdom, phylum, class, order, family, genus, species. Each level is more specific.",
+      "keywords": ["taxonomy", "hierarchy", "species"],
+      "content": "Place an organism in the hierarchy by comparing its characteristics at each level. The species name is the most specific, typically a binomial such as genus and species.",
+      "examples": [
+        {
+          "input_text": "What is the most specific level in biological classification?",
+          "output_text": "Species is the most specific level."
+        },
+        {
+          "input_text": "Arrange these from broad to specific: family, kingdom, species, class.",
+          "output_text": "Kingdom, class, family, species."
+        }
+      ]
+    },
+    {
+      "name": "animal_classification_traits",
+      "category": "identification",
+      "summary": "Animals can be classified into groups such as mammals, birds, reptiles, amphibians, and fish based on key traits like body covering and reproduction.",
+      "keywords": ["animal", "classification", "traits"],
+      "content": "Check the animal's key traits: mammals have hair and produce milk; birds have feathers; reptiles have dry scales; amphibians have moist skin; fish have gills and scales. Assign the group that matches.",
+      "examples": [
+        {
+          "input_text": "An animal has feathers and lays eggs. What group is it?",
+          "output_text": "Bird."
+        },
+        {
+          "input_text": "An animal has hair and feeds its young milk. What group is it?",
+          "output_text": "Mammal."
+        }
+      ]
+    },
+    {
+      "name": "plant_classification_seed_structure",
+      "category": "identification",
+      "summary": "Plants are often classified by seed structure into flowering and non-flowering groups. Flowering plants may be monocots or dicots based on seed leaves.",
+      "keywords": ["plant", "seed", "flowering", "monocot", "dicot"],
+      "content": "Determine whether the plant produces flowers and seeds. If it has one seed leaf, it is a monocot; if two, it is a dicot. Use leaf vein and flower part patterns to help.",
+      "examples": [
+        {
+          "input_text": "A plant has flower parts in threes and one seed leaf. What is it?",
+          "output_text": "Monocot."
+        },
+        {
+          "input_text": "A plant has flower parts in fours or fives and two seed leaves. What is it?",
+          "output_text": "Dicot."
+        }
+      ]
+    },
+    {
+      "name": "rock_classification",
+      "category": "identification",
+      "summary": "Rocks are classified into igneous, sedimentary, and metamorphic based on how they form. Igneous forms from cooling molten rock, sedimentary from compacted particles, metamorphic from heat and pressure.",
+      "keywords": ["rock", "igneous", "sedimentary", "metamorphic"],
+      "content": "Examine the rock's texture and origin clues. If it formed from cooled lava or magma, classify as igneous. If it has layers or particles cemented together, classify as sedimentary. If it has banding or changed crystals from heat and pressure, classify as metamorphic.",
+      "examples": [
+        {
+          "input_text": "A rock formed from cooled magma with visible crystals. What type is it?",
+          "output_text": "Igneous."
+        },
+        {
+          "input_text": "A rock has layers of sand grains cemented together. What type is it?",
+          "output_text": "Sedimentary."
+        }
+      ]
+    },
+    {
+      "name": "define_problem",
+      "category": "strategy",
+      "summary": "Defining a problem clearly is the first step in structured problem solving. A clear problem statement identifies the current state and the desired state.",
+      "keywords": ["problem statement", "define", "current state", "desired state"],
+      "content": "Describe the current situation. Describe what the desired situation would look like. Write a statement that includes both, avoiding assumptions or solutions.",
+      "examples": [
+        {
+          "input_text": "Write a problem statement for a team missing deadlines.",
+          "output_text": "Current state: project tasks are completed after deadlines. Desired state: tasks are completed on schedule."
+        },
+        {
+          "input_text": "Write a problem statement for a computer running slowly.",
+          "output_text": "Current state: programs take long to open. Desired state: programs open quickly with acceptable response time."
+        }
+      ]
+    },
+    {
+      "name": "five_whys_analysis",
+      "category": "strategy",
+      "summary": "The 5 whys method asks repeated 'why' questions to move from symptoms to root cause. It usually reveals a fixable underlying issue after several iterations.",
+      "keywords": ["5 whys", "root cause", "why"],
+      "content": "Start with the problem. Ask why it happened and record the answer. Ask why that answer happened. Repeat about five times until the root cause is identified. Verify the root cause logically leads to the problem.",
+      "examples": [
+        {
+          "input_text": "Problem: The plant died. Use 5 whys.",
+          "output_text": "Why? Not watered. Why? Watering schedule missed. Why? No reminder. Why? Reminder not set. Why? System not established. Root cause: no watering system."
+        },
+        {
+          "input_text": "Problem: A report was late. Use 5 whys.",
+          "output_text": "Why? Draft not finished. Why? Data arrived late. Why? Request sent late. Why? Task not assigned early. Why? Plan lacked clear deadline. Root cause: unclear deadline."
+        }
+      ]
+    },
+    {
+      "name": "swot_analysis",
+      "category": "strategy",
+      "summary": "SWOT analysis evaluates strengths, weaknesses, opportunities, and threats to understand a situation. It helps identify strategic actions.",
+      "keywords": ["SWOT", "strengths", "weaknesses", "opportunities", "threats"],
+      "content": "List internal strengths and weaknesses. List external opportunities and threats. Use the lists to match strengths to opportunities and address weaknesses before threats.",
+      "examples": [
+        {
+          "input_text": "Perform SWOT for a small bakery.",
+          "output_text": "Strengths: fresh ingredients, loyal customers. Weaknesses: limited seating. Opportunities: online orders. Threats: rising ingredient costs."
+        },
+        {
+          "input_text": "Perform SWOT for a study group.",
+          "output_text": "Strengths: shared notes, motivation. Weaknesses: scheduling conflicts. Opportunities: practice tests. Threats: distractions."
+        }
+      ]
+    },
+    {
+      "name": "brainstorming_rules",
+      "category": "protocol",
+      "summary": "Brainstorming generates many ideas by deferring judgment. Quantity and free association are encouraged before evaluation.",
+      "keywords": ["brainstorm", "ideas", "defer judgment"],
+      "content": "Gather a group or work alone. State the topic. Generate as many ideas as possible without criticizing any. After idea generation, sort and evaluate the ideas.",
+      "examples": [
+        {
+          "input_text": "How should a team brainstorm ideas for a product name?",
+          "output_text": "Everyone suggests names without criticism. Record all suggestions. After the session, evaluate each name against criteria."
+        },
+        {
+          "input_text": "What is the main rule during brainstorming?",
+          "output_text": "Do not judge or criticize ideas until the idea generation phase is complete."
+        }
+      ]
+    },
+    {
+      "name": "decision_matrix",
+      "category": "strategy",
+      "summary": "A decision matrix scores options against weighted criteria. It makes comparisons more objective and transparent.",
+      "keywords": ["decision matrix", "criteria", "weight", "score"],
+      "content": "List the options as rows and criteria as columns. Assign weights to criteria by importance. Score each option on each criterion. Multiply scores by weights and sum them. Choose the option with the highest total.",
+      "examples": [
+        {
+          "input_text": "Choose between two locations using criteria cost (weight 2) and space (weight 1). A cost 3 space 5, B cost 4 space 3.",
+          "output_text": "A = 2×3 + 1×5 = 11; B = 2×4 + 1×3 = 11. Tie; choose based on further discussion."
+        },
+        {
+          "input_text": "Choose between two tools using ease (weight 3) and power (weight 2). X ease 5 power 2, Y ease 3 power 4.",
+          "output_text": "X = 3×5 + 2×2 = 19; Y = 3×3 + 2×4 = 17. Choose X."
+        }
+      ]
+    },
+    {
+      "name": "pdca_cycle",
+      "category": "protocol",
+      "summary": "PDCA stands for Plan, Do, Check, Act. It is a continuous improvement cycle for testing changes and making adjustments.",
+      "keywords": ["PDCA", "plan", "do", "check", "act"],
+      "content": "Plan the change and expected result. Do the change on a small scale. Check the results against expectations. Act to standardize the change or adjust and repeat the cycle.",
+      "examples": [
+        {
+          "input_text": "How would you use PDCA to reduce printing errors?",
+          "output_text": "Plan a new checklist. Do a trial with one printer. Check error rate. Act to adopt or modify the checklist."
+        },
+        {
+          "input_text": "What does the 'Check' step in PDCA involve?",
+          "output_text": "Compare actual results with the expected results from the plan."
+        }
+      ]
+    },
+    {
+      "name": "force_field_analysis",
+      "category": "strategy",
+      "summary": "Force field analysis identifies driving forces that support a change and restraining forces that oppose it. It helps plan how to strengthen drivers and reduce barriers.",
+      "keywords": ["force field", "driving forces", "restraining forces"],
+      "content": "State the desired change. List forces for and against the change. Assess which are strongest. Develop actions to strengthen driving forces or weaken restraining forces.",
+      "examples": [
+        {
+          "input_text": "Analyze forces for adopting a new filing system.",
+          "output_text": "Driving: easier retrieval, fewer lost files. Restraining: learning time, old habits. Action: provide training and start with one folder."
+        },
+        {
+          "input_text": "Analyze forces for starting a regular exercise routine.",
+          "output_text": "Driving: better health, more energy. Restraining: time, motivation. Action: schedule short sessions and track progress."
+        }
+      ]
+    },
+    {
+      "name": "fishbone_diagram",
+      "category": "identification",
+      "summary": "A fishbone diagram organizes possible causes of a problem into categories such as people, process, materials, and environment. It helps identify root causes visually.",
+      "keywords": ["fishbone", "cause", "categories", "Ishikawa"],
+      "content": "Write the problem at the head of the fish. Draw main bones for categories. Brainstorm possible causes under each category. Analyze the diagram to find likely causes.",
+      "examples": [
+        {
+          "input_text": "Create a fishbone for late deliveries.",
+          "output_text": "Problem: late deliveries. Categories: people (untrained staff), process (poor scheduling), materials (inventory shortages), environment (traffic)."
+        },
+        {
+          "input_text": "Create a fishbone for a cake that did not rise.",
+          "output_text": "Problem: cake did not rise. Categories: ingredients (old baking powder), process (overmixing), equipment (oven temperature inaccurate), people (measuring error)."
+        }
+      ]
+    },
+    {
+      "name": "scaling_ingredient_quantities",
+      "category": "skill",
+      "summary": "To scale a recipe, multiply each ingredient quantity by the same conversion factor. This maintains the ratio of ingredients.",
+      "keywords": ["recipe", "scale", "ingredient", "ratio"],
+      "content": "Determine the desired number of servings divided by the original number of servings to get the factor. Multiply every ingredient amount by that factor. Adjust units if needed.",
+      "examples": [
+        {
+          "input_text": "A recipe for 4 servings uses 200 g flour. How much flour for 6 servings?",
+          "output_text": "Factor = 6/4 = 1.5. Flour = 200 × 1.5 = 300 g."
+        },
+        {
+          "input_text": "A recipe for 2 servings uses 1 cup milk. How much milk for 5 servings?",
+          "output_text": "Factor = 5/2 = 2.5. Milk = 1 × 2.5 = 2.5 cups."
+        }
+      ]
+    },
+    {
+      "name": "cooking_unit_conversion",
+      "category": "skill",
+      "summary": "Cooking often requires converting between units such as cups, tablespoons, and teaspoons. Using standard equivalents ensures accurate measurements.",
+      "keywords": ["conversion", "cooking", "cups", "tablespoons"],
+      "content": "Use the known equivalents: 1 cup = 16 tablespoons = 48 teaspoons; 1 tablespoon = 3 teaspoons. Multiply or divide as needed.",
+      "examples": [
+        {
+          "input_text": "Convert 2 cups to tablespoons.",
+          "output_text": "2 × 16 = 32 tablespoons."
+        },
+        {
+          "input_text": "Convert 6 teaspoons to tablespoons.",
+          "output_text": "6 ÷ 3 = 2 tablespoons."
+        }
+      ]
+    },
+    {
+      "name": "sequence_dependent_steps",
+      "category": "protocol",
+      "summary": "Some recipe steps must be performed in a specific order, especially when later steps depend on earlier preparations. Following the correct sequence prevents failed results.",
+      "keywords": ["sequence", "recipe", "steps", "dependency"],
+      "content": "Identify steps that depend on others, such as preheating the oven before baking or chopping before cooking. Perform prerequisite steps first. Check the recipe's order for clues like 'before' and 'once'.",
+      "examples": [
+        {
+          "input_text": "Why should the oven be preheated before placing the cake inside?",
+          "output_text": "The cake needs a stable high temperature from the start to rise properly; preheating ensures that condition."
+        },
+        {
+          "input_text": "Why should dry ingredients be mixed before adding wet ingredients in many recipes?",
+          "output_text": "Mixing dry ingredients first distributes leavening and salt evenly, so the final batter is uniform."
+        }
+      ]
+    },
+    {
+      "name": "ingredient_substitution_reasoning",
+      "category": "reasoning",
+      "summary": "Ingredient substitution requires matching the function of the original ingredient, such as moisture, sweetness, or binding. Choose substitutes with similar properties.",
+      "keywords": ["substitute", "ingredient", "function"],
+      "content": "Identify the role of the ingredient in the recipe. Select a substitute that performs the same role. Adjust quantity or other ingredients if the substitute behaves differently.",
+      "examples": [
+        {
+          "input_text": "What can substitute for buttermilk in a recipe?",
+          "output_text": "Mix milk with a small amount of vinegar or lemon juice to create acidity, matching buttermilk's function."
+        },
+        {
+          "input_text": "What can substitute for eggs as a binder in a recipe?",
+          "output_text": "Mashed banana or applesauce can provide moisture and some binding, though texture may change."
+        }
+      ]
+    },
+    {
+      "name": "decomposition",
+      "category": "strategy",
+      "summary": "Decomposition breaks a complex problem into smaller, more manageable parts. Each part can be solved independently and then combined.",
+      "keywords": ["decomposition", "break down", "subproblem"],
+      "content": "Identify the main problem. List its major components or tasks. Split each component further if needed. Solve the smaller parts and combine the results.",
+      "examples": [
+        {
+          "input_text": "Decompose the task of organizing a party.",
+          "output_text": "Subproblems: choose date, create guest list, send invitations, arrange food, set up venue."
+        },
+        {
+          "input_text": "Decompose the task of writing a report.",
+          "output_text": "Subproblems: research topic, create outline, draft each section, revise, format."
+        }
+      ]
+    },
+    {
+      "name": "pattern_recognition",
+      "category": "identification",
+      "summary": "Pattern recognition identifies similarities or trends among problems or data. Recognizing patterns allows reuse of known solutions.",
+      "keywords": ["pattern", "similarity", "trend"],
+      "content": "Examine the problem or data for repeated elements or trends. Compare with known patterns. Use the identified pattern to predict or apply a standard solution.",
+      "examples": [
+        {
+          "input_text": "What pattern is common in these sequences: 2,4,6,8 and 10,20,30,40?",
+          "output_text": "Both are arithmetic sequences with a constant difference; first difference 2, second difference 10."
+        },
+        {
+          "input_text": "What pattern helps classify shapes with four equal sides and four right angles?",
+          "output_text": "The pattern matches the definition of a square."
+        }
+      ]
+    },
+    {
+      "name": "abstraction",
+      "category": "strategy",
+      "summary": "Abstraction focuses on the important properties of a problem while ignoring irrelevant details. It simplifies problem solving.",
+      "keywords": ["abstraction", "simplify", "focus"],
+      "content": "Determine what information is essential to the problem. Ignore details that do not affect the solution. Represent the essential features in a simplified model.",
+      "examples": [
+        {
+          "input_text": "Abstract a map for route planning: which details can be ignored?",
+          "output_text": "Ignore building colors and tree locations; keep roads, intersections, and distances."
+        },
+        {
+          "input_text": "Abstract a library book record for search: which fields are essential?",
+          "output_text": "Title, author, subject, and call number are essential; cover color is not."
+        }
+      ]
+    },
+    {
+      "name": "algorithm_design",
+      "category": "strategy",
+      "summary": "An algorithm is a step-by-step sequence of instructions to solve a problem. Good algorithms are clear, ordered, and produce the correct result.",
+      "keywords": ["algorithm", "step-by-step", "instructions"],
+      "content": "Define the input and desired output. Write a series of unambiguous steps that transform input to output. Test the steps with sample data and adjust if needed.",
+      "examples": [
+        {
+          "input_text": "Write an algorithm to find the largest of three numbers.",
+          "output_text": "Compare the first two numbers and keep the larger. Compare that larger number with the third. The larger of those is the largest."
+        },
+        {
+          "input_text": "Write an algorithm to make a sandwich.",
+          "output_text": "Take two slices of bread. Spread desired filling on one slice. Place the second slice on top. Cut if desired."
+        }
+      ]
+    },
+    {
+      "name": "debugging_logic_errors",
+      "category": "strategy",
+      "summary": "A logic error causes a program to run but produce incorrect results. Debugging involves tracing inputs and outputs through each step to find where the logic goes wrong.",
+      "keywords": ["debugging", "logic error", "trace"],
+      "content": "Reproduce the error with a specific input. Trace the program step by step, recording variable values. Compare actual values with expected values at each step. Correct the step where they diverge.",
+      "examples": [
+        {
+          "input_text": "A program should double a number but adds 2 instead. For input 5, expected output 10 but actual output 7. Find the error.",
+          "output_text": "The step should be result = number × 2, not result = number + 2."
+        },
+        {
+          "input_text": "A program should compare 'greater than 10' but uses 'greater than or equal to 10'. For input 10, expected false but actual true. Fix.",
+          "output_text": "Change condition to number > 10."
+        }
+      ]
+    },
+    {
+      "name": "divide_and_conquer",
+      "category": "strategy",
+      "summary": "Divide and conquer solves a problem by breaking it into independent subproblems, solving each, and combining results. It is used in algorithms like merge sort and binary search.",
+      "keywords": ["divide and conquer", "subproblem", "combine"],
+      "content": "Divide the problem into smaller independent parts. Solve each part recursively or directly. Combine the solutions to solve the original problem.",
+      "examples": [
+        {
+          "input_text": "Explain divide and conquer for finding the sum of a list.",
+          "output_text": "Split the list into halves. Sum each half recursively. Add the two sums."
+        },
+        {
+          "input_text": "Explain divide and conquer for sorting a list.",
+          "output_text": "Split the list into halves, sort each half, then merge the sorted halves."
+        }
+      ]
+    },
+    {
+      "name": "expression_evaluation",
+      "category": "skill",
+      "summary": "Expression evaluation computes a value by applying operators to operands in the correct order. Precedence and parentheses determine the order.",
+      "keywords": ["expression", "precedence", "evaluate"],
+      "content": "Identify operators and operands. Apply parentheses first, then multiplication/division, then addition/subtraction. For equal precedence, evaluate left to right.",
+      "examples": [
+        {
+          "input_text": "Evaluate 6 + 4 × 2.",
+          "output_text": "Multiplication first: 6 + 8 = 14."
+        },
+        {
+          "input_text": "Evaluate (6 + 4) × 2.",
+          "output_text": "Parentheses first: 10 × 2 = 20."
+        }
+      ]
+    },
+    {
+      "name": "flowchart_reading",
+      "category": "identification",
+      "summary": "A flowchart uses shapes and arrows to represent a process. Reading a flowchart means following the order of decisions and actions from start to end.",
+      "keywords": ["flowchart", "process", "decision"],
+      "content": "Start at the start symbol. Follow arrows to the next step. At a decision diamond, choose the path that matches the condition. Continue until reaching the end symbol.",
+      "examples": [
+        {
+          "input_text": "A flowchart starts: start → input number → is number > 0? → yes: print positive; no: print non-positive. What prints for input -3?",
+          "output_text": "The no path is followed, so 'non-positive' prints."
+        },
+        {
+          "input_text": "A flowchart has start → set total = 0 → add 5 → print total → end. What is printed?",
+          "output_text": "5."
+        }
+      ]
+    },
+    {
+      "name": "reproduce_bug",
+      "category": "protocol",
+      "summary": "The first step in debugging is to reproduce the bug reliably. A clear reproduction provides a test case for finding the cause.",
+      "keywords": ["reproduce", "bug", "debugging"],
+      "content": "Write down the exact steps that caused the bug. Try the steps to confirm the bug appears. If it is intermittent, note the conditions under which it occurs.",
+      "examples": [
+        {
+          "input_text": "A button click sometimes crashes an app. How would you start debugging?",
+          "output_text": "Click the button multiple times and record the exact conditions and any error messages to find a reliable reproduction."
+        },
+        {
+          "input_text": "A calculation gives wrong output for one specific input. What should you do first?",
+          "output_text": "Reproduce the error by entering that input and capturing the incorrect output."
+        }
+      ]
+    },
+    {
+      "name": "check_error_messages",
+      "category": "identification",
+      "summary": "Error messages often indicate the type and location of a problem. Reading them carefully can narrow down the cause quickly.",
+      "keywords": ["error message", "debugging", "location"],
+      "content": "Read the full error message. Identify the error type and the line or function mentioned. Use that information to inspect the relevant code.",
+      "examples": [
+        {
+          "input_text": "An error says 'division by zero at line 12'. Where should you look?",
+          "output_text": "Inspect line 12 for a division operation where the denominator may be zero."
+        },
+        {
+          "input_text": "An error says 'undefined variable count'. What is likely wrong?",
+          "output_text": "The variable 'count' is used before it has been assigned or is misspelled."
+        }
+      ]
+    },
+    {
+      "name": "isolate_failing_component",
+      "category": "strategy",
+      "summary": "Isolating the failing component involves testing pieces of the system separately. This narrows the search space to the source of the bug.",
+      "keywords": ["isolation", "component", "debugging"],
+      "content": "Divide the system into components. Test each component with simple inputs. Identify which component produces incorrect output. Focus further debugging there.",
+      "examples": [
+        {
+          "input_text": "A program reads data, processes it, and prints a report. The report is wrong. How isolate?",
+          "output_text": "Check the input reading, then the processing logic, then the report formatting separately to see which stage introduces the error."
+        },
+        {
+          "input_text": "A calculation has three steps. How find which step fails?",
+          "output_text": "After each step, print intermediate values to see where the expected value diverges."
+        }
+      ]
+    },
+    {
+      "name": "rubber_duck_debugging",
+      "category": "strategy",
+      "summary": "Explaining code line by line to an inanimate object or another person often reveals faulty assumptions and logical gaps.",
+      "keywords": ["rubber duck", "explain", "debugging"],
+      "content": "Choose a simple object. Explain what the code is supposed to do and then walk through each line or step aloud. Often the problem becomes obvious during the explanation.",
+      "examples": [
+        {
+          "input_text": "How can explaining your code help find a bug?",
+          "output_text": "It forces you to examine every assumption and step, making hidden errors visible."
+        },
+        {
+          "input_text": "You are stuck on a loop bug. What should you do with rubber duck debugging?",
+          "output_text": "Explain the loop's condition and body step by step as if teaching someone, checking whether it does what you think."
+        }
+      ]
+    },
+    {
+      "name": "simplify_input_debugging",
+      "category": "strategy",
+      "summary": "Simplifying the input to the smallest case that still fails can reveal the core issue. It removes distracting complexity.",
+      "keywords": ["simplify", "input", "minimal case"],
+      "content": "Gradually reduce the input size or features while keeping the bug present. Find the simplest input that still causes the error. Analyze that small case closely.",
+      "examples": [
+        {
+          "input_text": "A sorting function fails on a large list. How simplify?",
+          "output_text": "Test with lists of 2 and 3 elements to find the smallest list that sorts incorrectly."
+        },
+        {
+          "input_text": "A word processor crashes with long documents. How simplify?",
+          "output_text": "Test with very short documents and gradually add content until the crash appears."
+        }
+      ]
+    },
+    {
+      "name": "check_boundary_conditions",
+      "category": "identification",
+      "summary": "Bugs often appear at boundary values such as zero, maximum, minimum, or empty inputs. Testing these cases reveals off-by-one and limit errors.",
+      "keywords": ["boundary", "edge case", "off-by-one"],
+      "content": "Identify the boundaries of valid input. Test those exact boundary values and values just outside. Compare the program's behavior with expected behavior.",
+      "examples": [
+        {
+          "input_text": "A function accepts numbers 1 to 100. What boundaries should you test?",
+          "output_text": "Test 1, 100, 0, and 101."
+        },
+        {
+          "input_text": "A loop processes list items. Which boundary case often causes off-by-one errors?",
+          "output_text": "The first or last item in the list, especially when using indexes."
+        }
+      ]
+    },
+    {
+      "name": "version_rollback_comparison",
+      "category": "strategy",
+      "summary": "If a bug appeared after a change, comparing the current version with the previous working version can identify the change that caused it.",
+      "keywords": ["version", "rollback", "comparison"],
+      "content": "Identify the last version that worked. Compare changes made since that version. Look for modified logic that could cause the bug. Revert or correct the specific change.",
+      "examples": [
+        {
+          "input_text": "A feature stopped working after a code change. What should you do?",
+          "output_text": "Compare the changed code with the previous working version to see what was modified and check those changes."
+        },
+        {
+          "input_text": "What if the bug disappears when reverting to an older version?",
+          "output_text": "The cause is in the changes made after that older version; inspect each change."
+        }
+      ]
+    },
+    {
+      "name": "logging_print_statements",
+      "category": "skill",
+      "summary": "Adding temporary print statements or log entries at key points shows the program's state during execution. This helps trace where behavior diverges from expectations.",
+      "keywords": ["logging", "print", "trace"],
+      "content": "Insert print or log statements before and after critical operations. Run the program with a failing input. Examine the output to see how far the program reaches and what values variables hold.",
+      "examples": [
+        {
+          "input_text": "How can print statements help debug a function that returns wrong result?",
+          "output_text": "Print the input, intermediate values, and output to see where the calculation goes wrong."
+        },
+        {
+          "input_text": "Where should you place print statements in a multi-step process?",
+          "output_text": "At the start and end of each step, and before any operation that seems suspicious."
+        }
+      ]
+    }
+  ]
+}
