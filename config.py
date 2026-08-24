@@ -188,6 +188,10 @@ IGNORE_FILES = {
 CONVERSATION_MAX_TURNS = 15          # number of recent turns to include
 CONVERSATION_SUMMARY_THRESHOLD = 30  # when to summarize older turns
 
+# Topic extraction for chat retrieval
+USE_ONNX_TOPIC_EXTRACTION = True    # use ONNX NER + rules to extract topic terms
+USE_LLM_TOPIC_EXTRACTION = False    # optionally use a small LLM to refine topic terms
+
 # Deep research
 DEEP_RESEARCH_MAX_DEPTH = 7          # maximum graph expansion depth
 DEEP_RESEARCH_MAX_SUBTOPICS = 8      # max subtopics per level
