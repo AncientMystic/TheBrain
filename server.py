@@ -53,6 +53,11 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
         report_path = coordinator.run(query)
         return f"Deep research report generated: {report_path}", []
 
+    if deep_research:
+        coordinator = DeepResearchCoordinator(session_id)
+        report_path = coordinator.run(query)
+        return f"Deep research report generated: {report_path}", []
+
     if reasoning:
         answer, facts = orchestrate_reasoning(query)
         return answer, facts
@@ -75,11 +80,8 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
     memories = retrieve_memories(query, top_k=5, session_id=session_id)
     memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
 
-    facts = retrieve_from_graph(analysis)
-    if len(facts) < config.CHAT_MIN_FACTS_BEFORE_FALLBACK:
-        chunks = fallback_to_chunks(query)
-    else:
-        chunks = []
+    facts = retrieve_from_graph(analysis, top_k=50)
+    chunks = fallback_to_chunks(query, top_k=3)
 
     context = build_context(facts, chunks=chunks)
     if logic_context:

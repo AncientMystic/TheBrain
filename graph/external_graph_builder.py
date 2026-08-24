@@ -52,6 +52,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     cur = conn.cursor()
 
     existing_nodes, exact_match_map, existing_emb_matrix, existing_emb_ids = _get_graph_state(conn, cur)
+    cache_dirty = False
 
     # ---- Prepare all candidate names for embedding ----
     all_names = []
@@ -126,6 +127,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     local_to_global = {}
 
     def get_or_create_global_node(node_type, name, attributes=None):
+        nonlocal cache_dirty
         key = (node_type, normalize_name(name))
         if key in local_to_global:
             return local_to_global[key]
@@ -165,6 +167,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             VALUES (?, ?, ?, ?, ?)
         """, (name, node_type, json.dumps([name]), attrs_json, emb_blob))
         new_id = cur.lastrowid
+        cache_dirty = True
         local_to_global[key] = new_id
         return new_id
 
@@ -237,9 +240,10 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
 
     conn.commit()
     conn.close()
-    # Invalidate graph cache so next document reloads updated nodes
-    _graph_cache["existing_nodes"] = None
-    _graph_cache["exact_match_map"] = None
-    _graph_cache["existing_emb_matrix"] = None
-    _graph_cache["existing_emb_ids"] = None
+    if cache_dirty:
+        # Invalidate only when new nodes were added this document.
+        _graph_cache["existing_nodes"] = None
+        _graph_cache["exact_match_map"] = None
+        _graph_cache["existing_emb_matrix"] = None
+        _graph_cache["existing_emb_ids"] = None
     print("  (Graph building complete)")

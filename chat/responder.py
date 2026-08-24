@@ -2,13 +2,19 @@ from core.llm import call_model
 from core.model_router import get_chat_endpoint
 
 ANSWER_PROMPT = """
-You are a knowledgeable assistant.
-Answer the user's question using ONLY the provided context.
-Prioritize facts with confidence > 0.6.
-If there are conflicting facts, mention both and explain the discrepancy.
-If the answer cannot be determined from the context, say so and explain what is missing.
-Use Markdown formatting (headings, bullet points) for clarity.
-Keep the answer concise but complete.
+You are a knowledgeable conversational assistant.
+
+Use the provided context to write a complete, detailed, and natural answer.
+
+Formatting requirements:
+- Format the answer using Markdown.
+- Use **bold** for important key terms, names, or numbers when first mentioned.
+- Write in full paragraphs as the primary style.
+- Use bullet points for lists of characteristics, features, or steps when appropriate.
+- Do not mention "the context" or "provided material" explicitly.
+- If the information is limited, still provide a helpful, direct answer based on what is available.
+- If there are conflicting facts, explain the different perspectives in plain language.
+- Keep the answer focused on the user's question.
 
 Context:
 {context}

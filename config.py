@@ -76,6 +76,7 @@ if BACKENDS:
                 "api_key": be.get("api_key", "not-needed"),
                 "backend": be.get("backend", "lmstudio"),
                 "embeddings_model": be.get("embeddings_model", be.get("model")),
+                "capacity": be.get("capacity", 3 if len(LLM_ENDPOINTS) == 0 else 1),
             })
 else:
     for url, model in [(LM_STUDIO_URL, MODEL_NAME), (LM_STUDIO_URL_2, MODEL_NAME_2), (LM_STUDIO_URL_3, MODEL_NAME_3)]:
@@ -107,10 +108,13 @@ if not LLM_ENDPOINTS:
 if not EMBEDDING_ENDPOINTS:
     raise RuntimeError("No embedding endpoints configured. Check LM_STUDIO_URL and EMBEDDING_MODEL.")
 
-LLM_ENDPOINT_CAPACITIES = [3, 1, 2]
-while len(LLM_ENDPOINT_CAPACITIES) < len(LLM_ENDPOINTS):
-    LLM_ENDPOINT_CAPACITIES.append(1)
-LLM_ENDPOINT_CAPACITIES = LLM_ENDPOINT_CAPACITIES[:len(LLM_ENDPOINTS)]
+# Derive capacities from endpoint definitions
+LLM_ENDPOINT_CAPACITIES = []
+for _ep in LLM_ENDPOINTS:
+    _cap = _ep.get("capacity")
+    if _cap is None:
+        _cap = 3 if len(LLM_ENDPOINT_CAPACITIES) == 0 else 1
+    LLM_ENDPOINT_CAPACITIES.append(int(_cap))
 
 API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF = 2.0
@@ -154,7 +158,7 @@ GUIDED_LEARNING_OCR_DPI = 100
 
 CHAT_MAX_CONTEXT_TOKENS = 8000
 CHAT_MIN_FACTS_BEFORE_FALLBACK = 50
-CHAT_TOP_K_CHUNKS = 8
+CHAT_TOP_K_CHUNKS = int(os.environ.get("CHAT_TOP_K_CHUNKS", "8"))
 
 # Debug verbosity (set by --debug flag)
 DEBUG_VERBOSE = False

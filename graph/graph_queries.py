@@ -14,6 +14,7 @@ def _cache_facts(key, facts, ttl=60):
     _keyword_cache_ttl[key] = time.time()
 from core import db
 import config
+from fuzzywuzzy import fuzz
 
 def get_related_keywords(keyword, min_weight=0.5):
     conn = db.db_connect("external_graph")
@@ -28,75 +29,102 @@ def get_related_keywords(keyword, min_weight=0.5):
     return [(row[0], row[1]) for row in rows]
 
 
+def _keyword_variants(keyword):
+    """Return a list of simple variants for a keyword."""
+    variants = {keyword, keyword.lower(), keyword.title()}
+    if keyword.endswith("s") and len(keyword) > 3:
+        variants.add(keyword[:-1])
+    if keyword.endswith("ies") and len(keyword) > 4:
+        variants.add(keyword[:-3] + "y")
+    return [v for v in variants if v]
+
+
 def get_facts_by_keyword(keyword, limit=50):
     """
-    Retrieve facts matching a keyword using FTS if available, otherwise LIKE.
-    Uses a small in-memory cache for repeated lookups.
+    Retrieve facts matching a keyword using FTS, LIKE, and fuzzy ranking.
+    Returns fact dicts sorted by hybrid confidence + fuzzy relevance.
     """
+    if not keyword:
+        return []
+
     cache_key = f"facts:{keyword}:{limit}"
     cached = _cached_get_facts(cache_key)
     if cached is not None:
         return cached
 
-    if not config.FTS_ENABLED:
-        # Fallback to LIKE
+    variants = _keyword_variants(keyword)
+
+    collected = {}
+
+    # FTS prefix search
+    if config.FTS_ENABLED:
         conn = db.db_connect("key_facts")
         cur = conn.cursor()
-        cur.execute("""
-            SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,
-                   f.canonical_value, f.source_span, f.confidence, fs.chunk_id
-            FROM key_facts f
-            LEFT JOIN fact_sources fs ON f.fact_id = fs.fact_id
-            WHERE f.fact_text LIKE ? OR f.canonical_value LIKE ?
-            ORDER BY f.confidence DESC
-            LIMIT ?
-        """, (f"%{keyword}%", f"%{keyword}%", limit))
-        rows = cur.fetchall()
+        for v in variants:
+            fts_query = v.replace('"', '""') + "*"
+            try:
+                cur.execute("""
+                    SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,
+                           f.canonical_value, f.source_span, f.confidence, fs.chunk_id
+                    FROM key_facts_fts
+                    JOIN key_facts f ON key_facts_fts.rowid = f.fact_id
+                    LEFT JOIN fact_sources fs ON f.fact_id = fs.fact_id
+                    WHERE key_facts_fts MATCH ?
+                    LIMIT ?
+                """, (fts_query, limit * 3))
+                for row in cur.fetchall():
+                    d = dict(row)
+                    collected[d["fact_id"]] = d
+            except Exception:
+                pass
         conn.close()
-        result = [dict(row) for row in rows]
-        _cache_facts(cache_key, result)
-        return result
 
+    # LIKE fallback / supplement
     conn = db.db_connect("key_facts")
     cur = conn.cursor()
-    # Try FTS first
-    try:
-        cur.execute("""
-            SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,
-                   f.canonical_value, f.source_span, f.confidence, fs.chunk_id
-            FROM key_facts_fts
-            JOIN key_facts f ON key_facts_fts.rowid = f.fact_id
-            LEFT JOIN fact_sources fs ON f.fact_id = fs.fact_id
-            WHERE key_facts_fts MATCH ?
-            ORDER BY f.confidence DESC
-            LIMIT ?
-        """, (keyword, limit))
-        rows = cur.fetchall()
-        if rows:
-            conn.close()
-            result = [dict(row) for row in rows]
-            _cache_facts(cache_key, result)
-            return result
-    except Exception:
-        pass  # FTS not available or query failed
-
-    # Fallback to LIKE
-    cur.execute("""
+    likes = []
+    params = []
+    for v in variants:
+        likes.append("(f.fact_text LIKE ? OR f.canonical_value LIKE ?)")
+        params.extend([f"%{v}%", f"%{v}%"])
+    like_sql = " OR ".join(likes) if likes else "1=0"
+    cur.execute(f"""
         SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,
                f.canonical_value, f.source_span, f.confidence, fs.chunk_id
         FROM key_facts f
         LEFT JOIN fact_sources fs ON f.fact_id = fs.fact_id
-        WHERE f.fact_text LIKE ? OR f.canonical_value LIKE ?
-        ORDER BY f.confidence DESC
+        WHERE {like_sql}
         LIMIT ?
-    """, (f"%{keyword}%", f"%{keyword}%", limit))
-    rows = cur.fetchall()
+    """, (*params, limit * 5))
+    for row in cur.fetchall():
+        d = dict(row)
+        collected[d["fact_id"]] = d
     conn.close()
-    result = [dict(row) for row in rows]
+
+    # Fuzzy rank
+    results = []
+    kw = keyword.lower()
+    for d in collected.values():
+        text = (d.get("fact_text") or "").lower()
+        canonical = (d.get("canonical_value") or "").lower()
+        best = max(
+            fuzz.token_set_ratio(kw, text),
+            fuzz.partial_token_set_ratio(kw, text),
+            fuzz.token_set_ratio(kw, canonical),
+            fuzz.partial_token_set_ratio(kw, canonical),
+        )
+        if kw in text or kw in canonical:
+            best = max(best, 100)
+
+        rank_score = (d.get("confidence") or 0.0) * 0.6 + (best / 100.0) * 0.4
+        d["_fuzzy_score"] = best
+        d["_rank_score"] = rank_score
+        results.append(d)
+
+    results.sort(key=lambda x: x["_rank_score"], reverse=True)
+    result = results[:limit]
     _cache_facts(cache_key, result)
     return result
-
-
 def get_global_node_edges(global_node_id):
     conn = db.db_connect("external_graph")
     cur = conn.cursor()

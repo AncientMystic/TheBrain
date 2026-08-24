@@ -53,8 +53,20 @@ class Provider(BackendProvider):
     def embeddings(self, texts, model=None):
         model = model or self.config.get("embeddings_model", self.model)
         if self.mode == "ollama":
-            # native embeddings endpoint returns one vector per input? Ollama usually single input
-            # We'll use /api/embeddings with single input for now
+            # Try native batch embeddings endpoint first
+            try:
+                url = f"{self.base_url}/embed"
+                payload = {"model": model, "input": texts}
+                resp = requests.post(url, json=payload, headers=self._headers(), timeout=240)
+                resp.raise_for_status()
+                data = resp.json()
+                embeddings = data.get("embeddings")
+                if embeddings is not None and len(embeddings) == len(texts):
+                    return embeddings
+            except Exception:
+                pass
+
+            # Fallback to sequential /api/embeddings
             embeddings = []
             for text in texts:
                 url = f"{self.base_url}/embeddings"

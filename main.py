@@ -4,6 +4,7 @@ import sys, time, gc, json, traceback, sqlite3, re, os
 from pathlib import Path
 import numpy as np
 import config
+import hashlib
 
 def validate_config():
     """Check basic requirements and optionally progress bar availability."""
@@ -601,11 +602,8 @@ def main():
                     memories = retrieve_memories(query, top_k=5, session_id=session_id)
                     memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
                     analysis = analyze_query(query)
-                    facts = retrieve_from_graph(analysis, max_depth=2)
-                    if len(facts) < config.CHAT_MIN_FACTS_BEFORE_FALLBACK:
-                        chunks = fallback_to_chunks(query)
-                    else:
-                        chunks = []
+                    facts = retrieve_from_graph(analysis, top_k=50, max_depth=2)
+                    chunks = fallback_to_chunks(query, top_k=3)
                     context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
                     if logic_context:
                         context = logic_context + "\n\n" + context
@@ -669,7 +667,10 @@ Return only JSON."""
                 predicate = data.get("predicate") or "has_truth_value"
                 obj = data.get("object") or "true"
                 negation = int(data.get("negation", 0) or 0)
-                standard_id = f"admin-{idx}-{normalize_name(statement)[:20]}"
+                claim_hash = hashlib.sha1(statement.encode("utf-8")).hexdigest()[:16]
+                standard_id = f"admin-{claim_hash}"
+                admin_doc_hash = f"admin-claim-{claim_hash}"
+
                 admin_socratic = {
                     "source_hierarchy_level": 0,
                     "psych_score_total": 0,
@@ -688,12 +689,14 @@ Return only JSON."""
                     VALUES (?, ?, ?, ?, ?, ?, 'admin_claim', 'admin_claim', NULL, 0, 'admin_claim', 0, ?)
                 """, (standard_id, statement, subject, predicate, obj, negation,
                       json.dumps(admin_socratic)))
-                # Also store as key_fact for normal retrieval
+
+                # Remove any previous admin key fact with same doc_hash, then insert fresh.
+                cur_kf.execute("DELETE FROM key_facts WHERE doc_hash=?", (admin_doc_hash,))
                 cur_kf.execute("""
                     INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value,
                                            source_span, confidence, verification_status, verified_by, negation)
                     VALUES (?, ?, 'admin_claim', ?, ?, ?, 1.0, 'admin_claim', 'admin_claim', ?)
-                """, (f"admin-claim-{idx}", "admin_claim", statement, subject, predicate, negation))
+                """, (admin_doc_hash, "admin_claim", statement, subject, predicate, negation))
             conn_std.commit(); conn_std.close()
             conn_kf.commit(); conn_kf.close()
             print("Admin claims stored.")

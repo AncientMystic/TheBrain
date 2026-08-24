@@ -99,6 +99,13 @@ def audit_against_standards():
     conn_comp.commit(); conn_comp.close()
     print(f"  Standards audit compared {len(facts)} facts; updated {changes} statuses.")
 
+    try:
+        from scripts.attach_supporting_evidence import attach_supporting_evidence_to_standards
+        attach_supporting_evidence_to_standards()
+    except Exception as e:
+        if config.DEBUG_VERBOSE:
+            print(f"    (Supporting evidence extraction error during audit: {e})")
+
 
 def audit_all():
     print("=== Running Automatic Audit ===")

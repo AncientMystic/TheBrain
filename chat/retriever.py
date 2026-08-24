@@ -9,6 +9,35 @@ from logic.retrieve import retrieve_logic_modules
 from memory.retrieve import retrieve_memories
 import config
 
+_chunk_matrix_cache = {}
+_chunk_matrix_cache_ttl = 300  # seconds
+
+def _get_chunk_matrix(model):
+    """Return cached (matrix, rows) for a given embedding model."""
+    now = time.time()
+    if model in _chunk_matrix_cache:
+        entry = _chunk_matrix_cache[model]
+        if now - entry["ts"] < _chunk_matrix_cache_ttl:
+            return entry["matrix"], entry["rows"]
+
+    conn = db.db_connect("embeddings")
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings WHERE model=?",
+        (model,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return None, []
+
+    matrix = np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+    _chunk_matrix_cache[model] = {"matrix": matrix, "rows": rows, "ts": now}
+    return matrix, rows
+
+from fuzzywuzzy import fuzz
+
 _fact_cache = {}
 _fact_cache_ttl = {}
 
@@ -67,11 +96,38 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
             seen_fact_ids.add(fid)
             unique_facts.append(fact)
 
-    unique_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    unique_facts = re_rank_facts(unique_facts, query_analysis.get('original', ''))
+
+    # Keep only query-relevant facts, with a small confidence fallback
+    try:
+        from core.text_utils import tokenize
+        query_tokens = set(tokenize(query_analysis.get('original', '')))
+    except Exception:
+        query_tokens = set((query_analysis.get('original', '') or '').lower().split())
+
+    relevant_facts = []
+    for f in unique_facts:
+        fact_text = (f.get('fact_text') or '').lower()
+        canonical = (f.get('canonical_value') or '').lower()
+        try:
+            fact_tokens = set(tokenize(fact_text)) | set(tokenize(canonical))
+        except Exception:
+            fact_tokens = set(fact_text.split()) | set(canonical.split())
+
+        has_query_overlap = bool(query_tokens & fact_tokens)
+        has_high_fuzzy = f.get('_fuzzy_score', 0) >= 70
+
+        if has_query_overlap or has_high_fuzzy:
+            relevant_facts.append(f)
+
+    if relevant_facts:
+        unique_facts = relevant_facts[:top_k]
+    else:
+        unique_facts = unique_facts[:10]
+
     # Ensure 'result' is defined (should be, but safety)
     if 'result' not in locals():
         result = []
-
     # Optional Recoll full-text search (additional source)
     recoll_facts = []
     if config.USE_RECOLL:
@@ -116,38 +172,117 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
 
 
 def fallback_to_chunks(query, top_k=None):
+    """Hybrid chunk retrieval: ranked keyword matches + embedding similarity."""
     if top_k is None:
         top_k = config.CHAT_TOP_K_CHUNKS
-    q_emb = get_embedding(query)
-    if not q_emb:
-        return []
-    conn = db.db_connect("embeddings")
-    cur = conn.cursor()
-    cur.execute("SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings LIMIT ?", (top_k * 10,))
-    rows = cur.fetchall()
-    conn.close()
-    if not rows:
-        return []
-    q = np.array(q_emb, dtype=np.float32)
-    q_norm = np.linalg.norm(q)
-    chunk_data = [(r[0], r[1], r[2], r[3]) for r in rows]
-    embeddings = [np.frombuffer(r[3], dtype=np.float32) for r in rows]
-    matrix = np.vstack(embeddings)
-    norms = np.linalg.norm(matrix, axis=1)
-    norms[norms == 0] = 1e-8
-    sims = matrix @ q / (norms * (q_norm + 1e-8))
-    results = [
-        (float(sim), chunk_id, doc_hash, chunk_text)
-        for sim, (chunk_id, doc_hash, chunk_text, _) in zip(sims, chunk_data)
-    ]
-    results.sort(key=lambda x: x[0], reverse=True)
-    return results[:top_k]
 
+    results = []
+    seen = set()
 
+    # Token variants for keyword search
+    try:
+        from core.text_utils import tokenize
+        tokens = tokenize(query)
+        variants = []
+        for t in tokens:
+            variants.append(t)
+            if t.endswith("s") and len(t) > 3:
+                variants.append(t[:-1])
+            if t.endswith("ies") and len(t) > 4:
+                variants.append(t[:-3] + "y")
+    except Exception:
+        tokens = [w.lower() for w in query.split() if len(w) > 2]
+        variants = tokens
+
+    if variants:
+        try:
+            conn = db.db_connect("index")
+            cur = conn.cursor()
+            likes = []
+            params = []
+            for v in variants:
+                likes.append("chunk_text LIKE ?")
+                params.append(f"%{v}%")
+            like_sql = " OR ".join(likes)
+            cur.execute(
+                f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE {like_sql} LIMIT 500",
+                params,
+            )
+            rows = cur.fetchall()
+            conn.close()
+
+            phrase = " ".join(variants)
+            for row in rows:
+                chunk_id = row["chunk_id"]
+                text = row["chunk_text"].lower()
+                score = 0.0
+                matched = 0
+                for v in variants:
+                    if v in text:
+                        score += max(1.0, len(v) / 4.0)
+                        matched += 1
+                if matched == 0:
+                    continue
+                if phrase in text:
+                    score += len(variants) * 2.0
+                results.append((score, chunk_id, row["doc_hash"], row["chunk_text"]))
+                seen.add(chunk_id)
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Keyword chunk fallback error: {e})")
+
+    # Embedding similarity hybrid, using precomputed matrix when possible
+    model = config.EMBEDDING_ENDPOINTS[0]["model"]
+    q_emb = get_embedding(query, model=model)
+    if q_emb:
+        try:
+            matrix, rows = _get_chunk_matrix(model)
+            if matrix is not None and rows:
+                q = np.array(q_emb, dtype=np.float32)
+                q_norm = np.linalg.norm(q)
+                norms = np.linalg.norm(matrix, axis=1)
+                norms[norms == 0] = 1e-8
+                sims = matrix @ q / (norms * (q_norm + 1e-8))
+
+                for row, sim in zip(rows, sims):
+                    chunk_id = row["chunk_id"]
+                    doc_hash = row["doc_hash"]
+                    chunk_text = row["chunk_text"]
+                    if chunk_id not in seen:
+                        seen.add(chunk_id)
+                        results.append((float(sim) * 0.5, chunk_id, doc_hash, chunk_text))
+                    else:
+                        for idx, item in enumerate(results):
+                            if item[1] == chunk_id:
+                                old_score, _, _, _ = item
+                                combined = old_score + float(sim) * 0.5
+                                results[idx] = (combined, chunk_id, doc_hash, chunk_text)
+                                break
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Embedding fallback error: {e})")
+
+    # Deduplicate and sort by combined score
+    final = []
+    seen_ids = set()
+    for score, chunk_id, doc_hash, text in results:
+        if chunk_id in seen_ids:
+            continue
+        seen_ids.add(chunk_id)
+        final.append((score, chunk_id, doc_hash, text))
+    final.sort(key=lambda x: x[0], reverse=True)
+    return final[:top_k]
 def re_rank_facts(facts, query, top_k=None):
-    """Re-rank facts using memory and logic modules for better relevance."""
+    """Re-rank facts using query token overlap, memory, and logic modules."""
     if not facts:
         return facts
+
+    try:
+        from core.text_utils import tokenize
+        query_tokens = set(tokenize(query))
+    except Exception:
+        query_tokens = set(query.lower().split())
+
     # Get relevant logic modules
     logic_mods = retrieve_logic_modules(query, top_k=3)
     logic_keywords = set()
@@ -155,6 +290,7 @@ def re_rank_facts(facts, query, top_k=None):
         for word in summary.split()[:5]:
             if len(word) > 3:
                 logic_keywords.add(word.lower())
+
     # Get recent memories
     memories = retrieve_memories(query, top_k=3)
     memory_keywords = set()
@@ -162,13 +298,26 @@ def re_rank_facts(facts, query, top_k=None):
         for word in content.split()[:10]:
             if len(word) > 3:
                 memory_keywords.add(word.lower())
-    # Score facts based on keyword overlap with logic/memory
+
+    # Score facts based on query token overlap, logic, and memory
     for fact in facts:
         fact_text = fact.get("fact_text", "").lower()
+        canonical = fact.get("canonical_value", "").lower()
+
+        try:
+            from core.text_utils import tokenize
+            fact_tokens = set(tokenize(fact_text)) | set(tokenize(canonical))
+        except Exception:
+            fact_tokens = set(fact_text.split()) | set(canonical.split())
+
         score = fact.get("confidence", 0)
-        overlap = len(set(fact_text.split()) & logic_keywords) + len(set(fact_text.split()) & memory_keywords)
-        fact["_relevance_boost"] = overlap * 0.05
+        query_overlap = len(fact_tokens & query_tokens)
+        logic_overlap = len(fact_tokens & logic_keywords)
+        memory_overlap = len(fact_tokens & memory_keywords)
+
+        fact["_relevance_boost"] = query_overlap * 0.25 + logic_overlap * 0.05 + memory_overlap * 0.05
         fact["_final_score"] = score + fact["_relevance_boost"]
+
     facts.sort(key=lambda x: x.get("_final_score", 0), reverse=True)
     if top_k:
         return facts[:top_k]

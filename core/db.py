@@ -19,6 +19,11 @@ class PooledConnection:
             _conn_local.pool = {}
         db_type = getattr(self, "_db_type", None)
         if db_type:
+            # Rollback any uncommitted transaction before returning to pool.
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
             _conn_local.pool[db_type] = self._conn
 
     def real_close(self):

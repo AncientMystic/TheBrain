@@ -15,6 +15,7 @@ STOPWORDS = {
     'some', 'any', 'each', 'every', 'all', 'both', 'few', 'more', 'most',
     'other', 'same', 'so', 'than', 'too', 'very', 'just', 'also',
     'there', 'here', 'what', 'who', 'whom', 'whose', 'why', 'how',
+    'know', 'tell', 'give', 'info', 'information',
     'un', 'una', 'uno', 'unas', 'unos', 'el', 'la', 'los', 'las', 'de',
     'del', 'que', 'en', 'con', 'por', 'para', 'como', 'pero', 'más',
     'mas', 'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
