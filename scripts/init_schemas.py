@@ -24,6 +24,11 @@ def init_index_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS processing_progress (
         file_hash TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'processed',
         stage TEXT, updated_at TEXT)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS document_text_cache (
+        file_hash TEXT PRIMARY KEY,
+        text TEXT,
+        metadata_json TEXT,
+        extracted_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS llm_extraction_cache (
         chunk_hash TEXT, category TEXT, model TEXT, max_tokens INTEGER,
         result_json TEXT, prompt_hash TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,

@@ -28,33 +28,71 @@ class OnnxNERExtractor:
         if not onnx_files:
             print("No .onnx file found in model directory.")
             return
-        try:
-            self.session = ort.InferenceSession(str(onnx_files[0]))
-            # For tokenizer, try to use transformers if available
+
+        device = getattr(config, "ONNX_DEVICE", "auto").lower()
+
+        # Provider preference based on requested device.
+        if device == "cuda":
+            provider_sets = [
+                ["CUDAExecutionProvider", "CPUExecutionProvider"],
+                ["CPUExecutionProvider"],
+            ]
+        elif device == "directml":
+            provider_sets = [
+                ["DmlExecutionProvider", "CPUExecutionProvider"],
+                ["CPUExecutionProvider"],
+            ]
+        elif device == "auto":
+            # Try DirectML first on Windows, then CPU.
+            provider_sets = [
+                ["DmlExecutionProvider", "CPUExecutionProvider"],
+                ["CPUExecutionProvider"],
+            ]
+        else:  # cpu
+            provider_sets = [
+                ["CPUExecutionProvider"],
+            ]
+
+        self.session = None
+        for providers in provider_sets:
             try:
-                from transformers import AutoTokenizer
-                self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-                # Try to load id2label from model config; fallback to default BERT-NER mapping
-                self.id2label = None
-                config_path = model_dir / "config.json"
-                if config_path.exists():
-                    try:
-                        import json
-                        with open(config_path, "r", encoding="utf-8") as cf:
-                            model_cfg = json.load(cf)
-                        id2label_raw = model_cfg.get("id2label")
-                        if id2label_raw:
-                            self.id2label = {int(k): v for k, v in id2label_raw.items()}
-                    except Exception:
-                        pass
-                if not self.id2label:
-                    self.id2label = {0: "O", 1: "B-PER", 2: "I-PER", 3: "B-ORG", 4: "I-ORG",
-                                     5: "B-LOC", 6: "I-LOC", 7: "B-MISC", 8: "I-MISC"}
-            except ImportError:
-                print("transformers not installed, cannot load tokenizer.")
-                self.session = None
+                self.session = ort.InferenceSession(str(onnx_files[0]), providers=providers)
+                active_providers = self.session.get_providers()
+                print(f"ONNX providers active: {active_providers}")
+                break
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"Failed to create ONNX session with {providers}: {e}")
+                continue
+
+        if self.session is None:
+            print("Failed to load ONNX model with any provider.")
+            return
+
+        # Load tokenizer
+        try:
+            from transformers import AutoTokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+            self.id2label = None
+            config_path = model_dir / "config.json"
+            if config_path.exists():
+                try:
+                    import json
+                    with open(config_path, "r", encoding="utf-8") as cf:
+                        model_cfg = json.load(cf)
+                    id2label_raw = model_cfg.get("id2label")
+                    if id2label_raw:
+                        self.id2label = {int(k): v for k, v in id2label_raw.items()}
+                except Exception:
+                    pass
+            if not self.id2label:
+                self.id2label = {0: "O", 1: "B-PER", 2: "I-PER", 3: "B-ORG", 4: "I-ORG",
+                                 5: "B-LOC", 6: "I-LOC", 7: "B-MISC", 8: "I-MISC"}
+        except ImportError:
+            print("transformers not installed, cannot load tokenizer.")
+            self.session = None
         except Exception as e:
-            print(f"Failed to load ONNX model: {e}")
+            print(f"Tokenizer load error: {e}")
             self.session = None
 
     def extract_entities(self, text):

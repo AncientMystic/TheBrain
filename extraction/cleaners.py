@@ -76,7 +76,15 @@ def _is_redundant_span(span, text):
 def _clean_facts(facts):
     cleaned = []
     for f in facts:
-        if not isinstance(f, dict):
+        if isinstance(f, str):
+            f = {
+                "fact_type": "other",
+                "fact_text": f,
+                "canonical_value": "",
+                "source_span": "",
+                "confidence": 0.7,
+            }
+        elif not isinstance(f, dict):
             continue
         fact_text = _safe_str(f.get("fact_text"), 200)
         source_span = _safe_str(f.get("source_span"), 200)
@@ -277,7 +285,7 @@ def _clean_gems(gems):
     for g in gems:
         if not isinstance(g, dict):
             continue
-        gem_text = _safe_str(g.get("gem_text"), 200)
+        gem_text = _safe_str(g.get("gem_text") or g.get("discovery_name"), 200)
         source_span = _safe_str(g.get("source_span"), 200)
         if source_span:
             if len(source_span.split()) > 4 or _is_redundant_span(source_span, gem_text):

@@ -19,7 +19,23 @@ _graph_cache = {
 def _get_graph_state(conn, cur):
     if _graph_cache["existing_nodes"] is None:
         cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
-        _graph_cache["existing_nodes"] = [dict(row) for row in cur.fetchall()]
+        nodes = [dict(row) for row in cur.fetchall()]
+        # If too many nodes, don't cache embeddings to save RAM
+        if len(nodes) > getattr(config, "EXTERNAL_GRAPH_CACHE_MAX_NODES", 100000):
+            print(f"  (External graph has {len(nodes)} nodes; disabling embedding cache to save RAM)")
+            _graph_cache["existing_emb_matrix"] = None
+            _graph_cache["existing_emb_ids"] = []
+        else:
+            # Build embedding matrix
+            existing_embeddings = []
+            existing_emb_ids = []
+            for node in nodes:
+                if node.get("embedding") is not None:
+                    existing_embeddings.append(np.frombuffer(node["embedding"], dtype=np.float32))
+                    existing_emb_ids.append(node["global_node_id"])
+            _graph_cache["existing_emb_matrix"] = np.stack(existing_embeddings) if existing_embeddings else None
+            _graph_cache["existing_emb_ids"] = existing_emb_ids
+        _graph_cache["existing_nodes"] = nodes
         _graph_cache["exact_match_map"] = {}
         for node in _graph_cache["existing_nodes"]:
             norm_name = normalize_name(node["canonical_name"])

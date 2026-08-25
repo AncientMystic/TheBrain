@@ -334,6 +334,50 @@ def _compute_novelty_flags(chunks, chunk_embeddings):
 
 
 # ============================================================
+#  ONNX VALIDATION BATCH
+# ============================================================
+
+ONNX_VALIDATION_PROMPT = """
+You are an extraction validator.
+Given the following chunks and their ONNX pre-extracted entities, determine if the pre-extraction is accurate and sufficient.
+If all chunks are correct, reply with "valid".
+If some chunks are incorrect or incomplete, reply with "valid, chunk X invalid" for each invalid chunk.
+Do not output anything else.
+
+Chunks:
+{chunks_text}
+
+ONNX Pre-extractions:
+{pre_extractions}
+"""
+
+
+def _validate_onnx_batch(batch_chunks, batch_pre, endpoint, model):
+    """Run minimal LLM validation on ONNX pre-extractions."""
+    if not batch_chunks:
+        return {}
+    prompt = ONNX_VALIDATION_PROMPT.format(
+        chunks_text=_format_chunks_text(batch_chunks),
+        pre_extractions=_format_pre_extractions_for_prompt(batch_pre)
+    )
+    resp = call_model_json(prompt, model=model, max_tokens=64, system=SYSTEM_PROMPT,
+                           unwrap_list=False, endpoint=endpoint, endpoint_type="small")
+    if isinstance(resp, str):
+        # Parse simple response
+        invalid = set()
+        for token in resp.split(","):
+            token = token.strip()
+            if token.startswith("chunk") and "invalid" in token.lower():
+                try:
+                    num = int(token.split()[1])
+                    invalid.add(num)
+                except Exception:
+                    pass
+        return {"invalid": invalid}
+    return {}
+
+
+# ============================================================
 #  BATCH EXTRACTION
 # ============================================================
 

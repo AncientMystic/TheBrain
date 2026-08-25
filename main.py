@@ -57,19 +57,42 @@ def deduplicate_list(items, key_func):
 
 
 def process_file(filepath, tracker, logic_context=""):
+    _t0 = time.time()
     file_hash = get_file_hash(filepath)
     if tracker.is_processed(file_hash):
         print(f"Skipping already processed: {filepath.name}")
         return False
+    update_status(f"[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
     print(f"\n[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
     try:
-        result = extract_text_from_file(filepath)
-        text = result["text"]
-        metadata = result["metadata"]
-        file_format = result["format"]
+        # Check document text cache first
+        conn_cache = db.db_connect("index")
+        cur_cache = conn_cache.cursor()
+        cur_cache.execute("SELECT text, metadata_json FROM document_text_cache WHERE file_hash=?", (file_hash,))
+        cache_row = cur_cache.fetchone()
+        conn_cache.close()
+
+        if cache_row:
+            text = cache_row["text"]
+            metadata = json.loads(cache_row["metadata_json"])
+            result = {"text": text, "metadata": metadata, "format": Path(filepath).suffix.lstrip(".").lower()}
+            file_format = result["format"]
+            print("  (Using cached text)")
+        else:
+            result = extract_text_from_file(filepath)
+            text = result["text"]
+            metadata = result["metadata"]
+            file_format = result["format"]
+            # Save to cache
+            conn_cache = db.db_connect("index")
+            conn_cache.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
+                               (file_hash, text, json.dumps(metadata)))
+            conn_cache.commit(); conn_cache.close()
+
         if not text:
             print("  (No text extracted; skipping)")
             return False
+
         print(f"  Extracted {len(text)} chars")
         conn = db.db_connect("index")
         store_document(conn, file_hash, str(filepath), filepath.name, file_format, text, metadata,
@@ -148,7 +171,7 @@ def process_file(filepath, tracker, logic_context=""):
                 fact_rows,
             )
 
-        # Retrieve last inserted IDs (this is approximate because executemany doesn't return IDs)
+        # Retrieve last inserted IDs
         cur_facts.execute("SELECT fact_id, source_span, canonical_value FROM key_facts WHERE doc_hash=? ORDER BY fact_id DESC LIMIT ?",
                           (file_hash, len(fact_rows)))
         inserted = cur_facts.fetchall()[::-1]
@@ -207,7 +230,8 @@ def process_file(filepath, tracker, logic_context=""):
                           (file_hash, filepath.name, summary, json.dumps(key_points)))
         conn_summ.commit(); conn_summ.close()
         tracker.mark_processed(file_hash)
-        print(f"  Done processing {filepath.name}")
+        elapsed = time.time() - _t0
+        print(f"  Done processing {filepath.name} in {elapsed:.2f}s")
         return True
     except Exception as e:
         print(f"  ERROR processing {filepath}: {e}")
@@ -413,6 +437,11 @@ def promote_verified_file(file_hash, file_name, source_file=None):
         VALUES (?, CURRENT_TIMESTAMP, 'verified_folder', ?)
     """, (file_hash, len(facts)))
     conn_promo.commit(); conn_promo.close()
+def update_status(message):
+    """Update the current terminal status line in place."""
+    print(f"\r{message}", end="", flush=True)
+
+
 def main():
     if "--debug" in sys.argv:
         config.DEBUG_VERBOSE = True

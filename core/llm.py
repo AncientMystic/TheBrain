@@ -98,6 +98,7 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
                 cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL)
                 return cleaned.strip()
             else:
+                print(f"    (Empty model response, attempt {attempt+1})")
                 if config.DEBUG_VERBOSE:
                     logger.warning(f"Empty model response, attempt {attempt+1}")
         except Exception as e:
@@ -113,6 +114,22 @@ def repair_json(raw: str) -> str:
     raw = re.sub(r'```$', '', raw).strip()
     raw = raw.rstrip()
     raw = re.sub(r',\s*([}\]])', r'\1', raw)
+
+    # If raw appears to end inside a string, close it first.
+    in_string = False
+    escaped = False
+    for ch in raw:
+        if escaped:
+            escaped = False
+            continue
+        if ch == '\\':
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+    if in_string:
+        raw += '"'
+
     open_braces = raw.count('{')
     close_braces = raw.count('}')
     open_brackets = raw.count('[')
@@ -126,41 +143,46 @@ def repair_json(raw: str) -> str:
     return raw
 
 
-def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
-                    system="You are a meticulous assistant that returns only valid JSON.",
-                    unwrap_list=True, endpoint=None, endpoint_type=None):
-    raw = call_model(prompt, model=model, max_tokens=max_tokens,
-                     temperature=temperature, system=system, endpoint=endpoint, endpoint_type=endpoint_type)
+def extract_first_json(raw: str):
+    """Attempt to extract the first complete JSON object/array from raw text."""
+    raw = raw.strip()
     if not raw:
         return None
 
-    raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip(), flags=re.DOTALL)
+    # Remove markdown fences if present
+    raw = re.sub(r'^```(?:json)?\s*', '', raw)
+    raw = re.sub(r'\s*```$', '', raw).strip()
 
-    try:
-        parsed = json.loads(raw)
-        if unwrap_list and isinstance(parsed, list):
-            if parsed and isinstance(parsed[0], dict):
-                return parsed[0]
+    decoder = json.JSONDecoder()
+    for i in range(len(raw)):
+        ch = raw[i]
+        if ch in ('{', '['):
+            try:
+                obj, _ = decoder.raw_decode(raw[i:])
+                return obj
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
+                    system="You are a meticulous assistant that returns only valid JSON.",
+                    unwrap_list=True, endpoint=None, endpoint_type=None):
+    def _parse(raw):
+        if not raw:
             return None
-        return parsed
-    except json.JSONDecodeError:
-        pass
 
-    repaired = repair_json(raw)
-    try:
-        parsed = json.loads(repaired)
-        if unwrap_list and isinstance(parsed, list):
-            if parsed and isinstance(parsed[0], dict):
-                return parsed[0]
-            return None
-        return parsed
-    except json.JSONDecodeError:
-        pass
+        parsed = extract_first_json(raw)
+        if parsed is not None:
+            if unwrap_list and isinstance(parsed, list):
+                if parsed and isinstance(parsed[0], dict):
+                    return parsed[0]
+                return None
+            return parsed
 
-    json_match = re.search(r'\{.*\}', raw, flags=re.DOTALL)
-    if json_match:
+        repaired = repair_json(raw)
         try:
-            parsed = json.loads(json_match.group(0))
+            parsed = json.loads(repaired)
             if unwrap_list and isinstance(parsed, list):
                 if parsed and isinstance(parsed[0], dict):
                     return parsed[0]
@@ -168,17 +190,25 @@ def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
             return parsed
         except json.JSONDecodeError:
             pass
-        repaired_block = repair_json(json_match.group(0))
-        try:
-            parsed = json.loads(repaired_block)
-            if unwrap_list and isinstance(parsed, list):
-                if parsed and isinstance(parsed[0], dict):
-                    return parsed[0]
-                return None
-            return parsed
-        except json.JSONDecodeError:
-            pass
 
+        return None
+
+    raw = call_model(prompt, model=model, max_tokens=max_tokens,
+                     temperature=temperature, system=system, endpoint=endpoint, endpoint_type=endpoint_type)
+    parsed = _parse(raw)
+    if parsed is not None:
+        return parsed
+
+    # Retry once with larger max_tokens to avoid truncation.
+    larger_max = int(max_tokens * 1.5) + 512
+    raw2 = call_model(prompt, model=model, max_tokens=larger_max,
+                      temperature=temperature, system=system, endpoint=endpoint, endpoint_type=endpoint_type)
+    parsed2 = _parse(raw2)
+    if parsed2 is not None:
+        return parsed2
+
+    preview = (raw or "")[:500].replace("\n", " ")
+    print(f"    (JSON parse failure preview: {preview})")
     if config.DEBUG_VERBOSE:
         logger.error("Failed to parse JSON from LLM response")
         logger.debug(f"Raw response (first 500 chars): {raw[:500]}")

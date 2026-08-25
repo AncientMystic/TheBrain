@@ -61,7 +61,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -205,6 +205,7 @@ FAST_EXTRACTOR_MODEL_NAME = "optimum/bert-base-NER"
 FAST_EXTRACTOR_MODEL_DIR = str(BASE_DIR / "models" / "ner_onnx")
 FAST_EXTRACTOR_CONFIDENCE_THRESHOLD = 0.7  # below this, LLM verification used
 FAST_EXTRACTOR_LOW_CONFIDENCE_RATIO = 0.2   # max ratio of items to send to LLM
+ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "directml")  # "auto", "cpu", "cuda", "directml"
 
 # Performance
 RETRIEVAL_CACHE_ENABLED = True
@@ -215,7 +216,7 @@ EMBEDDING_BATCH_SIZE = 32             # increase for better throughput
 # --- Optional model roles (leave empty to use default endpoints) ---
 SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "http://localhost:1234/v1")
 SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "liquidai/lfm2.5-1.2b-instruct")
-SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "http://10.0.0.33:1234/v1")
+SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "")
 SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "liquidai/lfm2.5-1.2b-instruct")
 
 SMALL_MODEL_ENDPOINT = None  # filled dynamically
@@ -238,6 +239,7 @@ PARALLEL_WORKERS = 2
 
 # --- Graph optimization ---
 BATCH_GLOBAL_NODE_LOOKUPS = True  # use in-memory map for exact matches
+EXTERNAL_GRAPH_CACHE_MAX_NODES = int(os.environ.get("EXTERNAL_GRAPH_CACHE_MAX_NODES", "100000"))
 
 # --- Adaptive verification ---
 ADAPTIVE_VERIFICATION = True
@@ -342,7 +344,7 @@ SMALL_MODEL_ENDPOINT_2 = None
 CHAT_MODEL_ENDPOINT = None
 
 # Async validation queue (small models extract, large models validate)
-ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "false").lower() == "true"
+ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
 VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "5"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "2"))
