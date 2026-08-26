@@ -832,3 +832,10 @@ Pull requests are welcome. For major changes, please open an issue first.
 ## Disclaimer
 
 This project is under active development. Some reasoning components may be heuristic and may require tuning for production use. This is a work in progress and is considered highly experimental.
+
+---
+
+## Thank You
+
+A special thank you to **[SocioProphet](https://github.com/SocioProphet)** for the advanced concepts, review report, and technical inspiration that helped shape this project.
+```
