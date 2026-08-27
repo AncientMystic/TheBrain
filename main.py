@@ -751,7 +751,7 @@ def main():
                         chunks = []
                         for dp in datapoints:
                             if dp.get('type') == 'chunk_ref':
-                                chunks.append((0, dp.get('doc_hash'), dp.get('text', '')))
+                                chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
                         context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
                     else:
                         try:

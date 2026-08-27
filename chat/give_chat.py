@@ -30,7 +30,7 @@ def generate_answer_verified(query: str, conversation_history: str = "") -> str:
     chunks = []
     for dp in datapoints:
         if dp.get('type') == 'chunk_ref':
-            chunks.append((0, dp.get('doc_hash'), dp.get('text', '')))
+            chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
 
     # Reflect: verify facts
     vm = VerificationManager()
