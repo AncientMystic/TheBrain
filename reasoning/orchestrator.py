@@ -8,6 +8,7 @@ from chat.retriever import retrieve_from_graph, fallback_to_chunks
 from chat.context_builder import build_context
 from core.llm import call_model, call_model_json
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
+from graph.expansion import pre_select_candidates
 from core import db
 
 
@@ -46,7 +47,7 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
 
     for _ in range(max_expansion_rounds):
         new_facts = []
-        for fact in all_facts[:20]:  # limit expansion from top facts to avoid explosion
+        for fact in all_facts[:20]:
             # 1. Keyword expansion
             keywords = extract_keywords_from_fact(fact)
             for kw in keywords:
@@ -57,7 +58,6 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                         if f.get("fact_id") not in seen_ids:
                             new_facts.append(f)
                             seen_ids.add(f.get("fact_id"))
-                # Direct keyword retrieval
                 facts = get_facts_by_keyword(kw)
                 for f in facts:
                     if f.get("fact_id") not in seen_ids:
@@ -65,9 +65,7 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                         seen_ids.add(f.get("fact_id"))
 
             # 2. Entity graph expansion
-            # Extract entity names from fact text using simple heuristic (capitalized words)
             fact_text = fact.get("fact_text", "")
-            # Use existing entity extraction from query_analyzer
             analysis = analyze_query(fact_text)
             entities = analysis.get("entities", [])
             conn = db.db_connect("external_graph")
@@ -76,8 +74,10 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
                 if not ent_name:
                     continue
-                cur.execute("SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
-                            (ent_name, ent_name))
+                cur.execute(
+                    "SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
+                    (ent_name, ent_name)
+                )
                 row = cur.fetchone()
                 if row:
                     gid = row[0]
@@ -87,8 +87,7 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                         cur.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (other_gid,))
                         other = cur.fetchone()
                         if other:
-                            facts = get_facts_by_keyword(other[0])
-                            for f in facts:
+                            for f in get_facts_by_keyword(other[0]):
                                 if f.get("fact_id") not in seen_ids:
                                     new_facts.append(f)
                                     seen_ids.add(f.get("fact_id"))
@@ -98,9 +97,8 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
             break
         all_facts.extend(new_facts)
 
-    # Sort by confidence
     all_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-    return all_facts[:100]  # cap at 100 to avoid context overflow
+    return all_facts[:100]
 
 
 def adaptive_reasoning(query, kg=None, max_rounds=3):
@@ -139,4 +137,10 @@ def adaptive_reasoning(query, kg=None, max_rounds=3):
 
 def orchestrate_reasoning(query, session_id=None):
     answer, verified_facts = adaptive_reasoning(query)
+    if getattr(config, "ENABLE_LOGIC_LEARNING_FROM_PATHS", False):
+        try:
+            from logic.learn import learn_logic_from_reasoning_paths
+            learn_logic_from_reasoning_paths(None, None)
+        except Exception:
+            pass
     return answer, verified_facts

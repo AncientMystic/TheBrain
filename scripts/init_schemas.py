@@ -62,7 +62,10 @@ def init_key_facts_db():
     cur.execute("""CREATE TABLE IF NOT EXISTS key_facts (
         fact_id INTEGER PRIMARY KEY AUTOINCREMENT, doc_hash TEXT NOT NULL, doc_name TEXT NOT NULL,
         fact_type TEXT NOT NULL, fact_text TEXT NOT NULL, canonical_value TEXT,
-        source_span TEXT, confidence REAL DEFAULT 0.0, verified INTEGER DEFAULT 0)""")
+        source_span TEXT, confidence REAL DEFAULT 0.0, verified INTEGER DEFAULT 0,
+        symstep_contradiction INTEGER DEFAULT 0,
+        formal_representation TEXT,
+        rcot_verified INTEGER DEFAULT 0)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS entities (
         entity_id INTEGER PRIMARY KEY AUTOINCREMENT, doc_hash TEXT NOT NULL, entity_type TEXT NOT NULL,
         entity_name TEXT NOT NULL, normalized_name TEXT, source_span TEXT, confidence REAL DEFAULT 0.0)""")
@@ -97,6 +100,21 @@ def init_key_facts_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_entity_fact_index_norm ON entity_fact_index(normalized_name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_entity_fact_index_fact ON entity_fact_index(fact_id)")
     cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS key_facts_fts USING fts5(fact_text, canonical_value, source_span)")
+    cur.execute("""CREATE TABLE IF NOT EXISTS quotes (
+        quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_hash TEXT NOT NULL,
+        chunk_id INTEGER,
+        quote_text TEXT NOT NULL,
+        canonical_value TEXT,
+        confidence REAL DEFAULT 0.0,
+        verification_status TEXT DEFAULT 'unverified',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS quote_links (
+        quote_id INTEGER REFERENCES quotes(quote_id),
+        global_node_id INTEGER,
+        keyword TEXT,
+        weight REAL DEFAULT 1.0,
+        PRIMARY KEY (quote_id, global_node_id, keyword))""")
     # Triggers to keep FTS in sync
     cur.execute("""
         CREATE TRIGGER IF NOT EXISTS key_facts_ai AFTER INSERT ON key_facts BEGIN
@@ -191,6 +209,13 @@ def init_external_graph_db():
         topic_id INTEGER PRIMARY KEY AUTOINCREMENT, topic_name TEXT NOT NULL UNIQUE, category TEXT, keywords_json TEXT)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS keyword_topic_edges (
         keyword TEXT NOT NULL, topic TEXT NOT NULL, weight REAL DEFAULT 1.0, PRIMARY KEY (keyword, topic))""")
+    # Optional temporal columns
+    cur.execute("PRAGMA table_info(keyword_topic_edges)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "first_seen" not in cols:
+        cur.execute("ALTER TABLE keyword_topic_edges ADD COLUMN first_seen TIMESTAMP")
+    if "last_seen" not in cols:
+        cur.execute("ALTER TABLE keyword_topic_edges ADD COLUMN last_seen TIMESTAMP")
     cur.execute("""CREATE TABLE IF NOT EXISTS keyword_cooccurrence (
         kw_a TEXT NOT NULL, kw_b TEXT NOT NULL, weight REAL DEFAULT 1.0, doc_hashes TEXT, PRIMARY KEY (kw_a, kw_b))""")
     cur.execute("""CREATE TABLE IF NOT EXISTS cross_doc_links (
@@ -199,6 +224,13 @@ def init_external_graph_db():
         FOREIGN KEY(global_node_id) REFERENCES global_nodes(global_node_id))""")
     cur.execute("""CREATE TABLE IF NOT EXISTS topic_hierarchy (
         parent TEXT NOT NULL, child TEXT NOT NULL, weight REAL DEFAULT 1.0, PRIMARY KEY (parent, child))""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS keyword_clusters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_name TEXT,
+        keywords_json TEXT,
+        centroid_embedding BLOB,
+        size INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS global_nodes_fts USING fts5(canonical_name, node_type)")
     cur.execute("""
         CREATE TRIGGER IF NOT EXISTS global_nodes_fts_ai AFTER INSERT ON global_nodes BEGIN
@@ -426,6 +458,9 @@ def apply_existing_table_migrations():
     _alter_table_if_needed(conn, "key_facts", "negation", "INTEGER DEFAULT 0")
     _alter_table_if_needed(conn, "key_facts", "valid_from", "TEXT")
     _alter_table_if_needed(conn, "key_facts", "valid_to", "TEXT")
+    _alter_table_if_needed(conn, "key_facts", "symstep_contradiction", "INTEGER DEFAULT 0")
+    _alter_table_if_needed(conn, "key_facts", "formal_representation", "TEXT")
+    _alter_table_if_needed(conn, "key_facts", "rcot_verified", "INTEGER DEFAULT 0")
     conn.close()
 
     # documents

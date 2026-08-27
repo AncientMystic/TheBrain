@@ -136,6 +136,17 @@ def run_recoll_guided_learning(process_file_callback, tracker, max_rounds=None, 
             print("No knowledge gaps found. Exiting.")
             break
 
+        # Prioritize gaps: missing_relationships and under_explored_topic first
+        priority_order = {
+            "missing_relationships": 0,
+            "under_explored_topic": 1,
+            "low_confidence": 2,
+            "sparse_entity": 3,
+            "low_coverage_keyword": 4,
+            "unconnected_topic": 5,
+        }
+        gaps.sort(key=lambda g: priority_order.get(g.get("type"), 9))
+
         new_docs_processed = 0
         for gap in gaps:
             entity = gap.get("entity", "unknown")

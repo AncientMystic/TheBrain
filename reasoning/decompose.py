@@ -1,5 +1,8 @@
 import json
+import config
 from core.llm import call_model_json
+from core.embeddings import get_embedding
+import numpy as np
 
 DECOMPOSE_PROMPT = """
 Decompose the following user query into atomic sub-questions.

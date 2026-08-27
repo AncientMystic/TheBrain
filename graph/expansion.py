@@ -8,6 +8,42 @@ from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_
 import config
 
 
+def pre_select_candidates(query_context: str, kg=None, top_k: int = 10):
+    """
+    FiDeLiS Path-RAG candidate pre-selection.
+    Retrieves a 2-hop neighborhood from the external graph based on query keywords.
+    Returns list of fact dicts.
+    """
+    from core.text_utils import tokenize
+    from graph.graph_queries import get_facts_by_keyword, get_related_keywords
+    import config
+
+    tokens = tokenize(query_context)
+    if not tokens:
+        return []
+
+    candidate_facts = []
+    seen = set()
+
+    # Search direct keywords and related keywords
+    for token in tokens[:5]:
+        for kw, _ in get_related_keywords(token, min_weight=0.3):
+            for f in get_facts_by_keyword(kw, limit=5):
+                fid = f.get("fact_id")
+                if fid not in seen:
+                    seen.add(fid)
+                    candidate_facts.append(f)
+        for f in get_facts_by_keyword(token, limit=5):
+            fid = f.get("fact_id")
+            if fid not in seen:
+                seen.add(fid)
+                candidate_facts.append(f)
+
+    # Rank by confidence
+    candidate_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    return candidate_facts[:top_k]
+
+
 def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
     """
     Expand a list of facts by exploring related entities in the external graph.

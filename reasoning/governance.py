@@ -120,7 +120,7 @@ def resolve_contradictions(contradictions):
     """
     Handle contradictions based on AUTO_RESOLVE_CONTRADICTIONS.
     If False, move to review queue (status='review_needed').
-    If True, auto-delete the lower-confidence item.
+    If True, use confidence escalation before auto-deleting.
     """
     if not config.AUTO_RESOLVE_CONTRADICTIONS:
         # Move to review queue instead of deleting.
@@ -147,6 +147,8 @@ def resolve_contradictions(contradictions):
             id_b = c["triple_b_id"]
             conf_a = c.get("confidence_a", 0.0) or 0.0
             conf_b = c.get("confidence_b", 0.0) or 0.0
+            if abs(conf_a - conf_b) <= 0.2:
+                continue
             delete_id = id_a if conf_a < conf_b else id_b
             conn = db.db_connect("reasoning")
             conn.execute("DELETE FROM kg_triples WHERE id=?", (delete_id,))
@@ -163,6 +165,8 @@ def resolve_contradictions(contradictions):
             id2 = c["fact_b_id"]
             conf1 = c.get("confidence_a", 0.0) or 0.0
             conf2 = c.get("confidence_b", 0.0) or 0.0
+            if abs(conf1 - conf2) <= 0.2:
+                continue
             delete_id = id1 if conf1 < conf2 else id2
             conn = db.db_connect("key_facts")
             conn.execute("DELETE FROM key_facts WHERE fact_id=?", (delete_id,))
@@ -179,6 +183,8 @@ def resolve_contradictions(contradictions):
             id2 = c["edge_b_id"]
             conf1 = c.get("confidence_a", 0.0) or 0.0
             conf2 = c.get("confidence_b", 0.0) or 0.0
+            if abs(conf1 - conf2) <= 0.2:
+                continue
             delete_id = id1 if conf1 < conf2 else id2
             conn = db.db_connect("external_graph")
             conn.execute("DELETE FROM global_edges WHERE edge_id=?", (delete_id,))

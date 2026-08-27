@@ -25,7 +25,13 @@ class DeepResearchCoordinator:
         print(f"\n=== Starting deep research on: {query} ===")
         # Initial retrieval
         analysis = analyze_query(query)
-        initial_facts = retrieve_from_graph(analysis, top_k=50, max_depth=2)
+        try:
+            from retrieval.datapoint_retriever import retrieve_datapoints
+            datapoints = retrieve_datapoints(query)
+            initial_facts = [dp for dp in datapoints if dp.get("type") == "fact"]
+            # Convert fact dicts to expected format if needed
+        except Exception:
+            initial_facts = retrieve_from_graph(analysis, top_k=50, max_depth=2)
         self.facts.extend(initial_facts)
         # Expand via multi-hop
         expanded = expand_facts_via_multi_hop(initial_facts, max_depth=config.DEEP_RESEARCH_MAX_DEPTH, max_facts=200)

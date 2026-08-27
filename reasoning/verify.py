@@ -215,21 +215,23 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
     """
     Inductively verify each step based solely on previous steps.
     Returns average entailment probability (0-1).
+
+    If config.ENABLE_CALIBRATED_ARES is True, uses actual entailment
+    confidence instead of hardcoded values.
     """
     if not reasoning_chain:
         return 0.0
+
+    calibrated = getattr(config, "ENABLE_CALIBRATED_ARES", False)
     accepted = []
     scores = []
     for step in reasoning_chain:
         if not isinstance(step, dict):
             scores.append(0.0)
             continue
-        # Check if step is entailed by prior accepted steps (direct or transitive)
         if not accepted:
-            # First step must be grounded (assume from retrieval)
-            score = step.get("grounded", False)
+            score = 1.0 if step.get("grounded", False) else 0.0
         else:
-            # Check if claim is consistent with accepted and can be derived
             triples = claims_to_triples(accepted)
             implied = derive_implied_triples(triples)
             claim_triple = triple_to_key(
@@ -238,9 +240,29 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
             if claim_triple in implied:
                 score = 1.0
             else:
-                # Check consistency only
                 consistent = verify_symstep(step, accepted)
-                score = 0.5 if consistent else 0.0
+                if calibrated:
+                    # Use embedding similarity to prior accepted facts as confidence
+                    try:
+                        from core.embeddings import get_embedding
+                        import numpy as np
+                        claim_emb = get_embedding(step.get("text",""))
+                        prior_embs = [get_embedding(a.get("text","")) for a in accepted if a.get("text")]
+                        if claim_emb and prior_embs:
+                            claim_vec = np.array(claim_emb, dtype=np.float32)
+                            max_sim = 0.0
+                            for pe in prior_embs:
+                                if pe:
+                                    pv = np.array(pe, dtype=np.float32)
+                                    sim = float(np.dot(claim_vec, pv) / (np.linalg.norm(claim_vec) * np.linalg.norm(pv) + 1e-8))
+                                    max_sim = max(max_sim, sim)
+                            score = max(0.0, min(1.0, max_sim * 0.8 + (0.5 if consistent else 0.0)))
+                        else:
+                            score = 0.5 if consistent else 0.0
+                    except Exception:
+                        score = 0.5 if consistent else 0.0
+                else:
+                    score = 0.5 if consistent else 0.0
         scores.append(score)
         accepted.append(step)
     return sum(scores) / len(scores)

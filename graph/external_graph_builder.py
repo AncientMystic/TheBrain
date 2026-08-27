@@ -237,11 +237,20 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
         kw = normalize_name(ent.get("entity_name"))
         if kw:
             keywords.add(kw)
-            cur.execute("""
-                INSERT INTO keyword_topic_edges (keyword, topic, weight)
-                VALUES (?, ?, ?)
-                ON CONFLICT(keyword, topic) DO UPDATE SET weight = weight + 1
-            """, (kw, doc_name, 1.0))
+            if getattr(config, "ENABLE_TEMPORAL_KEYWORDS", False):
+                cur.execute("""
+                    INSERT INTO keyword_topic_edges (keyword, topic, weight, first_seen, last_seen)
+                    VALUES (?, ?, 1.0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(keyword, topic) DO UPDATE SET
+                        weight = weight + 1,
+                        last_seen = CURRENT_TIMESTAMP
+                """, (kw, doc_name))
+            else:
+                cur.execute("""
+                    INSERT INTO keyword_topic_edges (keyword, topic, weight)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(keyword, topic) DO UPDATE SET weight = weight + 1
+                """, (kw, doc_name, 1.0))
 
     keyword_list = list(keywords)
     for i in range(len(keyword_list)):
@@ -253,6 +262,46 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
                 ON CONFLICT(kw_a, kw_b) DO UPDATE SET weight = weight + 1,
                     doc_hashes = doc_hashes || ',' || excluded.doc_hashes
             """, (kw_a, kw_b, doc_hash))
+
+    if getattr(config, "ENABLE_GRAPH_KEYWORD_PAGERANK", False):
+        try:
+            import networkx as nx
+            G = nx.Graph()
+            for kw_a, kw_b, weight, _ in cur.execute("SELECT kw_a, kw_b, weight, doc_hashes FROM keyword_cooccurrence"):
+                G.add_edge(kw_a, kw_b, weight=weight)
+            if G.number_of_nodes() > 0:
+                pagerank = nx.pagerank(G, weight='weight')
+                top_keywords = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)[:20]
+                for kw, score in top_keywords:
+                    cur.execute("""
+                        INSERT OR REPLACE INTO keyword_topic_edges (keyword, topic, weight)
+                        VALUES (?, ?, ?)
+                    """, (kw, "__pagerank_top__", score))
+        except ImportError:
+            print("  (networkx not installed; skipping PageRank)")
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (PageRank error: {e})")
+
+    if getattr(config, "ENABLE_COMMUNITY_DETECTION", False):
+        try:
+            import networkx as nx
+            G = nx.Graph()
+            for kw_a, kw_b, weight, _ in cur.execute("SELECT kw_a, kw_b, weight, doc_hashes FROM keyword_cooccurrence"):
+                G.add_edge(kw_a, kw_b, weight=weight)
+            if G.number_of_nodes() > 0:
+                communities = nx.algorithms.community.greedy_modularity_communities(G, weight='weight')
+                for cid, community in enumerate(communities):
+                    keywords_json = json.dumps(list(community))
+                    cur.execute("""
+                        INSERT INTO keyword_clusters (cluster_name, keywords_json, size)
+                        VALUES (?, ?, ?)
+                    """, (f"community_{cid}", keywords_json, len(community)))
+        except ImportError:
+            print("  (networkx not installed; skipping community detection)")
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Community detection error: {e})")
 
     conn.commit()
     conn.close()

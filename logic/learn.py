@@ -32,6 +32,17 @@ Excerpt:
 """
 
 
+def learn_logic_from_reasoning_paths(reasoning_db, logic_db):
+    """
+    Extract logic patterns from successful reasoning paths and store as logic modules.
+    Only runs if config.ENABLE_LOGIC_LEARNING_FROM_PATHS is True.
+    """
+    if not getattr(config, "ENABLE_LOGIC_LEARNING_FROM_PATHS", False):
+        return []
+    # Implementation placeholder: In future, extract patterns from high-confidence paths.
+    return []
+
+
 def learn_logic_from_file(filepath: Path):
     file_hash = get_file_hash(filepath)
     # Check if already processed for logic

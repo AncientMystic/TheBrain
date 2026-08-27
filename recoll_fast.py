@@ -233,6 +233,21 @@ def process_recoll_fast(keyword: str, max_results: int = None, preview_chars: in
     finally:
         cleaners_mod.RELAXED_MODE = False
 
+    # Phase 3b: Rerank extracted facts against pseudo-document title
+    if getattr(config, "RERANKER_ENABLED", True):
+        try:
+            from retrieval.ingest_ranker import rank_extracted_items
+            for (doc_hash, chunk_idx, chunk_text), chunk_data in zip(all_chunks_flat, chunk_results):
+                if chunk_data.get("facts"):
+                    chunk_data["facts"] = rank_extracted_items(
+                        f"{doc_hash_to_name.get(doc_hash, 'preview')} [preview]",
+                        chunk_data["facts"],
+                        "fact_text"
+                    )
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Recoll Fast ingest reranker error: {e})")
+
     # Phase 4: Store extracted knowledge
     print("Storing extracted knowledge...")
     doc_hash_to_name = {entry[0]: entry[2] for entry in preview_entries}

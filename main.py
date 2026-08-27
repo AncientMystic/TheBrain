@@ -157,17 +157,81 @@ def process_file(filepath, tracker, logic_context=""):
         fact_rows = []
         source_rows = []
         entity_index_rows = []
+        # Rerank extracted facts against document name before storage
+        if getattr(config, "RERANKER_ENABLED", True):
+            try:
+                from retrieval.ingest_ranker import rank_extracted_items
+                all_extracted["facts"] = rank_extracted_items(filepath.name, all_extracted["facts"], "fact_text")
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Ingest rank error: {e})")
+
+        # Compute verification flags (advisory)
+        from reasoning.verify import verify_symstep
+        for i, fact in enumerate(all_extracted["facts"]):
+            prior = all_extracted["facts"][:i]
+            sym_contradiction = 0
+            formal_repr = None
+            rcot_verified = 0
+
+            # SymStep advisory
+            try:
+                sym_ok = verify_symstep(fact, prior)
+                if not sym_ok:
+                    sym_contradiction = 1
+            except Exception:
+                pass
+
+            # VeriCoT formal representation (if possible)
+            try:
+                from reasoning.verify import extract_triple_from_text
+                triple = extract_triple_from_text(fact.get("fact_text", ""))
+                if triple and all(k in triple for k in ("subject", "predicate", "object")):
+                    formal_repr = json.dumps(triple)
+            except Exception:
+                pass
+
+            # R-CoT verification for lower confidence facts
+            if fact.get("confidence", 0) < 0.7:
+                try:
+                    from reasoning.verify import verify_rcot
+                    if verify_rcot(fact.get("fact_text", ""), None):
+                        rcot_verified = 1
+                except Exception:
+                    pass
+
+            fact["_sym_contradiction"] = sym_contradiction
+            fact["_formal_repr"] = formal_repr
+            fact["_rcot_verified"] = rcot_verified
+
+        if getattr(config, "ENABLE_BATCH_VERIFICATION", False):
+            try:
+                from processing.verification_batch import verify_batch
+                all_extracted["facts"] = verify_batch(all_extracted["facts"])
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Batch verification error: {e})")
+
         for fact in all_extracted["facts"]:
             fact_row = (
                 file_hash, filepath.name, fact.get("fact_type"),
                 fact.get("fact_text"), fact.get("canonical_value"),
-                fact.get("source_span"), fact.get("confidence", 0.0), 0
+                fact.get("source_span"), fact.get("confidence", 0.0), 0,
+                fact.get("_sym_contradiction", 0), fact.get("_formal_repr", ""), fact.get("_rcot_verified", 0)
             )
             fact_rows.append(fact_row)
 
+            # Store source span as quote if enabled
+            if getattr(config, "ENABLE_QUOTE_STORAGE", True) and fact.get("source_span"):
+                span = fact.get("source_span")
+                cur_facts.execute("""
+                    INSERT INTO quotes (doc_hash, chunk_id, quote_text, canonical_value, confidence)
+                    VALUES (?, NULL, ?, ?, ?)
+                """, (file_hash, span, fact.get("canonical_value", ""), fact.get("confidence", 0.0)))
+
         if fact_rows:
             cur_facts.executemany(
-                "INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified) VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified, symstep_contradiction, formal_representation, rcot_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 fact_rows,
             )
 
@@ -218,6 +282,26 @@ def process_file(filepath, tracker, logic_context=""):
         for gem in all_extracted.get("gems", []):
             _store_gem(conn_facts, file_hash, filepath.name, gem)
         conn_facts.commit(); conn_facts.close(); conn_index.close()
+
+        # Statistical keyword extraction (if enabled)
+        if getattr(config, "ENABLE_STATISTICAL_KEYWORDS", True):
+            try:
+                from extraction.keyword_extractor import extract_rake_phrases
+                stat_keywords = extract_rake_phrases(text, max_phrases=10)
+                if stat_keywords:
+                    # Store in keyword_topic_edges or logic_keywords
+                    conn_kw = db.db_connect("external_graph")
+                    cur_kw = conn_kw.cursor()
+                    for kw in stat_keywords:
+                        cur_kw.execute("""
+                            INSERT OR IGNORE INTO keyword_topic_edges (keyword, topic, weight)
+                            VALUES (?, ?, 0.5)
+                        """, (kw, filepath.name))
+                    conn_kw.commit(); conn_kw.close()
+                    print(f"  Extracted {len(stat_keywords)} statistical keywords")
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Statistical keyword extraction error: {e})")
 
         print("  Building hypergraph...")
         build_hypergraph(file_hash, all_extracted, {})
@@ -450,6 +534,7 @@ def main():
     guided = "--guided-learning" in sys.argv
     chat_mode = "--chat" in sys.argv
     audit_mode = "--audit" in sys.argv
+    debug_retrieval = "--debug-retrieval" in sys.argv
     review_contradictions_mode = "--review-contradictions" in sys.argv
     logic_mode = "--logic" in sys.argv
     reasoning_mode = "--reasoning" in sys.argv
@@ -457,6 +542,7 @@ def main():
     recoll_mode = "--recoll" in sys.argv
     recoll_fast = "--recoll-fast" in sys.argv
     build_recoll_index = "--build-recoll-index" in sys.argv
+    train_gnn_flag = "--train-gnn" in sys.argv
     interactive = "--interactive" in sys.argv
     input_path = None
     if "--input" in sys.argv:
@@ -507,6 +593,17 @@ def main():
 
     validate_config()
     init_all()
+
+    # Train GNN if requested
+    if train_gnn_flag:
+        print("Training GNN embeddings...")
+        from graph.gnn import train_gnn
+        emb = train_gnn()
+        if emb is not None:
+            print(f"GNN embeddings shape: {emb.shape}")
+        else:
+            print("GNN training returned no embeddings.")
+        return
 
     # Handle recoll-fast first (only if flag present)
     if recoll_fast:
@@ -592,10 +689,12 @@ def main():
     if chat_mode or deep_research:
         from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
         from chat.conversation import add_message, get_conversation_context
+        from chat.conversation_state import ConversationTopicState
         from deep_research.coordinator import DeepResearchCoordinator
 
         print("Chat mode. Type 'exit' to quit. Add --deep-research to enable autonomous research.")
         session_id = f"cli_{int(time.time())}"
+        topic_state = ConversationTopicState()
         while True:
             try:
                 query = input("You: ")
@@ -628,17 +727,63 @@ def main():
                             if row:
                                 logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
                         conn.close()
+
                     memories = retrieve_memories(query, top_k=5, session_id=session_id)
                     memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
+
                     analysis = analyze_query(query)
-                    facts = retrieve_from_graph(analysis, top_k=50, max_depth=2)
-                    chunks = fallback_to_chunks(query, top_k=3)
-                    context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
+                    if debug_retrieval:
+                        print("\n[DEBUG-RETRIEVAL] Query:", query)
+
+                    detail_mode = analysis.get("intent") == "detail"
+                    chunk_top_k = max(getattr(config, "CHAT_TOP_K_CHUNKS", 10), 15) if detail_mode else getattr(config, "CHAT_TOP_K_CHUNKS", 10)
+                    extra_terms = topic_state.get_active_terms()
+
+                    try:
+                        from retrieval.datapoint_retriever import retrieve_datapoints, get_chunks_for_datapoints
+
+                        datapoints = retrieve_datapoints(query, extra_terms=extra_terms)
+                        if datapoints:
+                            selected_dps = datapoints[:getattr(config, "MAX_SELECTED_NODES", 15)]
+
+                            # Always pull document/summary datapoints, even if they rank below top-15
+                            doc_dps = [dp for dp in datapoints if dp.get("type") in ("document", "summary")][:10]
+                            # Ensure selected doc/summary datapoints are present
+                            for dp in doc_dps:
+                                if dp not in selected_dps:
+                                    selected_dps.insert(0, dp)
+
+                            chunks = get_chunks_for_datapoints(selected_dps)
+                            facts = [dp for dp in selected_dps if dp.get("type") == "fact"]
+
+                            doc_lines = []
+                            for dp in doc_dps:
+                                if dp.get("type") == "document":
+                                    doc_lines.append(f"[Document] {dp.get('text')}")
+                                elif dp.get("type") == "summary":
+                                    doc_lines.append(f"[Summary] {dp.get('text')}")
+                            doc_context = "\n".join(doc_lines) if doc_lines else ""
+
+                            base_context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=True)
+                            context = (doc_context + "\n\n" + base_context) if doc_context else base_context
+                        else:
+                            facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
+                            chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
+                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
+                    except Exception as e:
+                        if debug_retrieval:
+                            print(f"    (Map retrieval error: {e})")
+                        facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
+                        chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
+                        context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
+
                     if logic_context:
                         context = logic_context + "\n\n" + context
                     if memory_text:
                         context = memory_text + "\n\n" + context
+
                     answer = generate_answer(query, context, conversation_history=conversation_history)
+                    topic_state.update(query, answer)
 
                 add_message(session_id, "assistant", answer)
                 print(f"Assistant:\n{answer}\n---")

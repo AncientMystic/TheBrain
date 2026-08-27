@@ -110,6 +110,58 @@ def find_unconnected_topics(limit=20):
         })
     return gaps
 
+def find_missing_quotes(limit=20):
+    """Find documents that have facts but no associated quotes."""
+    conn = db.db_connect("key_facts")
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT d.doc_hash, d.filename
+            FROM documents d
+            LEFT JOIN quotes q ON d.file_hash = q.doc_hash
+            WHERE q.quote_id IS NULL
+            LIMIT ?
+        """, (limit,))
+        rows = cur.fetchall()
+    except Exception:
+        rows = []
+    conn.close()
+    return [{"type": "missing_quotes", "entity": r["filename"], "global_node_id": r["doc_hash"]} for r in rows]
+
+
+def find_missing_relationships(limit=20):
+    """Find global nodes with no edges."""
+    conn = db.db_connect("external_graph")
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT gn.global_node_id, gn.canonical_name
+        FROM global_nodes gn
+        LEFT JOIN global_edges ge ON gn.global_node_id = ge.source_node_id OR gn.global_node_id = ge.target_node_id
+        WHERE ge.edge_id IS NULL
+        LIMIT ?
+    """, (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"type": "missing_relationships", "entity": r["canonical_name"], "global_node_id": r["global_node_id"]} for r in rows]
+
+
+def find_under_explored_topics(min_edges=3, limit=20):
+    """Find topics with fewer than min_edges edges."""
+    conn = db.db_connect("external_graph")
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT gn.global_node_id, gn.canonical_name,
+               (SELECT COUNT(*) FROM global_edges ge WHERE ge.source_node_id = gn.global_node_id OR ge.target_node_id = gn.global_node_id) AS edge_count
+        FROM global_nodes gn
+        WHERE edge_count < ?
+        ORDER BY edge_count ASC
+        LIMIT ?
+    """, (min_edges, limit))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"type": "under_explored_topic", "entity": r["canonical_name"], "global_node_id": r["global_node_id"], "edge_count": r["edge_count"]} for r in rows]
+
+
 def get_all_gaps(limit_per_type=20):
     """Return a combined list of knowledge gaps."""
     gaps = []
@@ -117,4 +169,7 @@ def get_all_gaps(limit_per_type=20):
     gaps.extend(find_entities_with_few_edges(limit=limit_per_type))
     gaps.extend(find_keywords_with_low_coverage(limit=limit_per_type))
     gaps.extend(find_unconnected_topics(limit=limit_per_type))
+    gaps.extend(find_missing_relationships(limit=limit_per_type))
+    gaps.extend(find_under_explored_topics(limit=limit_per_type))
+    gaps.extend(find_missing_quotes(limit=limit_per_type))
     return gaps

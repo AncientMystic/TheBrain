@@ -241,6 +241,56 @@ PARALLEL_WORKERS = 2
 BATCH_GLOBAL_NODE_LOOKUPS = True  # use in-memory map for exact matches
 EXTERNAL_GRAPH_CACHE_MAX_NODES = int(os.environ.get("EXTERNAL_GRAPH_CACHE_MAX_NODES", "100000"))
 
+# Neural model configuration
+RERANKER_ENABLED = True
+RERANKER_MODEL_REPO = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANKER_MODEL_DIR = str(BASE_DIR / "models" / "reranker")
+
+LOCAL_EMBEDDER_ENABLED = True
+LOCAL_EMBEDDER_MODEL_REPO = "sentence-transformers/all-MiniLM-L6-v2"
+LOCAL_EMBEDDER_MODEL_DIR = str(BASE_DIR / "models" / "sentence_embedder")
+
+INTENT_CLASSIFIER_ENABLED = True
+INTENT_CLASSIFIER_MODEL_REPO = "valhalla/distilbart-mnli-12-3"
+INTENT_CLASSIFIER_MODEL_DIR = str(BASE_DIR / "models" / "intent_classifier")
+
+GNN_ENABLED = True
+ENABLE_GNN_TRAINING = True
+GNN_MODEL_DIR = str(BASE_DIR / "models" / "gnn")
+
+# Retrieval fusion weights
+RETRIEVAL_STAGE_WEIGHTS = {
+    "graph": 0.5,
+    "vector": 0.3,
+    "lexical": 0.2,
+}
+
+# Hierarchical datapoint map retrieval
+DATAPOINT_SCORE_WEIGHTS = {
+    "query_overlap": 0.35,
+    "graph_proximity": 0.25,
+    "semantic_similarity": 0.25,
+    "confidence": 0.15,
+}
+MAX_MAP_NODES = 200
+MAX_SELECTED_NODES = 15
+EXPANSION_DEPTH = 2
+ENABLE_QUOTE_STORAGE = True
+
+# Batch verification (optional, disabled by default)
+ENABLE_BATCH_VERIFICATION = os.environ.get("ENABLE_BATCH_VERIFICATION", "false").lower() == "true"
+
+# Statistical keyword extraction
+ENABLE_STATISTICAL_KEYWORDS = True
+
+# Optional advanced features (disabled by default)
+ENABLE_BATCH_VERIFICATION = False
+ENABLE_CALIBRATED_ARES = False
+ENABLE_GRAPH_KEYWORD_PAGERANK = False
+ENABLE_TEMPORAL_KEYWORDS = False
+ENABLE_LOGIC_LEARNING_FROM_PATHS = False
+ENABLE_COMMUNITY_DETECTION = False
+
 # --- Adaptive verification ---
 ADAPTIVE_VERIFICATION = True
 VERIFICATION_ESCALATION_THRESHOLD = 0.6  # if initial confidence below this, escalate
