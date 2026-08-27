@@ -106,7 +106,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   Lightweight, keyword-focused learning using contextual previews around search hits.
 
 - **OpenAI-compatible server**  
-  Exposes `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, and `/v1/health`.
+  Exposes `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, and `/metrics`.
 
 - **Audit & governance**  
   Automatic cleanup, standards comparison, contradiction detection, confidence scoring, provenance tracking, and review-queue handling for unresolved contradictions.
@@ -124,6 +124,28 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - Batch fact/entity inserts.
   - Precompiled regex patterns.
   - Parallel chunk summarization.
+  - Parallel file ingestion (configurable).
+
+- **Enhanced retrieval pipeline**  
+  - Multi-stage retrieval with Weighted Reciprocal Rank Fusion (WRRF).
+  - Feature-based ranking (`retrieval/features.py`, `retrieval/ranking.py`).
+  - Hierarchical datapoint retriever with learned ranking potential.
+  - Optional Graph Neural Network (GNN) embeddings for structural retrieval.
+
+- **Contextual topic shift detection**  
+  - LSTM-based model (`core/topic_shift_model.py`) learns conversational topic boundaries.
+  - Fallback heuristic available.
+  - Training script: `scripts/train_topic_shift.py`.
+
+- **Active learning**  
+  - Knowledge gap detection with priority scores.
+  - Thompson sampling for gap selection (`learning/active_learner.py`).
+  - Integration with Recoll-guided learning.
+
+- **Observability**  
+  - JSON structured logging (`core/logging_config.py`).
+  - Prometheus-style metrics (`core/metrics.py`, `/metrics` endpoint).
+  - Retrieval evaluation script (`scripts/evaluate.py`).
 
 ---
 
@@ -140,6 +162,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - Any **OpenAI-compatible API**, including cloud services
 - *(Optional)* **ONNX Runtime** and **Hugging Face Hub** for the fast NER extractor
 - *(Optional)* **Recoll** with Python API or `recollq` CLI for full-text search
+- *(Optional)* **PyTorch** and **PyTorch Geometric** for GNN training (fallback available)
 
 ### Install Dependencies
 
@@ -328,6 +351,56 @@ ADAPTIVE_VERIFICATION = True
 AUTO_RESOLVE_CONTRADICTIONS = False
 DEEP_RESEARCH_INTERACTIVE = True
 DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 2
+```
+
+### Enhanced Retrieval Settings
+
+```python
+# Multi-stage retrieval
+USE_MULTI_STAGE_RETRIEVAL = True
+RETRIEVAL_RANKING_WEIGHTS = {
+    'query_overlap': 0.25,
+    'rare_term_boost': 0.1,
+    'semantic_similarity': 0.2,
+    'graph_proximity': 0.1,
+    'entity_salience': 0.05,
+    'doc_relevance': 0.1,
+    'type_weight': 0.1,
+    'confidence': 0.1,
+}
+RETRIEVAL_STAGE_WEIGHTS = {
+    'graph': 0.5,
+    'vector': 0.3,
+    'lexical': 0.2,
+    'gnn': 0.0,
+}
+
+# GNN
+USE_GNN = True
+GNN_MODEL_DIR = "models/gnn"
+GNN_EMBEDDING_DIM = 64
+
+# Verified chat
+USE_VERIFIED_CHAT = True
+
+# Parallel ingestion
+PARALLEL_INGESTION = True
+PARALLEL_INGESTION_WORKERS = 4
+```
+
+### Semantic Contradiction & Active Learning Settings
+
+```python
+ENABLE_SEMANTIC_CONTRADICTIONS = True
+ACTIVE_LEARNING_ENABLED = True
+ACTIVE_LEARNING_ROUNDS = 3
+```
+
+### Logging & Metrics Settings
+
+```python
+ENABLE_JSON_LOGGING = True
+METRICS_ENABLED = True
 ```
 
 ### Recoll Settings
@@ -596,6 +669,7 @@ Chat supports:
 - Intent-aware answer generation.
 - Markdown output with source citations.
 - Optional Recoll full-text search.
+- Verified chat via GIVE pattern (default if `USE_VERIFIED_CHAT=True`).
 
 ### Deep Research Mode
 
@@ -664,6 +738,7 @@ Endpoints:
 - `GET /v1/models`
 - `POST /v1/reasoning`
 - `GET /v1/health`
+- `GET /metrics` (Prometheus format)
 
 ### Logic Learning
 
@@ -685,6 +760,16 @@ Verified-folder documents are automatically assessed using the Socratic/PSYOP sc
 
 The result is attached to standards as provenance metadata. It does not override admin or verified truth anchors.
 
+### Evaluation
+
+To evaluate retrieval quality with a labeled set:
+
+```bash
+python scripts/evaluate.py --eval-file data/eval_queries.json
+```
+
+The JSON file should contain a list of objects with `query` and `relevant_fact_ids`. The script reports Recall@10, Precision@10, and MRR.
+
 ---
 
 ## Directory Structure
@@ -696,22 +781,39 @@ TheBrain/
 ├── config.py
 ├── audit/
 ├── chat/
-├── configs/              # Example backend configs
+│   ├── give_chat.py          # GIVE-pattern verified chat
+│   └── ...
+├── configs/                  # Example backend configs
 ├── core/
-│   └── backends/         # Backend provider abstraction
+│   ├── backends/             # Backend provider abstraction
+│   ├── metrics.py            # Metrics registry
+│   ├── logging_config.py     # JSON logging setup
+│   ├── topic_shift_model.py  # LSTM topic shift detector
+│   └── ...
 ├── deep_research/
 ├── extraction/
 ├── extractors/
 ├── fast_extractor/
 ├── graph/
+│   ├── gnn_sage.py           # GraphSAGE model
+│   └── ...
 ├── ingestion/
+├── learning/
+│   └── active_learner.py     # Thompson sampling for gaps
 ├── logic/
 ├── memory/
 ├── reasoning/
+│   ├── verification_manager.py
+│   ├── semantic_contradiction.py
+│   └── ...
 ├── scripts/
-├── models/               # ONNX NER model
-├── reports/              # generated research reports
-├── data/                 # SQLite databases and verification standards
+│   ├── train_topic_shift.py
+│   ├── train_gnn.py
+│   ├── evaluate.py
+│   └── ...
+├── models/                   # ONNX NER model, GNN, topic shift
+├── reports/                  # generated research reports
+├── data/                     # SQLite databases and verification standards
 └── gazetteers/
 ```
 
@@ -752,21 +854,22 @@ All schemas are created automatically on first run.
 6. Optional fast extractor pre-pass.
 7. Novelty gate determines which chunks need LLM extraction.
 8. LLM extracts facts, entities, relationships, etc.
-9. Validate, deduplicate, and store facts.
+9. Validate, deduplicate, and verify facts using VerificationManager (SymStep, VeriCoT, R-CoT, ARES).
 10. Build hypergraph and external graph.
 11. Generate hierarchical summary and mark processed.
+12. Files can be processed in parallel (configurable).
 
 ### Reasoning and Chat
 
 1. Decompose query into sub-questions.
 2. Detect intent.
-3. Retrieve initial facts.
-4. Expand through graph and entity index.
-5. Check sufficiency with LLM.
-6. Fall back to chunk similarity and optional Recoll search.
+3. Retrieve initial facts via multi-stage retrieval (graph, vector, lexical, GNN).
+4. Fuse results using Weighted Reciprocal Rank Fusion (WRRF).
+5. Expand through graph and entity index.
+6. Check sufficiency with LLM.
 7. Verify claims with SymStep, VeriCoT, FiDeLiS, R-CoT, ARES.
 8. Re-rank using memory and logic modules.
-9. Synthesize final answer with provenance.
+9. Synthesize final answer with provenance (GIVE pattern if enabled).
 
 ### Deep Research
 
@@ -784,6 +887,7 @@ All schemas are created automatically on first run.
 3. Search the Recoll index.
 4. Process retrieved documents.
 5. Log queries and processed documents.
+6. Active learning can prioritize gaps using Thompson sampling.
 
 ### Recoll Fast Mode
 
@@ -799,8 +903,9 @@ All schemas are created automatically on first run.
 1. Admin claims and verified-folder facts populate `verification_standards.db`.
 2. Socratic/PSYOP scoring attaches provenance metadata to standards.
 3. Audit compares unverified facts against standards using exact, embedding, and optional LLM methods.
-4. Results are stored in `standard_comparisons`.
-5. Admin and verified facts are never auto-deleted or demoted.
+4. Semantic contradiction detection finds conflicts missed by exact matching.
+5. Results are stored in `standard_comparisons`.
+6. Admin and verified facts are never auto-deleted or demoted.
 
 ---
 
@@ -814,6 +919,7 @@ All schemas are created automatically on first run.
 - Not battle-tested on very large heterogeneous corpora.
 - Socratic/PSYOP scoring quality depends on the selected LLM.
 - Backend-specific behavior, especially embedding formats, may vary between providers.
+- GNN training requires PyTorch and may be resource-intensive for very large graphs.
 
 ---
 
@@ -838,4 +944,3 @@ This project is under active development. Some reasoning components may be heuri
 ## Thank You
 
 A special thank you to **[SocioProphet](https://github.com/SocioProphet)** for the advanced concepts, review report, and technical inspiration that helped shape this project.
-```
