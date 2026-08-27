@@ -41,57 +41,76 @@ def extract_keywords_from_fact(fact):
 
 
 def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
-    """Expand fact set by following graph connections and keyword co-occurrence."""
+    """Expand fact set by following graph connections and keyword co-occurrence (optimized)."""
     all_facts = list(initial_facts)
     seen_ids = {f.get("fact_id") for f in all_facts if f.get("fact_id")}
+    from graph.expansion import batch_get_global_node_edges
 
     for _ in range(max_expansion_rounds):
         new_facts = []
+        # Collect entities from current facts for batch graph lookup
+        entity_nodes = {}
         for fact in all_facts[:20]:
-            # 1. Keyword expansion
-            keywords = extract_keywords_from_fact(fact)
-            for kw in keywords:
-                related = get_related_keywords(kw, min_weight=0.3)
-                for rel_kw, _ in related:
-                    facts = get_facts_by_keyword(rel_kw)
-                    for f in facts:
-                        if f.get("fact_id") not in seen_ids:
-                            new_facts.append(f)
-                            seen_ids.add(f.get("fact_id"))
-                facts = get_facts_by_keyword(kw)
-                for f in facts:
-                    if f.get("fact_id") not in seen_ids:
-                        new_facts.append(f)
-                        seen_ids.add(f.get("fact_id"))
-
-            # 2. Entity graph expansion
             fact_text = fact.get("fact_text", "")
             analysis = analyze_query(fact_text)
             entities = analysis.get("entities", [])
-            conn = db.db_connect("external_graph")
-            cur = conn.cursor()
             for ent in entities:
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
                 if not ent_name:
                     continue
+                # Find global_node_id (we can batch query later; for now simple)
+                conn = db.db_connect("external_graph")
+                cur = conn.cursor()
                 cur.execute(
                     "SELECT global_node_id FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
                     (ent_name, ent_name)
                 )
                 row = cur.fetchone()
+                conn.close()
                 if row:
                     gid = row[0]
-                    edges = get_global_node_edges(gid)
-                    for edge in edges:
-                        other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
-                        cur.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (other_gid,))
-                        other = cur.fetchone()
-                        if other:
-                            for f in get_facts_by_keyword(other[0]):
-                                if f.get("fact_id") not in seen_ids:
-                                    new_facts.append(f)
-                                    seen_ids.add(f.get("fact_id"))
-            conn.close()
+                    entity_nodes[gid] = ent_name
+
+        # Batch fetch edges for all entity nodes
+        if entity_nodes:
+            edges_by_node = batch_get_global_node_edges(list(entity_nodes.keys()))
+            all_other_gids = set()
+            for gid, edges in edges_by_node.items():
+                for edge in edges:
+                    other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
+                    all_other_gids.add(other_gid)
+
+            # Get canonical names for all other nodes in batch
+            if all_other_gids:
+                conn = db.db_connect("external_graph")
+                cur = conn.cursor()
+                placeholders = ",".join("?" for _ in all_other_gids)
+                cur.execute(f"SELECT global_node_id, canonical_name FROM global_nodes WHERE global_node_id IN ({placeholders})",
+                            list(all_other_gids))
+                name_map = {row[0]: row[1] for row in cur.fetchall()}
+                conn.close()
+
+                # Retrieve facts for all other node names
+                for other_gid, name in name_map.items():
+                    for f in get_facts_by_keyword(name):
+                        if f.get("fact_id") not in seen_ids:
+                            new_facts.append(f)
+                            seen_ids.add(f.get("fact_id"))
+
+        # Keyword expansion (same as before)
+        for fact in all_facts[:20]:
+            keywords = extract_keywords_from_fact(fact)
+            for kw in keywords:
+                related = get_related_keywords(kw, min_weight=0.3)
+                for rel_kw, _ in related:
+                    for f in get_facts_by_keyword(rel_kw):
+                        if f.get("fact_id") not in seen_ids:
+                            new_facts.append(f)
+                            seen_ids.add(f.get("fact_id"))
+                for f in get_facts_by_keyword(kw):
+                    if f.get("fact_id") not in seen_ids:
+                        new_facts.append(f)
+                        seen_ids.add(f.get("fact_id"))
 
         if not new_facts:
             break

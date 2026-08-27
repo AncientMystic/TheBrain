@@ -276,72 +276,19 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
                 print(f"    (Chunk retrieval error for doc {doc_hash}: {e})")
 
     # --------------------------------------------------------------
-    # Stage 4: Score datapoints with document boost and reranker
+    # Stage 4: Score datapoints with the new ranking model
     # --------------------------------------------------------------
+    from retrieval.ranking import get_ranker
+    ranker = get_ranker()
 
-    def _is_generic_summary(text_lower):
-        generic_markers = [
-            "unrelated snippets",
-            "provided text contains a collection",
-            "collection of unrelated",
-            "unrelated segments",
-            "unrelated summaries",
-        ]
-        return any(marker in text_lower for marker in generic_markers)
+    # Extract query entities for graph proximity feature
+    query_entities = [ent.get('text', '') for ent in analysis.get('entities', [])]
 
-    # Rare query tokens (long, non-stopword)
-    rare_tokens = [t for t in query_tokens if len(t) > 4]
-
-    reranker = get_reranker()
-    texts = [dp.get("text", "") for dp in datapoints]
-    if reranker.available and texts:
-        try:
-            rr_scores = reranker.score(query, texts)
-            for dp, rr in zip(datapoints, rr_scores):
-                dp["_rr_score"] = rr
-        except Exception as e:
-            if config.DEBUG_VERBOSE:
-                print(f"    (Reranker error: {e})")
-            for dp in datapoints:
-                dp["_rr_score"] = 0.0
-    else:
-        for dp in datapoints:
-            dp["_rr_score"] = 0.0
-
-    # Existing token-based scoring plus document boost
     for dp in datapoints:
-        text_lower = (dp.get("text") or "").lower()
+        dp['score'] = ranker.score(query, dp, query_entities, reranker)
 
-        # Generic summary penalty
-        if dp.get("type") == "summary" and _is_generic_summary(text_lower):
-            dp["score"] = -1.0
-            continue
-
-        # Rare term boost
-        rare_boost = 0.0
-        for rt in rare_tokens:
-            if rt in text_lower:
-                rare_boost += 0.35
-
-        entity_match = 1.0 if any(t in text_lower for t in query_tokens if len(t) > 3) else 0.0
-        doc_boost = dp.get("_doc_relevance", 0.0)
-        base = _score_datapoint(dp, query_tokens, dp.get("_root_distance", 2))
-        rr = dp.get("_rr_score", 0.0)
-
-        score = 0.4 * rr + 0.3 * base + 0.2 * entity_match + 0.1 * doc_boost + rare_boost
-
-        if dp.get("_is_chunk"):
-            if any(marker in text_lower for marker in AD_MARKERS):
-                score *= 0.05
-            if text_lower.startswith(("starting point is", "got a packed", "with this stupid", "y up with this stupid")):
-                score *= 0.2
-
-        dp["score"] = score
-        dp.pop("_root_distance", None)
-        dp.pop("_doc_relevance", None)
-        dp.pop("_rr_score", None)
-
-    datapoints.sort(key=lambda x: x.get("score", 0), reverse=True)
+    # Sort descending by score
+    datapoints.sort(key=lambda x: x.get('score', 0), reverse=True)
     return datapoints[:max_nodes]
 
 
@@ -432,15 +379,12 @@ def _direct_chunk_fallback(query, root_terms, query_tokens, max_nodes):
         if config.DEBUG_VERBOSE:
             print(f"    (Direct chunk fallback error: {e})")
 
-    # Score with simple scoring and ad penalties
+    from retrieval.ranking import get_ranker
+    ranker = get_ranker()
+    query_entities = []  # In fallback we don't have analysis entities; pass empty list
     for dp in datapoints:
-        text_lower = (dp.get("text") or "").lower()
-        score = _score_datapoint(dp, query_tokens, 0)
-        if dp.get("_is_chunk"):
-            if any(marker in text_lower for marker in AD_MARKERS):
-                score *= 0.05
-        dp["score"] = score
-    datapoints.sort(key=lambda x: x.get("score", 0), reverse=True)
+        dp['score'] = ranker.score(query, dp, query_entities, None)
+    datapoints.sort(key=lambda x: x.get('score', 0), reverse=True)
     return datapoints[:max_nodes]
 
 

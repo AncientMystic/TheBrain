@@ -141,6 +141,10 @@ def process_file(filepath, tracker, logic_context=""):
         print("  Validating and deduplicating...")
         validated_facts = [f for f in all_extracted["facts"] if f.get("source_span") and f.get("confidence",0) >= 0.5]
         all_extracted["facts"] = deduplicate_list(validated_facts, key_func=lambda f: normalize_key(f.get("fact_text","")))
+
+        from reasoning.verification_manager import VerificationManager
+        vm = VerificationManager()
+        all_extracted["facts"] = vm.verify_batch(all_extracted["facts"])
         all_extracted["entities"] = deduplicate_list(all_extracted["entities"], key_func=lambda e: normalize_key(e.get("entity_name","")))
         all_extracted["people"] = deduplicate_list(all_extracted["people"], key_func=lambda p: normalize_key(p.get("person_name","")))
         all_extracted["locations"] = deduplicate_list(all_extracted["locations"], key_func=lambda l: normalize_key(l.get("location_name","")))
@@ -216,7 +220,7 @@ def process_file(filepath, tracker, logic_context=""):
             fact_row = (
                 file_hash, filepath.name, fact.get("fact_type"),
                 fact.get("fact_text"), fact.get("canonical_value"),
-                fact.get("source_span"), fact.get("confidence", 0.0), 0,
+                fact.get("source_span"), fact.get("confidence_final", fact.get("confidence", 0.0)), 0,
                 fact.get("_sym_contradiction", 0), fact.get("_formal_repr", ""), fact.get("_rcot_verified", 0)
             )
             fact_rows.append(fact_row)
@@ -739,50 +743,64 @@ def main():
                     chunk_top_k = max(getattr(config, "CHAT_TOP_K_CHUNKS", 10), 15) if detail_mode else getattr(config, "CHAT_TOP_K_CHUNKS", 10)
                     extra_terms = topic_state.get_active_terms()
 
-                    try:
-                        from retrieval.datapoint_retriever import retrieve_datapoints, get_chunks_for_datapoints
+                    if getattr(config, 'USE_MULTI_STAGE_RETRIEVAL', True):
+                        from retrieval.orchestrator import RetrievalOrchestrator
+                        orchestrator = RetrievalOrchestrator()
+                        datapoints = orchestrator.retrieve(query, analysis)
+                        facts = [dp for dp in datapoints if dp.get('type') == 'fact']
+                        chunks = []
+                        for dp in datapoints:
+                            if dp.get('type') == 'chunk_ref':
+                                chunks.append((0, dp.get('doc_hash'), dp.get('text', '')))
+                        context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
+                    else:
+                        try:
+                            from retrieval.datapoint_retriever import retrieve_datapoints, get_chunks_for_datapoints
 
-                        datapoints = retrieve_datapoints(query, extra_terms=extra_terms)
-                        if datapoints:
-                            selected_dps = datapoints[:getattr(config, "MAX_SELECTED_NODES", 15)]
+                            datapoints = retrieve_datapoints(query, extra_terms=extra_terms)
+                            if datapoints:
+                                selected_dps = datapoints[:getattr(config, "MAX_SELECTED_NODES", 15)]
 
-                            # Always pull document/summary datapoints, even if they rank below top-15
-                            doc_dps = [dp for dp in datapoints if dp.get("type") in ("document", "summary")][:10]
-                            # Ensure selected doc/summary datapoints are present
-                            for dp in doc_dps:
-                                if dp not in selected_dps:
-                                    selected_dps.insert(0, dp)
+                                # Always pull document/summary datapoints, even if they rank below top-15
+                                doc_dps = [dp for dp in datapoints if dp.get("type") in ("document", "summary")][:10]
+                                for dp in doc_dps:
+                                    if dp not in selected_dps:
+                                        selected_dps.insert(0, dp)
 
-                            chunks = get_chunks_for_datapoints(selected_dps)
-                            facts = [dp for dp in selected_dps if dp.get("type") == "fact"]
+                                chunks = get_chunks_for_datapoints(selected_dps)
+                                facts = [dp for dp in selected_dps if dp.get("type") == "fact"]
 
-                            doc_lines = []
-                            for dp in doc_dps:
-                                if dp.get("type") == "document":
-                                    doc_lines.append(f"[Document] {dp.get('text')}")
-                                elif dp.get("type") == "summary":
-                                    doc_lines.append(f"[Summary] {dp.get('text')}")
-                            doc_context = "\n".join(doc_lines) if doc_lines else ""
+                                doc_lines = []
+                                for dp in doc_dps:
+                                    if dp.get("type") == "document":
+                                        doc_lines.append(f"[Document] {dp.get('text')}")
+                                    elif dp.get("type") == "summary":
+                                        doc_lines.append(f"[Summary] {dp.get('text')}")
+                                doc_context = "\n".join(doc_lines) if doc_lines else ""
 
-                            base_context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=True)
-                            context = (doc_context + "\n\n" + base_context) if doc_context else base_context
-                        else:
+                                base_context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=True)
+                                context = (doc_context + "\n\n" + base_context) if doc_context else base_context
+                            else:
+                                facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
+                                chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
+                                context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
+                        except Exception as e:
+                            if debug_retrieval:
+                                print(f"    (Map retrieval error: {e})")
                             facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
                             chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
                             context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
-                    except Exception as e:
-                        if debug_retrieval:
-                            print(f"    (Map retrieval error: {e})")
-                        facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
-                        chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
-                        context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
 
                     if logic_context:
                         context = logic_context + "\n\n" + context
                     if memory_text:
                         context = memory_text + "\n\n" + context
 
-                    answer = generate_answer(query, context)
+                    if getattr(config, "USE_VERIFIED_CHAT", True):
+                        from chat.give_chat import generate_answer_verified
+                        answer = generate_answer_verified(query, conversation_history=conversation_history)
+                    else:
+                        answer = generate_answer(query, context)
                     topic_state.update(query, answer)
 
                 add_message(session_id, "assistant", answer)
@@ -888,38 +906,83 @@ Return only JSON."""
         tracker.total_files = total
         tracker.processed_count = 0
         try:
-            for f in files:
-                logic_context = ""
-                if logic_mode:
-                    try:
-                        result = extract_text_from_file(f)
-                        first_text = result["text"][:1000]
-                        logic_ids = decide_logic_modules(first_text, context=first_text)
-                        if logic_ids:
-                            conn = db.db_connect("logic")
-                            cur = conn.cursor()
-                            for lid in logic_ids:
-                                cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
-                                row = cur.fetchone()
-                                if row:
-                                    logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
-                            conn.close()
-                    except Exception as e:
-                        print(f"  (Logic decision error: {e})")
-                file_hash = get_file_hash(f)
-                if tracker.is_processed(file_hash) and verified_flag:
-                    promote_verified_file(file_hash, f.name, source_file=f)
+            if getattr(config, "PARALLEL_INGESTION", True):
+                import concurrent.futures
+                from threading import Lock
+                tracker_lock = Lock()
+                total_files = len(files)
+                processed_count = 0
+
+                def process_one(f):
+                    nonlocal processed_count
+                    logic_context = ""
+                    if logic_mode:
+                        try:
+                            result = extract_text_from_file(f)
+                            first_text = result["text"][:1000]
+                            logic_ids = decide_logic_modules(first_text, context=first_text)
+                            if logic_ids:
+                                conn = db.db_connect("logic")
+                                cur = conn.cursor()
+                                for lid in logic_ids:
+                                    cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
+                                    row = cur.fetchone()
+                                    if row:
+                                        logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                                conn.close()
+                        except Exception as e:
+                            print(f"  (Logic decision error: {e})")
+                    file_hash = get_file_hash(f)
+                    with tracker_lock:
+                        if tracker.is_processed(file_hash) and verified_flag:
+                            promote_verified_file(file_hash, f.name, source_file=f)
+                            tracker.processed_count += 1
+                            return None
+                    success = process_file(f, tracker, logic_context=logic_context)
+                    with tracker_lock:
+                        tracker.processed_count += 1
+                        if success and verified_flag:
+                            file_hash = get_file_hash(f)
+                            promote_verified_file(file_hash, f.name, source_file=f)
+                    gc.collect()
+                    return None
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=config.PARALLEL_INGESTION_WORKERS) as executor:
+                    list(executor.map(process_one, files))
+            else:
+                for f in files:
+                    # sequential code preserved as before
+                    logic_context = ""
+                    if logic_mode:
+                        try:
+                            result = extract_text_from_file(f)
+                            first_text = result["text"][:1000]
+                            logic_ids = decide_logic_modules(first_text, context=first_text)
+                            if logic_ids:
+                                conn = db.db_connect("logic")
+                                cur = conn.cursor()
+                                for lid in logic_ids:
+                                    cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
+                                    row = cur.fetchone()
+                                    if row:
+                                        logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                                conn.close()
+                        except Exception as e:
+                            print(f"  (Logic decision error: {e})")
+                    file_hash = get_file_hash(f)
+                    if tracker.is_processed(file_hash) and verified_flag:
+                        promote_verified_file(file_hash, f.name, source_file=f)
+                        tracker.processed_count += 1
+                        gc.collect()
+                        time.sleep(0.1)
+                        continue
+                    success = process_file(f, tracker, logic_context=logic_context)
                     tracker.processed_count += 1
+                    if success and verified_flag:
+                        file_hash = get_file_hash(f)
+                        promote_verified_file(file_hash, f.name, source_file=f)
                     gc.collect()
                     time.sleep(0.1)
-                    continue
-                success = process_file(f, tracker, logic_context=logic_context)
-                tracker.processed_count += 1
-                if success and verified_flag:
-                    file_hash = get_file_hash(f)
-                    promote_verified_file(file_hash, f.name, source_file=f)
-                gc.collect()
-                time.sleep(0.1)
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)

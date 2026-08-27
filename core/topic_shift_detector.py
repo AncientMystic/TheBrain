@@ -10,6 +10,12 @@ import numpy as np
 import config
 
 
+try:
+    from core.topic_shift_model import TopicShiftModelDetector
+    _model_detector = TopicShiftModelDetector()
+except Exception:
+    _model_detector = None
+
 class TopicShiftDetector:
     def __init__(self, similarity_threshold=None):
         self.similarity_threshold = similarity_threshold or getattr(config, "TOPIC_SHIFT_SIMILARITY", 0.35)
@@ -59,6 +65,8 @@ class TopicShiftDetector:
 
     def is_new_topic(self, query):
         """Return True if query likely starts a new topic."""
+        if _model_detector is not None and getattr(_model_detector, 'model', None) is not None:
+            return _model_detector.is_new_topic(query, self.active_history)
         q_emb = self._embed(query)
         if q_emb is None:
             # Fallback: if no active terms or no overlap, treat as new

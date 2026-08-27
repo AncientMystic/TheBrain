@@ -25,6 +25,7 @@ def find_low_confidence_facts(threshold=0.6, limit=20):
             "fact_id": row["fact_id"],
             "text": row["fact_text"],
             "confidence": row["confidence"],
+            "priority": 1.0 - row["confidence"],
         })
     return gaps
 

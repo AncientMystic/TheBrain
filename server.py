@@ -175,3 +175,9 @@ async def health():
         except Exception:
             statuses.append({"url": ep.get("url", ""), "ok": False})
     return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}
+
+@app.get("/metrics")
+async def metrics():
+    from core.metrics import get_all_metrics
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(get_all_metrics())

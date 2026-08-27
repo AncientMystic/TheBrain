@@ -210,7 +210,7 @@ ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "directml")  # "auto", "cpu", "cuda"
 # Performance
 RETRIEVAL_CACHE_ENABLED = True
 RETRIEVAL_CACHE_TTL = 300             # seconds
-EMBEDDING_BATCH_SIZE = 32             # increase for better throughput
+EMBEDDING_BATCH_SIZE = 128             # increase for better throughput
 
 
 # --- Optional model roles (leave empty to use default endpoints) ---
@@ -257,6 +257,23 @@ INTENT_CLASSIFIER_MODEL_DIR = str(BASE_DIR / "models" / "intent_classifier")
 GNN_ENABLED = True
 ENABLE_GNN_TRAINING = True
 GNN_MODEL_DIR = str(BASE_DIR / "models" / "gnn")
+
+
+# --- Enhanced Retrieval Ranking ---
+RETRIEVAL_RANKING_WEIGHTS = {
+    'query_overlap': 0.25,
+    'rare_term_boost': 0.1,
+    'semantic_similarity': 0.2,
+    'graph_proximity': 0.1,
+    'entity_salience': 0.05,
+    'doc_relevance': 0.1,
+    'type_weight': 0.1,
+    'confidence': 0.1,
+}
+USE_MULTI_STAGE_RETRIEVAL = True
+
+# --- Lazy Model Loading ---
+LAZY_LOAD_MODELS = True  # If True, neural models load on first use.
 
 # Retrieval fusion weights
 RETRIEVAL_STAGE_WEIGHTS = {
@@ -400,3 +417,22 @@ VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "5"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "2"))
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
+
+# --- Phase 3 Settings ---
+USE_GNN = True
+GNN_MODEL_DIR = str(BASE_DIR / "models" / "gnn")
+GNN_EMBEDDING_DIM = 64
+USE_VERIFIED_CHAT = True
+PARALLEL_INGESTION = True
+PARALLEL_INGESTION_WORKERS = 4
+
+
+# --- Phase 4 Settings ---
+ENABLE_SEMANTIC_CONTRADICTIONS = True
+ACTIVE_LEARNING_ENABLED = True
+ACTIVE_LEARNING_ROUNDS = 3
+
+
+# --- Phase 5 Settings ---
+ENABLE_JSON_LOGGING = True
+METRICS_ENABLED = True

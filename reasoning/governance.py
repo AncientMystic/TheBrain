@@ -1,6 +1,7 @@
 import config
 import json
 from core import db
+from reasoning.semantic_contradiction import detect_semantic_contradictions
 
 
 def quality_gate(claim):
@@ -113,6 +114,36 @@ def detect_contradictions():
             "confidence_b": row["conf2"],
         })
 
+    # Semantic contradiction detection (if enabled)
+    if getattr(config, "ENABLE_SEMANTIC_CONTRADICTIONS", True):
+        try:
+            # Get unverified facts and standards
+            conn_kf = db.db_connect("key_facts")
+            cur_kf = conn_kf.cursor()
+            cur_kf.execute("SELECT fact_id, fact_text, negation FROM key_facts WHERE verification_status='unverified' LIMIT 100")
+            facts = [dict(row) for row in cur_kf.fetchall()]
+            conn_kf.close()
+
+            conn_std = db.db_connect("verification_standards")
+            cur_std = conn_std.cursor()
+            cur_std.execute("SELECT id, statement, negation FROM verified_standards")
+            standards = [dict(row) for row in cur_std.fetchall()]
+            conn_std.close()
+
+            sem_contradictions = detect_semantic_contradictions(facts, standards)
+            for sc in sem_contradictions:
+                # Format similarly to other contradictions
+                contradictions.append({
+                    "source": "semantic",
+                    "fact_id": sc["fact_id"],
+                    "standard_id": sc["standard_id"],
+                    "similarity": sc["similarity"],
+                    "reason": sc["reason"],
+                })
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"Semantic contradiction detection failed: {e}")
+
     return contradictions
 
 
@@ -177,6 +208,44 @@ def resolve_contradictions(contradictions):
             conn_log.commit()
             conn_log.close()
             resolutions.append(f"Resolved key_facts contradiction: deleted fact_id {delete_id}")
+
+        elif source == "semantic":
+            # Semantic contradiction: compare confidence; if similar, move to review
+            fact_id = c.get("fact_id")
+            standard_id = c.get("standard_id")
+            # Fetch confidences
+            conn_kf = db.db_connect("key_facts")
+            cur_kf = conn_kf.cursor()
+            cur_kf.execute("SELECT confidence FROM key_facts WHERE fact_id=?", (fact_id,))
+            fact_conf_row = cur_kf.fetchone()
+            conn_kf.close()
+            fact_conf = fact_conf_row[0] if fact_conf_row else 0.0
+
+            conn_std = db.db_connect("verification_standards")
+            cur_std = conn_std.cursor()
+            cur_std.execute("SELECT confidence FROM verified_standards WHERE id=?", (standard_id,))
+            std_conf_row = cur_std.fetchone()
+            conn_std.close()
+            std_conf = std_conf_row[0] if std_conf_row else 1.0
+
+            if std_conf > fact_conf + 0.2:
+                # Standard wins; delete fact
+                conn_kf = db.db_connect("key_facts")
+                conn_kf.execute("DELETE FROM key_facts WHERE fact_id=?", (fact_id,))
+                conn_kf.commit()
+                conn_kf.close()
+                resolutions.append(f"Resolved semantic contradiction: standard {standard_id} over fact {fact_id}")
+            elif fact_conf > std_conf + 0.2:
+                # Fact wins? Unlikely for standards, but handle
+                resolutions.append(f"Fact {fact_id} over standard {standard_id} - kept but flagged")
+            else:
+                # Move to review
+                conn_log = db.db_connect("reasoning")
+                conn_log.execute("INSERT INTO contradiction_log (status, resolved_by, details) VALUES ('review_needed', 'semantic', ?)",
+                                 (json.dumps(c),))
+                conn_log.commit()
+                conn_log.close()
+                resolutions.append(f"Semantic contradiction moved to review: {fact_id} vs {standard_id}")
 
         elif source == "external_graph":
             id1 = c["edge_a_id"]

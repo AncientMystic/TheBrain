@@ -7,6 +7,10 @@ from core.embeddings import get_embedding
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
 import config
 
+# Simple adjacency cache
+_adj_cache = {}
+_adj_cache_ttl = 300  # seconds
+
 
 def pre_select_candidates(query_context: str, kg=None, top_k: int = 10):
     """
@@ -163,3 +167,43 @@ def expand_facts_via_entity_index(facts):
                         new_facts.append(dict(fact_row))
                         seen.add(fid)
     return new_facts
+
+
+def batch_get_global_node_edges(node_ids, max_edges_per_node=50):
+    """Retrieve edges for multiple nodes in one query, using caching."""
+    import time
+    now = time.time()
+    cache_key = tuple(sorted(node_ids))
+    if cache_key in _adj_cache and now - _adj_cache[cache_key]['ts'] < _adj_cache_ttl:
+        return _adj_cache[cache_key]['edges']
+
+    from core import db
+    conn = db.db_connect("external_graph")
+    cur = conn.cursor()
+    placeholders = ",".join("?" for _ in node_ids)
+    cur.execute(f"""
+        SELECT e.edge_id, e.source_node_id, e.target_node_id, e.relation_type, e.weight, e.doc_hash, e.source_span, e.confidence
+        FROM global_edges e
+        WHERE e.source_node_id IN ({placeholders}) OR e.target_node_id IN ({placeholders})
+        ORDER BY e.weight DESC
+    """, (*node_ids, *node_ids))
+    rows = cur.fetchall()
+    conn.close()
+    edges_by_node = {}
+    for row in rows:
+        r = dict(row)
+        src = r['source_node_id']
+        tgt = r['target_node_id']
+        if src in node_ids and src not in edges_by_node:
+            edges_by_node[src] = []
+        if tgt in node_ids and tgt not in edges_by_node:
+            edges_by_node[tgt] = []
+        if src in node_ids:
+            edges_by_node[src].append(r)
+        if tgt in node_ids:
+            edges_by_node[tgt].append(r)
+    # Truncate to max per node
+    for nid in edges_by_node:
+        edges_by_node[nid] = edges_by_node[nid][:max_edges_per_node]
+    _adj_cache[cache_key] = {'ts': now, 'edges': edges_by_node}
+    return edges_by_node
