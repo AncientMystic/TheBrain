@@ -57,11 +57,11 @@ else:
     })
 
 
-LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
-MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
-EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
+LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://localhost:1234/v1")
+MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "lfm2.5-vl-3b-absolute-heresy-i1:2")
+EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "text-embedding-mxbai-embed-large-v1:2")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -98,8 +98,28 @@ else:
         if url and model:
             EMBEDDING_ENDPOINTS.append({"url": url, "model": model, "api_key": "not-needed", "backend": "lmstudio"})
 
+# Merge legacy endpoints 2/3 if they exist and are not duplicates
+legacy_endpoints = [
+    (LM_STUDIO_URL_2, MODEL_NAME_2),
+    (LM_STUDIO_URL_3, MODEL_NAME_3),
+]
+for _url, _model in legacy_endpoints:
+    if _url and _model:
+        if not any(ep.get("url") == _url and ep.get("model") == _model for ep in LLM_ENDPOINTS):
+            LLM_ENDPOINTS.append({"url": _url, "model": _model, "api_key": "not-needed", "backend": "lmstudio", "capacity": 1})
+
 if not LLM_ENDPOINTS:
     LLM_ENDPOINTS = [{"url": LM_STUDIO_URL, "model": MODEL_NAME, "api_key": "not-needed"}]
+# Merge legacy embedding endpoints 2/3 if they exist and are not duplicates
+legacy_emb_endpoints = [
+    (LM_STUDIO_URL_2, EMBEDDING_MODEL_2),
+    (LM_STUDIO_URL_3, EMBEDDING_MODEL_3),
+]
+for _url, _model in legacy_emb_endpoints:
+    if _url and _model:
+        if not any(ep.get("url") == _url and ep.get("model") == _model for ep in EMBEDDING_ENDPOINTS):
+            EMBEDDING_ENDPOINTS.append({"url": _url, "model": _model, "api_key": "not-needed", "backend": "lmstudio"})
+
 if not EMBEDDING_ENDPOINTS:
     EMBEDDING_ENDPOINTS = [{"url": LM_STUDIO_URL, "model": EMBEDDING_MODEL, "api_key": "not-needed"}]
 
@@ -108,12 +128,13 @@ if not LLM_ENDPOINTS:
 if not EMBEDDING_ENDPOINTS:
     raise RuntimeError("No embedding endpoints configured. Check LM_STUDIO_URL and EMBEDDING_MODEL.")
 
-# Derive capacities from endpoint definitions
+# Derive capacities from endpoint definitions (after all endpoints merged)
 LLM_ENDPOINT_CAPACITIES = []
-for _ep in LLM_ENDPOINTS:
+for idx, _ep in enumerate(LLM_ENDPOINTS):
     _cap = _ep.get("capacity")
     if _cap is None:
-        _cap = 3 if len(LLM_ENDPOINT_CAPACITIES) == 0 else 1
+        # Original logic: first endpoint gets 3, others get 1
+        _cap = 3 if idx == 0 else 1
     LLM_ENDPOINT_CAPACITIES.append(int(_cap))
 
 API_RETRY_ATTEMPTS = 3
@@ -214,8 +235,8 @@ EMBEDDING_BATCH_SIZE = 128             # increase for better throughput
 
 
 # --- Optional model roles (leave empty to use default endpoints) ---
-SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "http://localhost:1234/v1")
-SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "liquidai/lfm2.5-1.2b-instruct")
+SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "")
+SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "")
 SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "")
 SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "liquidai/lfm2.5-1.2b-instruct")
 
@@ -386,6 +407,10 @@ LOGIC_EXECUTOR_ENABLED = True  # Use logic modules to influence query processing
 REPORT_COHERENCE_PASS = True   # Run final coherence check on deep research reports
 
 
+
+# Optional dynamic endpoint balancing (default False)
+USE_DYNAMIC_ENDPOINT_BALANCING = False
+
 # --- Recoll integration ---
 USE_RECOLL = os.environ.get("USE_RECOLL", "false").lower() == "true"
 RECOLL_CONFDIR = os.environ.get("RECOLL_CONFDIR", "")
@@ -423,8 +448,8 @@ USE_GNN = True
 GNN_MODEL_DIR = str(BASE_DIR / "models" / "gnn")
 GNN_EMBEDDING_DIM = 64
 USE_VERIFIED_CHAT = True
-PARALLEL_INGESTION = True
-PARALLEL_INGESTION_WORKERS = 4
+PARALLEL_INGESTION = False
+PARALLEL_INGESTION_WORKERS = 1
 
 
 # --- Phase 4 Settings ---

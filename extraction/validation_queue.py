@@ -31,8 +31,8 @@ class ValidationQueue:
 
     def _worker(self):
         while not self._stop_event.is_set():
+            batch = []
             try:
-                batch = []
                 # collect a batch or until timeout
                 while len(batch) < self.batch_size:
                     try:
@@ -50,10 +50,27 @@ class ValidationQueue:
             except Exception as e:
                 print(f"Validation worker error: {e}")
                 traceback.print_exc()
+            finally:
+                # Mark all items in batch as done to avoid deadlock in join()
+                for _ in batch:
+                    self.queue.task_done()
 
     def _process_batch(self, batch):
         prompt = self._build_prompt(batch)
-        resp = call_model_json(prompt, max_tokens=4096, endpoint_type=config.VALIDATION_MODEL_GROUP)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                call_model_json,
+                prompt,
+                max_tokens=2048,
+                endpoint_type=config.VALIDATION_MODEL_GROUP,
+            )
+            try:
+                resp = future.result(timeout=30)
+            except concurrent.futures.TimeoutError:
+                print("    (Validation batch timed out; skipping validation)")
+                resp = None
+
         if resp is None:
             # fallback: keep original items
             with self.lock:
@@ -91,7 +108,7 @@ Return only JSON.
         # Wait for queue to drain
         self.queue.join()
         # Send sentinel None to each worker to stop
-        for _ in self.workers:
+        for _ in self._workers:
             self.queue.put(None)
         for t in self._workers:
             t.join(timeout=30)

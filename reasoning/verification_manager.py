@@ -44,20 +44,20 @@ class VerificationManager:
         """Extract subject, predicate, object from fact if possible."""
         if all(k in fact for k in ("subject", "predicate", "object")):
             return {
-                "subject": fact["subject"],
-                "predicate": fact["predicate"],
-                "object": fact["object"],
-                "negation": fact.get("negation", 0),
+                "subject": fact.get("subject") or "",
+                "predicate": fact.get("predicate") or "",
+                "object": fact.get("object") or "",
+                "negation": fact.get("negation", 0) or 0,
             }
         triple = extract_triple_from_text(fact.get("fact_text", ""))
         if triple:
             triple["negation"] = fact.get("negation", 0)
             return triple
         return {
-            "subject": fact.get("canonical_value") or fact.get("fact_text", "")[:50],
+            "subject": (fact.get("canonical_value") or fact.get("fact_text") or "")[:50],
             "predicate": "has_fact",
-            "object": fact.get("fact_text", ""),
-            "negation": fact.get("negation", 0),
+            "object": fact.get("fact_text") or "",
+            "negation": fact.get("negation", 0) or 0,
         }
 
     def _symstep(self, fact: Dict, prior_facts: List[Dict]) -> Dict:

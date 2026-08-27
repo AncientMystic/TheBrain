@@ -551,6 +551,72 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
 
     return results
 
+import time as _time
+
+_endpoint_capacities_cache = None
+
+def _get_dynamic_capacities():
+    """Measure latency for each endpoint and assign proportional capacities."""
+    global _endpoint_capacities_cache
+    if _endpoint_capacities_cache is not None:
+        return _endpoint_capacities_cache
+
+    capacities = []
+    for ep in config.LLM_ENDPOINTS:
+        try:
+            start = _time.time()
+            # Quick health check with minimal generation
+            from core.llm import call_model
+            resp = call_model("ping", max_tokens=2, endpoint=ep)
+            latency = _time.time() - start
+            if not resp:
+                # Unhealthy, assign 0
+                capacities.append(0)
+            else:
+                # Latency in seconds, cap at 60 to avoid huge values
+                latency = min(latency, 60.0)
+                # Inversely proportional, with minimum 1 for healthy endpoints
+                capacities.append(max(1, int(10.0 / latency)))
+        except Exception:
+            capacities.append(0)
+
+    # Ensure at least one capacity > 0; fallback to default
+    if sum(capacities) == 0:
+        print("    (All endpoints failed health check; using default capacities)")
+        return None
+    _endpoint_capacities_cache = capacities
+    return capacities
+
+
+import time as _time
+_endpoint_capacities_cache = None
+
+def _get_dynamic_capacities():
+    """Measure latency and assign proportional capacities (only if enabled)."""
+    global _endpoint_capacities_cache
+    if _endpoint_capacities_cache is not None:
+        return _endpoint_capacities_cache
+    if not getattr(config, "USE_DYNAMIC_ENDPOINT_BALANCING", False):
+        return None
+    capacities = []
+    for ep in config.LLM_ENDPOINTS:
+        try:
+            start = _time.time()
+            resp = call_model("ping", max_tokens=2, endpoint=ep)
+            latency = _time.time() - start
+            if not resp:
+                capacities.append(0)
+            else:
+                latency = min(latency, 60.0)
+                capacities.append(max(1, int(10.0 / latency)))
+        except Exception:
+            capacities.append(0)
+    if sum(capacities) == 0:
+        return None
+    _endpoint_capacities_cache = capacities
+    return capacities
+
+
 def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context="", doc_type=None):
     """Extract from chunks using fast pre-extraction + focused LLM prompts."""
     if max_workers is None:
@@ -563,7 +629,7 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
 
     flags = _compute_novelty_flags(chunks, chunk_embeddings)
 
-    # Fast pre-extraction (if enabled)
+    # Fast pre-extraction
     fast_pre_results = None
     if config.FAST_EXTRACTOR_ENABLED:
         try:
@@ -610,7 +676,6 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
     results = {}
     lock = threading.Lock()
 
-    # Progress bar for chunk batches
     pbar = None
     if config.USE_PROGRESS_BARS and config.TQDM_AVAILABLE:
         try:
@@ -620,15 +685,26 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             pbar = None
 
     workers = []
+    # Use static capacities unless dynamic balancing is enabled
+    caps = config.LLM_ENDPOINT_CAPACITIES
+    if getattr(config, "USE_DYNAMIC_ENDPOINT_BALANCING", False):
+        dynamic_caps = _get_dynamic_capacities()
+        if dynamic_caps is not None:
+            caps = dynamic_caps
+
     for ep_idx, endpoint in enumerate(config.LLM_ENDPOINTS):
-        capacity = config.LLM_ENDPOINT_CAPACITIES[ep_idx] if ep_idx < len(config.LLM_ENDPOINT_CAPACITIES) else 1
-        for _ in range(capacity):
-            def worker(ep=endpoint):
+        capacity = caps[ep_idx] if ep_idx < len(caps) else 1
+        if capacity <= 0:
+            continue
+        for worker_idx in range(capacity):
+            def worker(ep=endpoint, wid=worker_idx, eidx=ep_idx):
                 while True:
                     try:
                         batch_idx, batch_texts, batch_pre = task_queue.get_nowait()
                     except queue.Empty:
                         break
+                    if config.DEBUG_VERBOSE:
+                        print(f"    [Endpoint {eidx}, worker {wid}] processing batch {batch_idx}")
                     try:
                         actual_model = ep["model"]
                         batch_results = _process_batch(
@@ -642,7 +718,7 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                         with lock:
                             results[batch_idx] = batch_results
                     except Exception as e:
-                        print(f"    (Batch {batch_idx} error: {e})")
+                        print(f"    (Batch {batch_idx} error on endpoint {eidx}: {e})")
                         empty = [{
                             "facts": [], "entities": [], "relationships": [],
                             "people": [], "locations": [], "dates": [],
@@ -678,7 +754,6 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
         print("  Running validation queue on extracted items...")
         vq = ValidationQueue()
         vq.start()
-        # Flatten items with metadata
         for chunk_idx, chunk_data in enumerate(all_results):
             for key in ["facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems"]:
                 for item in chunk_data.get(key, []):
@@ -688,7 +763,6 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                         item_copy["_category"] = key
                         vq.put(item_copy)
         validated_results = vq.wait_and_get_results()
-        # Reconstruct all_results from validated items
         for item in validated_results:
             if isinstance(item, dict) and "_chunk_idx" in item and "_category" in item:
                 idx = item.pop("_chunk_idx")

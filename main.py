@@ -41,6 +41,11 @@ from deep_research.recoll_guided_learning import run_recoll_guided_learning
 
 
 def normalize_key(text):
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception:
+            text = ""
     return re.sub(r'\s+', ' ', text.lower()).strip()
 
 
@@ -62,7 +67,6 @@ def process_file(filepath, tracker, logic_context=""):
     if tracker.is_processed(file_hash):
         print(f"Skipping already processed: {filepath.name}")
         return False
-    update_status(f"[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
     print(f"\n[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
     try:
         # Check document text cache first
@@ -324,6 +328,12 @@ def process_file(filepath, tracker, logic_context=""):
     except Exception as e:
         print(f"  ERROR processing {filepath}: {e}")
         traceback.print_exc()
+        # Close all DB connections before marking error to avoid lock
+        try:
+            from core import db as db_module
+            db_module.close_all_connections()
+        except Exception:
+            pass
         tracker.mark_error(file_hash, stage="processing")
         return False
 
@@ -906,7 +916,7 @@ Return only JSON."""
         tracker.total_files = total
         tracker.processed_count = 0
         try:
-            if getattr(config, "PARALLEL_INGESTION", True):
+            if getattr(config, "PARALLEL_PROCESSING_ENABLED", False):
                 import concurrent.futures
                 from threading import Lock
                 tracker_lock = Lock()
@@ -947,7 +957,7 @@ Return only JSON."""
                     gc.collect()
                     return None
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=config.PARALLEL_INGESTION_WORKERS) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(config, 'PARALLEL_INGESTION_WORKERS', getattr(config, 'PARALLEL_WORKERS', 1))) as executor:
                     list(executor.map(process_one, files))
             else:
                 for f in files:

@@ -10,12 +10,12 @@ from core.llm import call_model_json
 #  Knowledge Base Helpers
 # ============================================================
 def triple_to_key(subject, predicate, obj):
-    return (subject.lower().strip(), predicate.lower().strip(), obj.lower().strip())
+    return ((subject or "").lower().strip(), (predicate or "").lower().strip(), (obj or "").lower().strip())
 
 def claims_to_triples(claims):
     triples = set()
     for c in claims:
-        triples.add(triple_to_key(c.get("subject",""), c.get("predicate",""), c.get("object","")))
+        triples.add(triple_to_key(c.get("subject") or "", c.get("predicate") or "", c.get("object") or ""))
     return triples
 
 def derive_implied_triples(triples: set) -> set:
@@ -49,9 +49,9 @@ def verify_symstep(claim: Dict, prior_claims: List[Dict]) -> bool:
     Check claim consistency with prior claims, including implied facts.
     Returns True if no contradiction, False otherwise.
     """
-    subject = claim.get("subject", "").strip()
-    predicate = claim.get("predicate", "").strip()
-    obj = claim.get("object", "").strip()
+    subject = (claim.get("subject") or "").strip()
+    predicate = (claim.get("predicate") or "").strip()
+    obj = (claim.get("object") or "").strip()
     if not subject or not predicate:
         return False
 
@@ -144,9 +144,9 @@ def verify_vericot(step_text: str, context: str, kg) -> bool:
 #  FiDeLiS: grounding
 # ============================================================
 def verify_fidelis(claim: Dict, kg) -> bool:
-    subject = claim.get("subject", "").strip()
-    predicate = claim.get("predicate", "").strip()
-    obj = claim.get("object", "").strip()
+    subject = (claim.get("subject") or "").strip()
+    predicate = (claim.get("predicate") or "").strip()
+    obj = (claim.get("object") or "").strip()
     if not subject or not predicate:
         return False
 
