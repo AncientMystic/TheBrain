@@ -782,7 +782,7 @@ def main():
                     if memory_text:
                         context = memory_text + "\n\n" + context
 
-                    answer = generate_answer(query, context, conversation_history=conversation_history)
+                    answer = generate_answer(query, context)
                     topic_state.update(query, answer)
 
                 add_message(session_id, "assistant", answer)

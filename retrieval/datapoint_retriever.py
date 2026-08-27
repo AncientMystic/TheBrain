@@ -278,6 +278,20 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
     # --------------------------------------------------------------
     # Stage 4: Score datapoints with document boost and reranker
     # --------------------------------------------------------------
+
+    def _is_generic_summary(text_lower):
+        generic_markers = [
+            "unrelated snippets",
+            "provided text contains a collection",
+            "collection of unrelated",
+            "unrelated segments",
+            "unrelated summaries",
+        ]
+        return any(marker in text_lower for marker in generic_markers)
+
+    # Rare query tokens (long, non-stopword)
+    rare_tokens = [t for t in query_tokens if len(t) > 4]
+
     reranker = get_reranker()
     texts = [dp.get("text", "") for dp in datapoints]
     if reranker.available and texts:
@@ -297,11 +311,24 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
     # Existing token-based scoring plus document boost
     for dp in datapoints:
         text_lower = (dp.get("text") or "").lower()
+
+        # Generic summary penalty
+        if dp.get("type") == "summary" and _is_generic_summary(text_lower):
+            dp["score"] = -1.0
+            continue
+
+        # Rare term boost
+        rare_boost = 0.0
+        for rt in rare_tokens:
+            if rt in text_lower:
+                rare_boost += 0.35
+
         entity_match = 1.0 if any(t in text_lower for t in query_tokens if len(t) > 3) else 0.0
         doc_boost = dp.get("_doc_relevance", 0.0)
         base = _score_datapoint(dp, query_tokens, dp.get("_root_distance", 2))
         rr = dp.get("_rr_score", 0.0)
-        score = 0.4 * rr + 0.3 * base + 0.2 * entity_match + 0.1 * doc_boost
+
+        score = 0.4 * rr + 0.3 * base + 0.2 * entity_match + 0.1 * doc_boost + rare_boost
 
         if dp.get("_is_chunk"):
             if any(marker in text_lower for marker in AD_MARKERS):
