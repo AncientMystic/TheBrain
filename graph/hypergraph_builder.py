@@ -2,6 +2,18 @@ import json
 from core import db
 
 
+def _safe_str(value):
+    """Convert any value to string, or return empty string for None/dict/list."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
+
 def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
     """
     Build intra-document graph nodes and edges from LLM extraction results.
@@ -19,7 +31,7 @@ def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> No
         cur.execute("""
             INSERT INTO nodes (doc_hash, node_type, node_text, normalized_name, source_span, confidence)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (doc_hash, node_type, node_text, normalized_name, source_span, confidence))
+        """, (doc_hash, _safe_str(node_type), _safe_str(node_text), _safe_str(normalized_name), _safe_str(source_span), confidence))
         node_id = cur.lastrowid
         node_id_map[key] = node_id
         return node_id
@@ -58,8 +70,8 @@ def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> No
 
     # Relationships from LLM
     for rel in extracted_data.get("relationships", []):
-        src_name = rel.get("source_node")
-        tgt_name = rel.get("target_node")
+        src_name = _safe_str(rel.get("source_node"))
+        tgt_name = _safe_str(rel.get("target_node"))
         if not src_name or not tgt_name:
             continue
         # Find or create nodes
@@ -67,7 +79,7 @@ def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> No
                     (doc_hash, src_name, src_name))
         src_row = cur.fetchone()
         if not src_row:
-            src_id = get_or_create_node("OTHER", src_name, src_name, rel.get("evidence_span"), rel.get("confidence", 0.0))
+            src_id = get_or_create_node("OTHER", src_name, src_name, _safe_str(rel.get("evidence_span")), rel.get("confidence", 0.0))
         else:
             src_id = src_row[0]
 
@@ -75,14 +87,14 @@ def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> No
                     (doc_hash, tgt_name, tgt_name))
         tgt_row = cur.fetchone()
         if not tgt_row:
-            tgt_id = get_or_create_node("OTHER", tgt_name, tgt_name, rel.get("evidence_span"), rel.get("confidence", 0.0))
+            tgt_id = get_or_create_node("OTHER", tgt_name, tgt_name, _safe_str(rel.get("evidence_span")), rel.get("confidence", 0.0))
         else:
             tgt_id = tgt_row[0]
 
         cur.execute("""
             INSERT OR IGNORE INTO edges (doc_hash, source_node_id, target_node_id, relation_type, weight, evidence_span, confidence)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (doc_hash, src_id, tgt_id, rel.get("relation_type", "related"), 1.0, rel.get("evidence_span"), rel.get("confidence", 0.0)))
+        """, (doc_hash, src_id, tgt_id, _safe_str(rel.get("relation_type", "related")), 1.0, _safe_str(rel.get("evidence_span")), rel.get("confidence", 0.0)))
 
     # Optional: co-occurrence edges if chunk_map provided (not implemented in current call)
     # If chunk_map contains chunk_index -> list of node_ids, we could add co-occurrence edges here.

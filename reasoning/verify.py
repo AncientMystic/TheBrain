@@ -6,16 +6,29 @@ from reasoning.graph import query_kg_triples
 from core.llm import call_model_json
 
 
+def _safe_str(value):
+    """Convert any value to string, handling dict/list/None."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
+
+
 # ============================================================
 #  Knowledge Base Helpers
 # ============================================================
 def triple_to_key(subject, predicate, obj):
-    return ((subject or "").lower().strip(), (predicate or "").lower().strip(), (obj or "").lower().strip())
+    return (_safe_str(subject).lower().strip(), _safe_str(predicate).lower().strip(), _safe_str(obj).lower().strip())
 
 def claims_to_triples(claims):
     triples = set()
     for c in claims:
-        triples.add(triple_to_key(c.get("subject") or "", c.get("predicate") or "", c.get("object") or ""))
+        triples.add(triple_to_key(_safe_str(c.get("subject")), _safe_str(c.get("predicate")), _safe_str(c.get("object"))))
     return triples
 
 def derive_implied_triples(triples: set) -> set:
@@ -49,9 +62,9 @@ def verify_symstep(claim: Dict, prior_claims: List[Dict]) -> bool:
     Check claim consistency with prior claims, including implied facts.
     Returns True if no contradiction, False otherwise.
     """
-    subject = (claim.get("subject") or "").strip()
-    predicate = (claim.get("predicate") or "").strip()
-    obj = (claim.get("object") or "").strip()
+    subject = _safe_str(claim.get("subject")).strip()
+    predicate = _safe_str(claim.get("predicate")).strip()
+    obj = _safe_str(claim.get("object")).strip()
     if not subject or not predicate:
         return False
 
@@ -144,9 +157,9 @@ def verify_vericot(step_text: str, context: str, kg) -> bool:
 #  FiDeLiS: grounding
 # ============================================================
 def verify_fidelis(claim: Dict, kg) -> bool:
-    subject = (claim.get("subject") or "").strip()
-    predicate = (claim.get("predicate") or "").strip()
-    obj = (claim.get("object") or "").strip()
+    subject = _safe_str(claim.get("subject")).strip()
+    predicate = _safe_str(claim.get("predicate")).strip()
+    obj = _safe_str(claim.get("object")).strip()
     if not subject or not predicate:
         return False
 

@@ -235,10 +235,10 @@ EMBEDDING_BATCH_SIZE = 128             # increase for better throughput
 
 
 # --- Optional model roles (leave empty to use default endpoints) ---
-SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "")
-SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "")
-SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "")
-SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "liquidai/lfm2.5-1.2b-instruct")
+SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "http://localhost:1234/v1")
+SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "lfm2-350m-heretic-i1")
+SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "http://10.0.0.33:1234/v1")
+SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "lfm2-350m-heretic-i1")
 
 SMALL_MODEL_ENDPOINT = None  # filled dynamically
 

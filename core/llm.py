@@ -36,11 +36,19 @@ from core.model_router import get_endpoint_for_group
 from core.logger import get_logger
 logger = get_logger(__name__)
 
-_llm_cycle = itertools.cycle(config.LLM_ENDPOINTS)
+_llm_cycle = None
+_llm_cycle_len = -1
 _llm_lock = threading.Lock()
 
 def _get_next_llm_endpoint():
+    global _llm_cycle, _llm_cycle_len
     with _llm_lock:
+        current_len = len(config.LLM_ENDPOINTS)
+        if _llm_cycle is None or current_len != _llm_cycle_len:
+            _llm_cycle = itertools.cycle(config.LLM_ENDPOINTS)
+            _llm_cycle_len = current_len
+            if config.DEBUG_VERBOSE:
+                print(f"    [LLM cycle] endpoints order: {[ep.get('url') + ':' + ep.get('model', '') for ep in config.LLM_ENDPOINTS]}")
         return next(_llm_cycle)
 
 def call_model(prompt, model=None, max_tokens=1024, temperature=None,
@@ -65,6 +73,7 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
 
     if config.DEBUG_VERBOSE:
         logger.debug(f"LLM call -> {endpoint['url']} model={model}")
+        print(f"    [LLM endpoint] {endpoint['url']} model={model}")
 
     if temperature is None:
         temperature = 0.0

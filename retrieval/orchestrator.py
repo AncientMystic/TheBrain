@@ -82,59 +82,78 @@ def run_gnn_retriever(query, top_k=10):
     if not getattr(config, "USE_GNN", False):
         return []
     try:
-        from graph.gnn_sage import get_gnn_embeddings
+        import torch
         import numpy as np
+        from graph.gnn_sage import load_gnn_model, get_gnn_embeddings
         from core.embeddings import get_embedding
+        from pathlib import Path
 
         node_embs = get_gnn_embeddings()
         if node_embs is None:
+            return []
+        model = load_gnn_model()
+        if model is None:
             return []
         q_emb = get_embedding(query)
         if not q_emb:
             return []
         q_vec = np.array(q_emb, dtype=np.float32)
-        # Normalize
-        q_norm = np.linalg.norm(q_vec)
+
+        # Check input dimension of GNN model
+        input_dim = model.input_dim
+        if q_vec.shape[0] != input_dim:
+            if config.DEBUG_VERBOSE:
+                print(f"    (GNN retriever skipped: query dim {q_vec.shape[0]} != model input dim {input_dim})")
+            return []
+
+        # Pass query through GNN with self-loop to get output embedding
+        q_tensor = torch.tensor([q_vec], dtype=torch.float32)
+        edge_index = torch.tensor([[0], [0]], dtype=torch.long)  # self-loop
+        model.eval()
+        with torch.no_grad():
+            q_gnn = model(q_tensor, edge_index)[0].numpy()
+
+        # Normalize query GNN vector
+        q_norm = np.linalg.norm(q_gnn)
         if q_norm == 0:
             return []
-        q_vec = q_vec / q_norm
+        q_gnn = q_gnn / q_norm
 
-        # Compute cosine similarities
+        # Compare with node embeddings (already normalized)
         node_norms = np.linalg.norm(node_embs, axis=1, keepdims=True)
         node_norms[node_norms == 0] = 1e-8
         normalized_nodes = node_embs / node_norms
-        sims = np.dot(normalized_nodes, q_vec)
+        sims = np.dot(normalized_nodes, q_gnn)
 
         top_indices = np.argsort(sims)[-top_k:][::-1]
 
-        # Map node embeddings to node IDs and then to facts via entity_fact_index
+        # Map to facts
         from core import db
-        conn = db.db_connect("external_graph")
-        cur = conn.cursor()
+        # Use external_graph only for node names, then key_facts for facts
+        conn_eg = db.db_connect("external_graph")
+        cur_eg = conn_eg.cursor()
+        conn_kf = db.db_connect("key_facts")
+        cur_kf = conn_kf.cursor()
         datapoints = []
+        try:
+            node_ids = np.load(Path(config.GNN_MODEL_DIR) / "node_ids.npy")
+        except Exception:
+            node_ids = None
         for idx in top_indices:
-            # Need node id: we stored node_ids.npy
-            try:
-                node_ids = np.load(Path(config.GNN_MODEL_DIR) / "node_ids.npy")
-                node_id = node_ids[idx]
-            except Exception:
-                node_id = idx  # fallback
-            # Get node name
-            cur.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (node_id,))
-            row = cur.fetchone()
+            node_id = int(node_ids[idx]) if node_ids is not None else idx
+            cur_eg.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (node_id,))
+            row = cur_eg.fetchone()
             if not row:
                 continue
             node_name = row["canonical_name"]
-            # Retrieve facts associated with this entity via entity_fact_index
-            cur2 = conn.cursor()
-            cur2.execute("""
+            cur_kf.execute("""
                 SELECT f.fact_id, f.doc_hash, f.fact_text, f.canonical_value, f.source_span, f.confidence
                 FROM key_facts f
                 JOIN entity_fact_index efi ON f.fact_id = efi.fact_id
                 WHERE efi.normalized_name = ?
                 LIMIT 5
             """, (node_name.lower(),))
-            facts = cur2.fetchall()
+            facts = cur_kf.fetchall()
             for f in facts:
                 datapoints.append({
                     'id': f"gnn_fact:{f['fact_id']}",
@@ -144,7 +163,8 @@ def run_gnn_retriever(query, top_k=10):
                     'confidence': f['confidence'],
                     'source_span': f['source_span'],
                 })
-        conn.close()
+        conn_eg.close()
+        conn_kf.close()
         return datapoints
     except Exception as e:
         if config.DEBUG_VERBOSE:
@@ -153,6 +173,7 @@ def run_gnn_retriever(query, top_k=10):
 
 
 class RetrievalOrchestrator:
+    """Multi-stage retrieval orchestrator."""
     def __init__(self, stage_weights=None):
         self.stage_weights = stage_weights or getattr(config, 'RETRIEVAL_STAGE_WEIGHTS', None)
         if self.stage_weights is None:
@@ -168,6 +189,7 @@ class RetrievalOrchestrator:
         self.stage_weights = {k: v / total for k, v in self.stage_weights.items()}
 
     def retrieve(self, query, analysis, top_k=30):
+        """Run retrievers in parallel and fuse with WRRF."""
         inc_counter("retrieval_requests_total")
         with Timer("retrieval_duration_seconds"):
             stages = {}
@@ -182,25 +204,25 @@ class RetrievalOrchestrator:
                 stages['lexical'] = future_lexical.result()
                 stages['gnn'] = future_gnn.result()
 
-        # Additional hierarchical datapoint retrieval
-        try:
-            hierarchical_dps = retrieve_datapoints(query, max_nodes=50)
-            stages['hierarchical'] = hierarchical_dps
-        except Exception as e:
-            if config.DEBUG_VERBOSE:
-                print(f"Hierarchical retriever failed: {e}")
+            # Additional hierarchical datapoint retrieval
+            try:
+                hierarchical_dps = retrieve_datapoints(query, max_nodes=50)
+                stages['hierarchical'] = hierarchical_dps
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"Hierarchical retriever failed: {e}")
 
-        fused = weighted_rrf(stages, self.stage_weights)
-        id_to_dp = {}
-        for stage, dps in stages.items():
-            for dp in dps:
-                id_to_dp[dp['id']] = dp
+            fused = weighted_rrf(stages, self.stage_weights)
+            id_to_dp = {}
+            for stage, dps in stages.items():
+                for dp in dps:
+                    id_to_dp[dp['id']] = dp
 
-        final_dps = []
-        for dp_id, score in fused[:top_k]:
-            dp = id_to_dp.get(dp_id)
-            if dp:
-                dp = dp.copy()
-                dp['_fused_score'] = score
-                final_dps.append(dp)
-        return final_dps
+            final_dps = []
+            for dp_id, score in fused[:top_k]:
+                dp = id_to_dp.get(dp_id)
+                if dp:
+                    dp = dp.copy()
+                    dp['_fused_score'] = score
+                    final_dps.append(dp)
+            return final_dps

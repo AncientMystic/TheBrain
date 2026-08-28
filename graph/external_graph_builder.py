@@ -4,6 +4,18 @@ import numpy as np
 
 import config
 from core import db
+
+
+def _safe_str(value):
+    """Convert any value to string, or return empty string for None/dict/list."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
 from core.embeddings import get_embeddings_batch
 from graph.node_canonicalizer import find_matching_global_node, normalize_name
 
@@ -181,7 +193,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
         cur.execute("""
             INSERT INTO global_nodes (canonical_name, node_type, aliases_json, attributes_json, embedding)
             VALUES (?, ?, ?, ?, ?)
-        """, (name, node_type, json.dumps([name]), attrs_json, emb_blob))
+        """, (_safe_str(name), _safe_str(node_type), json.dumps([_safe_str(name)]), attrs_json, emb_blob))
         new_id = cur.lastrowid
         cache_dirty = True
         local_to_global[key] = new_id
@@ -221,8 +233,8 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             cur.execute("""
                 INSERT INTO global_edges (source_node_id, target_node_id, relation_type, weight, doc_hash, source_span, confidence, occurrence_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-            """, (src_gid, tgt_gid, rel.get("relation_type", "related"), 1.0,
-                  doc_hash, rel.get("evidence_span"), rel.get("confidence", 0.0)))
+            """, (src_gid, tgt_gid, _safe_str(rel.get("relation_type", "related")), 1.0,
+                  doc_hash, _safe_str(rel.get("evidence_span")), rel.get("confidence", 0.0)))
 
     # Keyword-topic edges and co-occurrence
     conn_index = db.db_connect("index")
@@ -250,7 +262,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
                     INSERT INTO keyword_topic_edges (keyword, topic, weight)
                     VALUES (?, ?, ?)
                     ON CONFLICT(keyword, topic) DO UPDATE SET weight = weight + 1
-                """, (kw, doc_name, 1.0))
+                """, (_safe_str(kw), _safe_str(doc_name), 1.0))
 
     keyword_list = list(keywords)
     for i in range(len(keyword_list)):

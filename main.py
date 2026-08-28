@@ -49,6 +49,18 @@ def normalize_key(text):
     return re.sub(r'\s+', ' ', text.lower()).strip()
 
 
+def _safe_str_for_db(value):
+    """Convert any value to string, or return empty string for None/dict/list."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
+
 def deduplicate_list(items, key_func):
     seen = {}
     for item in items:
@@ -221,11 +233,20 @@ def process_file(filepath, tracker, logic_context=""):
                     print(f"    (Batch verification error: {e})")
 
         for fact in all_extracted["facts"]:
+            if not isinstance(fact, dict):
+                continue
+            fact_text = fact.get("fact_text")
+            if not fact_text or not isinstance(fact_text, str) or not fact_text.strip():
+                continue
+            # Ensure fact_type is string
+            fact_type = fact.get("fact_type")
+            if not isinstance(fact_type, str):
+                fact_type = "other"
             fact_row = (
-                file_hash, filepath.name, fact.get("fact_type"),
-                fact.get("fact_text"), fact.get("canonical_value"),
-                fact.get("source_span"), fact.get("confidence_final", fact.get("confidence", 0.0)), 0,
-                fact.get("_sym_contradiction", 0), fact.get("_formal_repr", ""), fact.get("_rcot_verified", 0)
+                file_hash, filepath.name, fact_type,
+                fact_text, _safe_str_for_db(fact.get("canonical_value")),
+                _safe_str_for_db(fact.get("source_span")), fact.get("confidence_final", fact.get("confidence", 0.0)), 0,
+                fact.get("_sym_contradiction", 0), _safe_str_for_db(fact.get("_formal_repr", "")), fact.get("_rcot_verified", 0)
             )
             fact_rows.append(fact_row)
 
@@ -342,48 +363,48 @@ def process_file(filepath, tracker, logic_context=""):
 def _store_entity(conn, doc_hash, file_name, entity):
     conn.execute("""INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, entity.get("entity_type", "OTHER"), entity.get("entity_name", ""),
-                  entity.get("normalized_name", ""), entity.get("source_span", ""), entity.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(entity.get("entity_type", "OTHER")), _safe_str_for_db(entity.get("entity_name", "")),
+                  _safe_str_for_db(entity.get("normalized_name", "")), _safe_str_for_db(entity.get("source_span", "")), entity.get("confidence", 0.0)))
 
 def _store_person(conn, doc_hash, file_name, person):
     conn.execute("""INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, person.get("person_name", ""), person.get("normalized_name", ""),
-                  person.get("role", ""), person.get("source_span", ""), person.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(person.get("person_name", "")), _safe_str_for_db(person.get("normalized_name", "")),
+                  _safe_str_for_db(person.get("role", "")), _safe_str_for_db(person.get("source_span", "")), person.get("confidence", 0.0)))
 
 def _store_location(conn, doc_hash, file_name, location):
     conn.execute("""INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, location.get("location_name", ""), location.get("normalized_place", ""),
-                  location.get("location_type", ""), location.get("source_span", ""), location.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(location.get("location_name", "")), _safe_str_for_db(location.get("normalized_place", "")),
+                  _safe_str_for_db(location.get("location_type", "")), _safe_str_for_db(location.get("source_span", "")), location.get("confidence", 0.0)))
 
 def _store_date(conn, doc_hash, file_name, date):
     conn.execute("""INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, date.get("date_text", ""), date.get("normalized_date", ""),
-                  date.get("date_type", ""), date.get("source_span", ""), date.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(date.get("date_text", "")), _safe_str_for_db(date.get("normalized_date", "")),
+                  _safe_str_for_db(date.get("date_type", "")), _safe_str_for_db(date.get("source_span", "")), date.get("confidence", 0.0)))
 
 def _store_event(conn, doc_hash, file_name, event):
     conn.execute("""INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type,
                                         description, significance, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, event.get("event_name", ""), event.get("normalized_name", ""),
-                  event.get("event_date", ""), event.get("event_type", ""), event.get("description", ""),
-                  event.get("significance", ""), event.get("source_span", ""), event.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(event.get("event_name", "")), _safe_str_for_db(event.get("normalized_name", "")),
+                  _safe_str_for_db(event.get("event_date", "")), _safe_str_for_db(event.get("event_type", "")), _safe_str_for_db(event.get("description", "")),
+                  _safe_str_for_db(event.get("significance", "")), _safe_str_for_db(event.get("source_span", "")), event.get("confidence", 0.0)))
 
 def _store_discovery(conn, doc_hash, file_name, discovery):
     conn.execute("""INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description,
                                              date, significance, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, discovery.get("discovery_name", ""), discovery.get("normalized_name", ""),
-                  discovery.get("description", ""), discovery.get("date", ""), discovery.get("significance", ""),
-                  discovery.get("source_span", ""), discovery.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(discovery.get("discovery_name", "")), _safe_str_for_db(discovery.get("normalized_name", "")),
+                  _safe_str_for_db(discovery.get("description", "")), _safe_str_for_db(discovery.get("date", "")), _safe_str_for_db(discovery.get("significance", "")),
+                  _safe_str_for_db(discovery.get("source_span", "")), discovery.get("confidence", 0.0)))
 
 def _store_gem(conn, doc_hash, file_name, gem):
     conn.execute("""INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence)
                     VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, gem.get("gem_text", ""), gem.get("category", ""),
-                  gem.get("importance", 0.0), gem.get("source_span", ""), gem.get("confidence", 0.0)))
+                 (doc_hash, _safe_str_for_db(gem.get("gem_text", "")), _safe_str_for_db(gem.get("category", "")),
+                  gem.get("importance", 0.0), _safe_str_for_db(gem.get("source_span", "")), gem.get("confidence", 0.0)))
 
 
 def review_contradictions():

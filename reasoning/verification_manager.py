@@ -43,20 +43,24 @@ class VerificationManager:
     def _extract_triple(self, fact: Dict) -> Dict:
         """Extract subject, predicate, object from fact if possible."""
         if all(k in fact for k in ("subject", "predicate", "object")):
+            def _coerce(v):
+                return str(v) if not isinstance(v, str) else v
             return {
-                "subject": fact.get("subject") or "",
-                "predicate": fact.get("predicate") or "",
-                "object": fact.get("object") or "",
+                "subject": _coerce(fact.get("subject")) or "",
+                "predicate": _coerce(fact.get("predicate")) or "",
+                "object": _coerce(fact.get("object")) or "",
                 "negation": fact.get("negation", 0) or 0,
             }
         triple = extract_triple_from_text(fact.get("fact_text", ""))
         if triple:
             triple["negation"] = fact.get("negation", 0)
             return triple
+        def _coerce(v):
+            return str(v) if not isinstance(v, str) else v
         return {
-            "subject": (fact.get("canonical_value") or fact.get("fact_text") or "")[:50],
+            "subject": (_coerce(fact.get("canonical_value")) or _coerce(fact.get("fact_text")) or "")[:50],
             "predicate": "has_fact",
-            "object": fact.get("fact_text") or "",
+            "object": _coerce(fact.get("fact_text")) or "",
             "negation": fact.get("negation", 0) or 0,
         }
 

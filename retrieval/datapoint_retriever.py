@@ -284,8 +284,9 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
     # Extract query entities for graph proximity feature
     query_entities = [ent.get('text', '') for ent in analysis.get('entities', [])]
 
-    for dp in datapoints:
-        dp['score'] = ranker.score(query, dp, query_entities, reranker)
+    scores = ranker.batch_score(query, datapoints, query_entities, reranker)
+    for dp, score in zip(datapoints, scores):
+        dp['score'] = score
 
     # Sort descending by score
     datapoints.sort(key=lambda x: x.get('score', 0), reverse=True)
@@ -379,14 +380,14 @@ def _direct_chunk_fallback(query, root_terms, query_tokens, max_nodes):
         if config.DEBUG_VERBOSE:
             print(f"    (Direct chunk fallback error: {e})")
 
+    # Score with batched ranker
     from retrieval.ranking import get_ranker
     ranker = get_ranker()
-    query_entities = []  # In fallback we don't have analysis entities; pass empty list
-    for dp in datapoints:
-        dp['score'] = ranker.score(query, dp, query_entities, None)
-    datapoints.sort(key=lambda x: x.get('score', 0), reverse=True)
+    scores = ranker.batch_score(query, datapoints, [], None)
+    for dp, score in zip(datapoints, scores):
+        dp["score"] = score
+    datapoints.sort(key=lambda x: x.get("score", 0), reverse=True)
     return datapoints[:max_nodes]
-
 
 def get_chunks_for_datapoints(selected_datapoints):
     """

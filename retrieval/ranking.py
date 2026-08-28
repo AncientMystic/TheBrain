@@ -37,6 +37,57 @@ class LinearRanker:
                 score += self.weights[key] * features[i]
         return score
 
+    def batch_score(self, query, datapoints, query_entities, reranker=None):
+        """
+        Score multiple datapoints efficiently by batching embeddings.
+        Returns list of scores aligned with datapoints.
+        """
+        from core.embeddings import get_embeddings_batch
+        import numpy as np
+        from retrieval.features import query_overlap, rare_term_boost, graph_proximity, \
+            entity_salience, doc_relevance, datapoint_type_weight, confidence_feature
+
+        # Collect all texts to embed: query + each datapoint text
+        texts = [query] + [dp.get('text', '') or '' for dp in datapoints]
+        embeddings = get_embeddings_batch(texts, batch_size=config.EMBEDDING_BATCH_SIZE)
+        q_emb = embeddings[0] if embeddings else None
+        dp_embs = embeddings[1:] if len(embeddings) > 1 else [None] * len(datapoints)
+
+        scores = []
+        for dp, dp_emb in zip(datapoints, dp_embs):
+            text = dp.get('text', '') or ''
+            features = []
+            # 1. query_overlap
+            features.append(query_overlap(query, text))
+            # 2. rare_term_boost
+            features.append(rare_term_boost(query, text))
+            # 3. semantic_similarity (use precomputed embeddings)
+            if q_emb is not None and dp_emb is not None:
+                q = np.array(q_emb, dtype=np.float32)
+                d = np.array(dp_emb, dtype=np.float32)
+                sim = float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
+                features.append(sim)
+            else:
+                features.append(0.0)
+            # 4. graph_proximity
+            features.append(graph_proximity(dp, query_entities))
+            # 5. entity_salience
+            features.append(entity_salience(dp))
+            # 6. doc_relevance
+            features.append(doc_relevance(dp, reranker))
+            # 7. type_weight
+            features.append(datapoint_type_weight(dp.get('type')))
+            # 8. confidence
+            features.append(confidence_feature(dp))
+
+            keys = list(self.weights.keys())
+            score = 0.0
+            for i, key in enumerate(keys):
+                if i < len(features):
+                    score += self.weights[key] * features[i]
+            scores.append(score)
+        return scores
+
 
 class FallbackRanker:
     """Heuristic fallback similar to original but slightly improved."""
