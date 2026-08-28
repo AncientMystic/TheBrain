@@ -19,8 +19,11 @@ class ValidationQueue:
         self.results = []
         self.lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._next_id = 0
 
     def put(self, item):
+        self._next_id += 1
+        item['_item_id'] = self._next_id
         self.queue.put(item)
 
     def start(self):
@@ -85,8 +88,59 @@ class ValidationQueue:
                 self.results.extend(batch)
             return
 
+        # Merge original metadata (_chunk_idx, _category, _item_id) into validated items
+        # because the LLM may not preserve them.
+        merged = []
+        for i, item in enumerate(validated):
+            if not isinstance(item, dict):
+                item = {}
+            # Copy from corresponding original batch item
+            if i < len(batch) and isinstance(batch[i], dict):
+                item["_chunk_idx"] = batch[i].get("_chunk_idx")
+                item["_category"] = batch[i].get("_category")
+                item["_item_id"] = batch[i].get("_item_id")
+            merged.append(item)
+
+        # If LLM returned fewer items than batch, keep remaining originals unchanged
+        if len(validated) < len(batch):
+            merged.extend(batch[len(validated):])
+
+        # Re-clean each item using its category-specific cleaner before storing
+        from extraction.cleaners import (
+            _clean_facts, _clean_entities, _clean_people, _clean_locations,
+            _clean_dates, _clean_events, _clean_discoveries, _clean_gems
+        )
+        clean_map = {
+            'facts': _clean_facts,
+            'entities': _clean_entities,
+            'people': _clean_people,
+            'locations': _clean_locations,
+            'dates': _clean_dates,
+            'events': _clean_events,
+            'discoveries': _clean_discoveries,
+            'gems': _clean_gems,
+        }
+        final_items = []
+        for item in merged:
+            if not isinstance(item, dict):
+                continue
+            cat = item.get('_category')
+            if cat in clean_map:
+                cleaned_list = clean_map[cat]([item])
+                if cleaned_list:
+                    cleaned_item = cleaned_list[0]
+                    # Remove internal metadata that should not be stored
+                    for key in ('_item_id', '_chunk_idx', '_category'):
+                        cleaned_item.pop(key, None)
+                    final_items.append(cleaned_item)
+            else:
+                # Unknown category: keep original but remove metadata
+                for key in ('_item_id', '_chunk_idx', '_category'):
+                    item.pop(key, None)
+                final_items.append(item)
+
         with self.lock:
-            self.results.extend(validated)
+            self.results.extend(final_items)
 
     def _build_prompt(self, batch):
         import json

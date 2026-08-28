@@ -86,49 +86,49 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     all_names = []
     name_type_pairs = []
     for fact in extracted_data.get("facts", []):
-        name = fact.get("fact_text")
+        name = _safe_str(fact.get("fact_text"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("FACT", name, fact))
     for ent in extracted_data.get("entities", []):
-        name = ent.get("entity_name")
+        name = _safe_str(ent.get("entity_name"))
         if name:
             all_names.append(name)
-            name_type_pairs.append((ent.get("entity_type", "ENTITY"), name, ent))
+            name_type_pairs.append((_safe_str(ent.get("entity_type", "ENTITY")), name, ent))
     for person in extracted_data.get("people", []):
-        name = person.get("person_name")
+        name = _safe_str(person.get("person_name"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("PERSON", name, person))
     for loc in extracted_data.get("locations", []):
-        name = loc.get("location_name")
+        name = _safe_str(loc.get("location_name"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("LOCATION", name, loc))
     for date in extracted_data.get("dates", []):
-        name = date.get("date_text")
+        name = _safe_str(date.get("date_text"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("DATE", name, date))
     for event in extracted_data.get("events", []):
-        name = event.get("event_name")
+        name = _safe_str(event.get("event_name"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("EVENT", name, event))
     for disc in extracted_data.get("discoveries", []):
-        name = disc.get("discovery_name")
+        name = _safe_str(disc.get("discovery_name"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("DISCOVERY", name, disc))
     for gem in extracted_data.get("gems", []):
-        name = gem.get("gem_text")
+        name = _safe_str(gem.get("gem_text"))
         if name:
             all_names.append(name)
             name_type_pairs.append(("GEM", name, gem))
 
     for rel in extracted_data.get("relationships", []):
-        src = rel.get("source_node")
-        tgt = rel.get("target_node")
+        src = _safe_str(rel.get("source_node"))
+        tgt = _safe_str(rel.get("target_node"))
         if src:
             all_names.append(src)
         if tgt:
@@ -156,6 +156,9 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
 
     def get_or_create_global_node(node_type, name, attributes=None):
         nonlocal cache_dirty
+        name = _safe_str(name)
+        if not name:
+            return None
         key = (node_type, normalize_name(name))
         if key in local_to_global:
             return local_to_global[key]
@@ -167,7 +170,12 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             # Update aliases if new name not in aliases
             cur.execute("SELECT aliases_json FROM global_nodes WHERE global_node_id=?", (exact_match_map[exact_key],))
             row = cur.fetchone()
-            aliases = json.loads(row[0]) if row and row[0] else []
+            aliases = []
+            if row and row[0]:
+                try:
+                    aliases = json.loads(row[0])
+                except (json.JSONDecodeError, TypeError):
+                    aliases = []
             if name not in aliases:
                 aliases.append(name)
                 cur.execute("UPDATE global_nodes SET aliases_json=? WHERE global_node_id=?", (json.dumps(aliases), exact_match_map[exact_key]))
@@ -180,7 +188,12 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             local_to_global[key] = match_id
             cur.execute("SELECT aliases_json FROM global_nodes WHERE global_node_id=?", (match_id,))
             row = cur.fetchone()
-            aliases = json.loads(row[0]) if row and row[0] else []
+            aliases = []
+            if row and row[0]:
+                try:
+                    aliases = json.loads(row[0])
+                except (json.JSONDecodeError, TypeError):
+                    aliases = []
             if name not in aliases:
                 aliases.append(name)
                 cur.execute("UPDATE global_nodes SET aliases_json=? WHERE global_node_id=?", (json.dumps(aliases), match_id))
@@ -246,7 +259,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
 
     keywords = set()
     for ent in extracted_data.get("entities", []):
-        kw = normalize_name(ent.get("entity_name"))
+        kw = normalize_name(_safe_str(ent.get("entity_name")))
         if kw:
             keywords.add(kw)
             if getattr(config, "ENABLE_TEMPORAL_KEYWORDS", False):

@@ -5,7 +5,7 @@ from core.text_utils import normalise_text
 
 def normalize_name(name: str) -> str:
     import re
-    name = normalise_text(name).lower()
+    name = normalise_text(name or "").lower()
     name = re.sub(r'[^\w\s]', '', name)
     return name
 
@@ -46,36 +46,6 @@ def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict
 
     # 3. Embedding similarity (if provided)
     if name_embedding is not None:
-        if existing_emb_matrix is not None and existing_emb_ids is not None:
-            # Vectorized path
-            type_rows = []
-            row = 0
-            for node in global_nodes:
-                if node.get("embedding") is not None:
-                    if node["node_type"] == node_type:
-                        type_rows.append(row)
-                    row += 1
-
-            if type_rows:
-                subset_matrix = existing_emb_matrix[type_rows]
-                subset_ids = [existing_emb_ids[i] for i in type_rows]
-
-                name_vec = np.array(name_embedding, dtype=np.float32)
-                name_norm = np.linalg.norm(name_vec)
-                if name_norm > 0:
-                    name_vec = name_vec / name_norm
-
-                    norms = np.linalg.norm(subset_matrix, axis=1, keepdims=True)
-                    norms[norms == 0] = 1e-8
-                    normalized = subset_matrix / norms
-
-                    sims = np.dot(normalized, name_vec)
-                    best_idx = int(np.argmax(sims))
-                    best_sim = float(sims[best_idx])
-                    if best_sim >= threshold:
-                        return subset_ids[best_idx]
-
-        # Fallback loop (also used when vectorized unavailable)
         best_sim = 0.0
         best_id_emb = None
         for node in global_nodes:

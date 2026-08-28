@@ -56,8 +56,8 @@ class TopicShiftModelDetector:
 
     def _get_embedding(self, text):
         if callable(self.embed_fn):
-            if isinstance(self.embed_fn, type(get_local_embedder())):
-                return self.embed_fn([text])[0]
+            if self.embedder.available:
+                return self.embedder.encode([text])[0]
             else:
                 return self.embed_fn(text)
         return None

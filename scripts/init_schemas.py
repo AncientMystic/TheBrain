@@ -134,6 +134,12 @@ def init_key_facts_db():
             VALUES (new.fact_id, new.fact_text, new.canonical_value, new.source_span);
         END;
     """)
+    # Backfill existing rows into FTS (only if table already had data before triggers existed)
+    cur.execute("""
+        INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+        SELECT fact_id, fact_text, canonical_value, source_span FROM key_facts
+        WHERE fact_id NOT IN (SELECT rowid FROM key_facts_fts);
+    """)
 
     for table, col in [("key_facts","doc_hash"),("key_facts","fact_type"),("entities","doc_hash"),("entities","entity_type"),
                        ("people","doc_hash"),("people","normalized_name"),("locations","doc_hash"),("locations","normalized_place"),
@@ -249,6 +255,11 @@ def init_external_graph_db():
             INSERT INTO global_nodes_fts(rowid, canonical_name, node_type)
             VALUES (new.global_node_id, new.canonical_name, new.node_type);
         END;
+    """)
+    cur.execute("""
+        INSERT INTO global_nodes_fts(rowid, canonical_name, node_type)
+        SELECT global_node_id, canonical_name, node_type FROM global_nodes
+        WHERE global_node_id NOT IN (SELECT rowid FROM global_nodes_fts);
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_global_nodes_name ON global_nodes(canonical_name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_global_nodes_type ON global_nodes(node_type)")

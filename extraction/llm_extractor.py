@@ -763,11 +763,27 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                         item_copy["_category"] = key
                         vq.put(item_copy)
         validated_results = vq.wait_and_get_results()
+        clean_map = {
+            'facts': _clean_facts,
+            'entities': _clean_entities,
+            'people': _clean_people,
+            'locations': _clean_locations,
+            'dates': _clean_dates,
+            'events': _clean_events,
+            'discoveries': _clean_discoveries,
+            'gems': _clean_gems,
+        }
         for item in validated_results:
             if isinstance(item, dict) and "_chunk_idx" in item and "_category" in item:
                 idx = item.pop("_chunk_idx")
                 cat = item.pop("_category")
                 if 0 <= idx < len(all_results):
-                    all_results[idx].setdefault(cat, [])
-                    all_results[idx][cat].append(item)
+                    cleaner = clean_map.get(cat)
+                    if cleaner:
+                        cleaned_items = cleaner([item])
+                        if cleaned_items:
+                            all_results[idx].setdefault(cat, []).append(cleaned_items[0])
+                    else:
+                        # If category not recognised, still append after removing metadata
+                        all_results[idx].setdefault(cat, []).append(item)
     return all_results

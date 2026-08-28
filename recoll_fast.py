@@ -233,6 +233,8 @@ def process_recoll_fast(keyword: str, max_results: int = None, preview_chars: in
     finally:
         cleaners_mod.RELAXED_MODE = False
 
+    doc_hash_to_name = {entry[0]: entry[2] for entry in preview_entries}
+
     # Phase 3b: Rerank extracted facts against pseudo-document title
     if getattr(config, "RERANKER_ENABLED", True):
         try:
@@ -250,7 +252,6 @@ def process_recoll_fast(keyword: str, max_results: int = None, preview_chars: in
 
     # Phase 4: Store extracted knowledge
     print("Storing extracted knowledge...")
-    doc_hash_to_name = {entry[0]: entry[2] for entry in preview_entries}
 
     conn_facts = db.db_connect("key_facts")
     cur_facts = conn_facts.cursor()

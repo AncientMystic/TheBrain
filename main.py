@@ -155,7 +155,7 @@ def process_file(filepath, tracker, logic_context=""):
                     all_extracted[key].extend(chunk_data[key])
 
         print("  Validating and deduplicating...")
-        validated_facts = [f for f in all_extracted["facts"] if f.get("source_span") and f.get("confidence",0) >= 0.5]
+        validated_facts = [f for f in all_extracted["facts"] if isinstance(f, dict) and f.get("source_span") and f.get("confidence",0) >= 0.5]
         all_extracted["facts"] = deduplicate_list(validated_facts, key_func=lambda f: normalize_key(f.get("fact_text","")))
 
         from reasoning.verification_manager import VerificationManager
