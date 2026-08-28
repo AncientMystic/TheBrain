@@ -12,6 +12,7 @@ import logging
 from typing import List, Dict, Optional
 
 import config
+from core import db
 from reasoning.verify import (
     verify_symstep,
     verify_vericot,
@@ -129,7 +130,52 @@ class VerificationManager:
         fact["verification_layers"] = layers
         fact["confidence_final"] = final_conf
         fact["verified_by"] = "VerificationManager"
+
+        # Adjust confidence based on trusted standards
+        try:
+            from core.embeddings import get_embedding
+            from core.fact_normalizer import normalize_name
+            fact_emb = get_embedding(fact.get("fact_text", ""))
+            if fact_emb is not None:
+                conn = db.db_connect("verification_standards")
+                cur = conn.cursor()
+                cur.execute("SELECT statement, negation, confidence FROM verified_standards WHERE truth_status IN ('admin_claim','verified_true')")
+                standards = cur.fetchall()
+                conn.close()
+                if standards:
+                    import numpy as np
+                    fact_vec = np.array(fact_emb, dtype=np.float32)
+                    fact_norm = np.linalg.norm(fact_vec)
+                    best_sim = 0.0
+                    best_neg = 0
+                    best_conf = 1.0
+                    for std in standards:
+                        std_emb = get_embedding(std[0])
+                        if std_emb is None:
+                            continue
+                        std_vec = np.array(std_emb, dtype=np.float32)
+                        std_norm = np.linalg.norm(std_vec)
+                        if std_norm == 0 or fact_norm == 0:
+                            continue
+                        sim = float(np.dot(fact_vec, std_vec) / (fact_norm * std_norm))
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_neg = std[1]
+                            best_conf = std[2] if std[2] is not None else 1.0
+                    if best_sim > 0.9:
+                        if best_neg == (fact.get("negation", 0) or 0):
+                            fact["confidence_final"] = max(final_conf, 0.9)
+                            fact["verification_status"] = "verified"
+                            fact["verified_by"] = "standards_match"
+                        else:
+                            fact["confidence_final"] = min(final_conf, 0.3)
+                            fact["verification_status"] = "disputed"
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Standards calibration error: {e})")
+
         return fact
+
 
     def verify_batch(self, facts: List[Dict]) -> List[Dict]:
         self.accepted_facts = []

@@ -5,6 +5,7 @@ import time
 import traceback
 
 import config
+from core.vector_store import ExactVectorStore
 from core.llm import call_model_json
 
 
@@ -21,10 +22,18 @@ class ValidationQueue:
         self._stop_event = threading.Event()
         self._next_id = 0
 
-    def put(self, item):
+    def put(self, item, timeout=1.0):
+        if item is None:  # sentinel for shutdown
+            self.queue.put(None)
+            return
         self._next_id += 1
         item['_item_id'] = self._next_id
-        self.queue.put(item)
+        try:
+            self.queue.put(item, timeout=timeout)
+        except queue.Full:
+            # Fallback: process synchronously
+            print("    (Validation queue full, processing item synchronously)")
+            self._process_batch([item])
 
     def start(self):
         for _ in range(self.workers):
@@ -69,7 +78,7 @@ class ValidationQueue:
                 endpoint_type=config.VALIDATION_MODEL_GROUP,
             )
             try:
-                resp = future.result(timeout=240)
+                resp = future.result(timeout=config.VALIDATION_TIMEOUT)
             except concurrent.futures.TimeoutError:
                 print("    (Validation batch timed out; skipping validation)")
                 resp = None
@@ -120,6 +129,7 @@ class ValidationQueue:
             'discoveries': _clean_discoveries,
             'gems': _clean_gems,
         }
+        from core.schema_validation import validate_and_coerce
         final_items = []
         for item in merged:
             if not isinstance(item, dict):
@@ -129,10 +139,13 @@ class ValidationQueue:
                 cleaned_list = clean_map[cat]([item])
                 if cleaned_list:
                     cleaned_item = cleaned_list[0]
-                    # Remove internal metadata that should not be stored
-                    for key in ('_item_id', '_chunk_idx', '_category'):
-                        cleaned_item.pop(key, None)
-                    final_items.append(cleaned_item)
+                    # Apply strict schema validation before removing metadata
+                    validated_item = validate_and_coerce(cat, cleaned_item)
+                    if validated_item is not None:
+                        # Remove internal metadata that should not be stored
+                        for key in ('_item_id', '_chunk_idx', '_category'):
+                            validated_item.pop(key, None)
+                        final_items.append(validated_item)
             else:
                 # Unknown category: keep original but remove metadata
                 for key in ('_item_id', '_chunk_idx', '_category'):
@@ -144,11 +157,31 @@ class ValidationQueue:
 
     def _build_prompt(self, batch):
         import json
-        items_str = json.dumps(batch, indent=2, default=str)
+        # Attempt to fetch source excerpt for context
+        items_with_excerpt = []
+        for item in batch:
+            item_copy = dict(item)
+            chunk_idx = item_copy.get('_chunk_idx')
+            if chunk_idx is not None:
+                try:
+                    from core import db
+                    conn = db.db_connect("index")
+                    cur = conn.cursor()
+                    cur.execute("SELECT chunk_text FROM document_chunks WHERE chunk_id=?", (chunk_idx,))
+                    row = cur.fetchone()
+                    conn.close()
+                    if row:
+                        item_copy['_source_excerpt'] = row['chunk_text'][:500]
+                except Exception:
+                    pass
+            items_with_excerpt.append(item_copy)
+
+        items_str = json.dumps(items_with_excerpt, indent=2, default=str)
         prompt = f"""You are a meticulous validation agent.
-Given the following extracted items and their source chunks, verify each item.
+Given the following extracted items and their source excerpts, verify each item.
 Correct any inaccuracies, remove unsupported claims, and assign a final confidence (0-1).
 Return JSON with key "validated_items" as a list of objects (same structure as input).
+Do not include the '_source_excerpt' key in the output.
 
 Items:
 {items_str}
@@ -161,9 +194,9 @@ Return only JSON.
         """Signal workers to finish after queue is empty and return aggregated results."""
         # Wait for queue to drain
         self.queue.join()
-        # Send sentinel None to each worker to stop
+        # Send sentinel None to each worker using raw queue.put to avoid our custom put
         for _ in self._workers:
-            self.queue.put(None)
+            self.queue.put(None, timeout=1.0)  # raw put with timeout
         for t in self._workers:
             t.join(timeout=30)
         return self.results

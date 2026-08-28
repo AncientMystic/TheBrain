@@ -71,6 +71,11 @@ def _is_redundant_span(span, text):
     if not span_tokens or not text_tokens:
         return False
     overlap = len(span_tokens & text_tokens) / max(len(span_tokens), len(text_tokens))
+    # Relaxation: only treat as redundant if span is very long and overlap > 0.95
+    # (i.e., almost identical). This allows long spans that contain some extra wording.
+    if len(span_norm.split()) > 10:
+        return overlap > 0.95
+    # For short spans, keep stricter threshold to avoid verbatim copies
     return overlap > 0.8
 
 def _clean_facts(facts):

@@ -13,3 +13,4 @@ fuzzywuzzy
 onnxruntime
 huggingface_hub
 transformers
+scikit-learn

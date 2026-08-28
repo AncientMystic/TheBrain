@@ -61,7 +61,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://localhost:1234/v1")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "lfm2.5-vl-3b-absolute-heresy-i1:2")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "text-embedding-mxbai-embed-large-v1:2")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -160,12 +160,14 @@ OCR_LANG = "eng"  # OCR language(s), e.g., "eng+spa"
 TITLE_PAGE_DPI = 100
 TITLE_PAGE_COUNT = 3
 MIN_TEXT_CHARS_FOR_OCR_SKIP = 200
+OCR_BATCH_SIZE = int(os.environ.get("OCR_BATCH_SIZE", "64"))  # Pages per OCR batch
 
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 200
 MAX_CHUNKS_PER_LLM_CALL = LLM_BATCH_CHUNKS
 
 EMBEDDING_BATCH_SIZE = int(os.environ.get('EMBEDDING_BATCH_SIZE', '32'))
+MAX_EMBEDDING_TEXT_LENGTH = int(os.environ.get('MAX_EMBEDDING_TEXT_LENGTH', '8000'))
 
 MAX_TOPICS_PER_KEYWORD = 8
 WEAK_DOC_COUNT = 3
@@ -237,7 +239,7 @@ EMBEDDING_BATCH_SIZE = 128             # increase for better throughput
 # --- Optional model roles (leave empty to use default endpoints) ---
 SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "http://localhost:1234/v1")
 SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "lfm2-350m-heretic-i1")
-SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "http://10.0.0.33:1234/v1")
+SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "")
 SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "lfm2-350m-heretic-i1")
 
 SMALL_MODEL_ENDPOINT = None  # filled dynamically
@@ -410,6 +412,12 @@ REPORT_COHERENCE_PASS = True   # Run final coherence check on deep research repo
 
 # Optional dynamic endpoint balancing (default False)
 USE_DYNAMIC_ENDPOINT_BALANCING = False
+USE_PRIME_EVEN_GATE = True
+
+USE_HYPERBOLIC_RETRIEVAL = True
+USE_GATED_VERIFICATION = True
+
+BACKGROUND_MAINTENANCE = os.environ.get("BACKGROUND_MAINTENANCE", "false").lower() == "true"
 
 # --- Recoll integration ---
 USE_RECOLL = os.environ.get("USE_RECOLL", "false").lower() == "true"
@@ -435,14 +443,14 @@ SMALL_MODEL_ENDPOINT_2 = None
 # Dedicated chat model (optional)
 CHAT_MODEL_ENDPOINT = None
 
+VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 # Async validation queue (small models extract, large models validate)
 ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
 VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "5"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "2"))
-VALIDATION_MODEL_GROUP
-VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "120"))
- = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
+VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
+VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "180"))
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
 
 # --- Phase 3 Settings ---

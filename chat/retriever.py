@@ -9,32 +9,20 @@ from logic.retrieve import retrieve_logic_modules
 from memory.retrieve import retrieve_memories
 import config
 
-_chunk_matrix_cache = {}
-_chunk_matrix_cache_ttl = 300  # seconds
+_vector_store_cache = {}
+_vector_store_cache_ttl = 300  # seconds
 
-def _get_chunk_matrix(model):
-    """Return cached (matrix, rows) for a given embedding model."""
+def _get_vector_store(model):
+    """Return an ExactVectorStore for chunk embeddings, cached."""
     now = time.time()
-    if model in _chunk_matrix_cache:
-        entry = _chunk_matrix_cache[model]
-        if now - entry["ts"] < _chunk_matrix_cache_ttl:
-            return entry["matrix"], entry["rows"]
-
-    conn = db.db_connect("embeddings")
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT chunk_id, doc_hash, chunk_text, embedding FROM chunk_embeddings WHERE model=?",
-        (model,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        return None, []
-
-    matrix = np.vstack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
-    _chunk_matrix_cache[model] = {"matrix": matrix, "rows": rows, "ts": now}
-    return matrix, rows
+    if model in _vector_store_cache:
+        entry = _vector_store_cache[model]
+        if now - entry["ts"] < _vector_store_cache_ttl:
+            return entry["store"]
+    from core.vector_store import ExactVectorStore
+    store = ExactVectorStore(config.EMBEDDINGS_DB_FILE, "chunk_embeddings", "chunk_id", "embedding")
+    _vector_store_cache[model] = {"store": store, "ts": now}
+    return store
 
 from fuzzywuzzy import fuzz
 
@@ -53,7 +41,7 @@ def _cache_facts(key, facts, ttl=300):
 
 
 
-def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
+def retrieve_from_graph(query_analysis, top_k=20, max_depth=2, debug=False):
     keywords = query_analysis.get("keywords", [])
     entities = query_analysis.get("entities", [])
     facts = []
@@ -168,10 +156,33 @@ def retrieve_from_graph(query_analysis, top_k=20, max_depth=2):
             if config.DEBUG_VERBOSE:
                 print(f"    (Recoll fallback error: {e})")
 
-    return (unique_facts + recoll_facts)[:top_k]
+    # Weighted RRF fusion of graph facts, vector chunks, and recoll facts
+    if debug:
+        print(f"  Graph facts: {len(unique_facts)}, Recoll facts: {len(recoll_facts)}")
+    results_by_stage = {
+        "graph": unique_facts,
+        "lexical": recoll_facts,
+    }
+    try:
+        from core.retrieval_fusion import weighted_rrf
+        fused_ids = weighted_rrf(results_by_stage)
+        fused_map = {str(f.get('fact_id')) if f.get('fact_id') else str(i): f for i, f in enumerate(unique_facts + recoll_facts)}
+        fused_facts = []
+        for fid, score in fused_ids:
+            f = fused_map.get(fid)
+            if f:
+                f['_fused_score'] = score
+                fused_facts.append(f)
+        if fused_facts:
+            unique_facts = fused_facts[:top_k]
+    except Exception as e:
+        if debug:
+            print(f"  WRRF fusion error: {e}")
+
+    return unique_facts[:top_k]
 
 
-def fallback_to_chunks(query, top_k=None):
+def fallback_to_chunks(query, top_k=None, debug=False):
     """Hybrid chunk retrieval: ranked keyword matches + embedding similarity."""
     if top_k is None:
         top_k = config.CHAT_TOP_K_CHUNKS
@@ -231,33 +242,33 @@ def fallback_to_chunks(query, top_k=None):
             if config.DEBUG_VERBOSE:
                 print(f"    (Keyword chunk fallback error: {e})")
 
-    # Embedding similarity hybrid, using precomputed matrix when possible
+    # Embedding similarity using ExactVectorStore
     model = config.EMBEDDING_ENDPOINTS[0]["model"]
     q_emb = get_embedding(query, model=model)
     if q_emb:
         try:
-            matrix, rows = _get_chunk_matrix(model)
-            if matrix is not None and rows:
-                q = np.array(q_emb, dtype=np.float32)
-                q_norm = np.linalg.norm(q)
-                norms = np.linalg.norm(matrix, axis=1)
-                norms[norms == 0] = 1e-8
-                sims = matrix @ q / (norms * (q_norm + 1e-8))
-
-                for row, sim in zip(rows, sims):
-                    chunk_id = row["chunk_id"]
-                    doc_hash = row["doc_hash"]
-                    chunk_text = row["chunk_text"]
-                    if chunk_id not in seen:
-                        seen.add(chunk_id)
-                        results.append((float(sim) * 0.5, chunk_id, doc_hash, chunk_text))
-                    else:
-                        for idx, item in enumerate(results):
-                            if item[1] == chunk_id:
-                                old_score, _, _, _ = item
-                                combined = old_score + float(sim) * 0.5
-                                results[idx] = (combined, chunk_id, doc_hash, chunk_text)
-                                break
+            store = _get_vector_store(model)
+            if store.embeddings is not None:
+                results_all = store.search(q_emb, top_k=config.CHAT_TOP_K_CHUNKS * 5)  # get more then trim
+                # Fetch chunk details from DB
+                if results_all:
+                    conn = db.db_connect("index")
+                    cur = conn.cursor()
+                    ids = [id for id, _ in results_all]
+                    placeholders = ",".join("?" for _ in ids)
+                    cur.execute(
+                        f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})",
+                        ids,
+                    )
+                    rows = cur.fetchall()
+                    conn.close()
+                    # Map id to row
+                    id_to_row = {row["chunk_id"]: row for row in rows}
+                    for cid, sim in results_all:
+                        if cid in id_to_row and cid not in seen:
+                            seen.add(cid)
+                            row = id_to_row[cid]
+                            results.append((float(sim) * 0.5, cid, row["doc_hash"], row["chunk_text"]))
         except Exception as e:
             if config.DEBUG_VERBOSE:
                 print(f"    (Embedding fallback error: {e})")
@@ -271,6 +282,8 @@ def fallback_to_chunks(query, top_k=None):
         seen_ids.add(chunk_id)
         final.append((score, chunk_id, doc_hash, text))
     final.sort(key=lambda x: x[0], reverse=True)
+    if debug:
+        print(f"  Vector chunks: {len(final)}")
     return final[:top_k]
 def re_rank_facts(facts, query, top_k=None):
     """Re-rank facts using query token overlap, memory, and logic modules."""

@@ -39,34 +39,29 @@ def ocr_pdf_pages(pdf_path, max_pages=None, dpi=None, title_pages=None, title_dp
     pages_to_process = total_pages if max_pages is None else min(total_pages, max_pages)
     title_pages = min(title_pages, pages_to_process)
 
-    print(f"    (Rendering {pages_to_process} pages, first {title_pages} at high DPI)...", end="", flush=True)
-    images = []
-    for page_num in range(pages_to_process):
-        page = doc[page_num]
-        if page_num < title_pages:
-            pix = page.get_pixmap(dpi=title_dpi)
-        else:
-            pix = page.get_pixmap(dpi=dpi)
-        images.append(pix.tobytes("png"))
-    doc.close()
-    print(" rendered.", end="", flush=True)
-
-    print(" OCR'ing in parallel...", end="", flush=True)
-    full_text = [""] * len(images)
+    print(f"    (Rendering and OCR'ing {pages_to_process} pages in batches of {config.OCR_BATCH_SIZE}...)", flush=True)
     max_workers = min(os.cpu_count() or 4, 8)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {
-            executor.submit(_ocr_page, img_bytes): idx
-            for idx, img_bytes in enumerate(images)
-        }
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            full_text[idx] = future.result()
-    print(" done.", flush=True)
-
+    full_text = []
+    batch_size = getattr(config, "OCR_BATCH_SIZE", 64)
+    for batch_start in range(0, pages_to_process, batch_size):
+        batch_end = min(batch_start + batch_size, pages_to_process)
+        batch_pages = list(range(batch_start, batch_end))
+        images = []
+        for page_num in batch_pages:
+            page = doc[page_num]
+            if page_num < title_pages:
+                pix = page.get_pixmap(dpi=title_dpi)
+            else:
+                pix = page.get_pixmap(dpi=dpi)
+            images.append(pix.tobytes("png"))
+        # OCR batch in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            batch_results = list(executor.map(_ocr_page, images))
+        full_text.extend(batch_results)
+        print(f"    Processed pages {batch_start+1}-{batch_end}", flush=True)
+    doc.close()
     combined = "\n".join(full_text)
     combined = normalise_text(combined)
-    # No truncation to MAX_TEXT_CHARS because we're indexing entire document
     return combined
 
 

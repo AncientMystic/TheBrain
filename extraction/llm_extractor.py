@@ -16,6 +16,7 @@ from extraction.validation_queue import ValidationQueue
 from extraction.rule_annotator import pre_annotate
 from fast_extractor.hybrid_extractor import FastExtractor
 from extraction.cleaners import *
+from core.schema_validation import validate_and_coerce
 
 
 
@@ -286,14 +287,20 @@ def _extract_candidate_texts(annotations):
 
 def _compute_novelty_flags(chunks, chunk_embeddings):
     flags = []
-    processed_embeddings = []
     seen_names = set()
+
+    # Preallocate matrix to avoid quadratic memory blow from vstack.
+    if chunk_embeddings:
+        emb_dim = len(chunk_embeddings[0]) if chunk_embeddings[0] is not None else 0
+    else:
+        emb_dim = 0
+    processed_matrix = np.zeros((len(chunks), emb_dim), dtype=np.float32) if emb_dim else None
+    processed_count = 0
 
     for i, chunk in enumerate(chunks):
         if chunk_embeddings is None or chunk_embeddings[i] is None:
             flags.append(True)
-            if chunk_embeddings and chunk_embeddings[i] is not None:
-                processed_embeddings.append(chunk_embeddings[i])
+            # We cannot compute novelty without embedding; skip storing
             annotations = pre_annotate(chunk)
             for c in _extract_candidate_texts(annotations):
                 seen_names.add(c.lower())
@@ -304,29 +311,31 @@ def _compute_novelty_flags(chunks, chunk_embeddings):
         new_candidates = [c for c in candidates if c.lower() not in seen_names]
 
         max_sim = 0.0
-        if processed_embeddings:
+        if processed_matrix is not None and processed_count > 0:
             cur_emb = np.array(chunk_embeddings[i], dtype=np.float32)
             cur_norm = np.linalg.norm(cur_emb)
             if cur_norm > 0:
-                for prev_emb in processed_embeddings:
-                    prev_emb = np.array(prev_emb, dtype=np.float32)
-                    prev_norm = np.linalg.norm(prev_emb)
-                    if prev_norm > 0:
-                        sim = float(np.dot(cur_emb, prev_emb) / (cur_norm * prev_norm + 1e-8))
-                        if sim > max_sim:
-                            max_sim = sim
+                # Compute cosine similarity with all previous embeddings (only filled rows)
+                sub_matrix = processed_matrix[:processed_count]
+                norms = np.linalg.norm(sub_matrix, axis=1)
+                norms[norms == 0] = 1e-8
+                sims = sub_matrix @ cur_emb / (norms * cur_norm)
+                max_sim = float(np.max(sims)) if sims.size > 0 else 0.0
 
         if config.NOVELTY_ENABLED and i > 0:
             if max_sim >= config.NOVELTY_SIM_THRESHOLD and not new_candidates:
                 flags.append(False)
+                # Do not add this chunk to matrix since skipped
                 continue
             else:
                 flags.append(True)
         else:
             flags.append(True)
 
-        if chunk_embeddings[i] is not None:
-            processed_embeddings.append(chunk_embeddings[i])
+        # Store current embedding in preallocated matrix
+        if processed_matrix is not None:
+            processed_matrix[processed_count] = np.array(chunk_embeddings[i], dtype=np.float32)
+            processed_count += 1
         for c in candidates:
             seen_names.add(c.lower())
 
@@ -537,7 +546,7 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
                     if field in chunk_data:
                         results[i][field] = chunk_data[field]
 
-    # Apply cleaners
+    # Apply cleaners and schema validation
     for i in range(len(results)):
         results[i]["facts"] = _clean_facts(results[i]["facts"])
         results[i]["entities"] = _clean_entities(results[i]["entities"])
@@ -548,6 +557,15 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
         results[i]["events"] = _clean_events(results[i]["events"])
         results[i]["discoveries"] = _clean_discoveries(results[i]["discoveries"])
         results[i]["gems"] = _clean_gems(results[i]["gems"])
+
+        # Strict schema validation: keep only well-formed items
+        for key in ["facts", "entities", "relationships", "people", "locations", "dates", "events", "discoveries", "gems"]:
+            validated = []
+            for item in results[i].get(key, []):
+                v = validate_and_coerce(key, item)
+                if v is not None:
+                    validated.append(v)
+            results[i][key] = validated
 
     return results
 
@@ -642,11 +660,53 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             print(f"    (Fast extractor error: {e}); falling back to full LLM extraction.")
             fast_pre_results = None
 
+    # Gate integration (only if enabled and trained)
+    gate = None
+    gate_features_cache = {}
+    if getattr(config, "USE_PRIME_EVEN_GATE", False):
+        try:
+            from extraction.gate import PrimeEvenGate
+            gate_path = Path(config.BASE_DIR) / "models" / "gate.json"
+            gate = PrimeEvenGate()
+            if gate_path.exists():
+                gate.load(gate_path)
+                print("  (Using trained prime-even gate)")
+            else:
+                print("  (Gate enabled but no trained model found; skipping gate)")
+                gate = None
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Gate init error: {e})")
+            gate = None
+
     selected_items = []
     for i in range(len(chunks)):
-        if flags[i]:
-            pre = fast_pre_results[i] if fast_pre_results else None
+        if not flags[i]:
+            continue
+        pre = fast_pre_results[i] if fast_pre_results else None
+
+        use_full_llm = True
+        if gate is not None and chunk_embeddings is not None and chunk_embeddings[i] is not None:
+            # Compute spectral features using all chunk embeddings (cache with fixed key)
+            if 'all' not in gate_features_cache:
+                from core.spectral import compute_spectral_features
+                emb_matrix = np.array([np.array(e, dtype=np.float32) for e in chunk_embeddings if e is not None])
+                feat = compute_spectral_features(emb_matrix, top_k=22)
+                gate_features_cache['all'] = feat
+            feat = gate_features_cache['all']
+            w = gate.forward(feat)
+            if w < 0.5:
+                use_full_llm = False
+
+        if use_full_llm:
             selected_items.append((i, chunks[i], pre))
+        else:
+            # Use fast extractor results only, mark as gate_skipped (no LLM)
+            all_results[i]["entities"] = pre.get("entities", []) if pre else []
+            all_results[i]["people"] = pre.get("people", []) if pre else []
+            all_results[i]["locations"] = pre.get("locations", []) if pre else []
+            all_results[i]["dates"] = pre.get("dates", []) if pre else []
+            # No facts/relationships from LLM
 
     skipped_count = len(chunks) - len(selected_items)
     if skipped_count > 0:

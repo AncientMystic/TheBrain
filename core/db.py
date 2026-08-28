@@ -1,8 +1,26 @@
 import sqlite3
 import threading
+import time
+from functools import wraps
 from pathlib import Path
 
 import config
+
+def with_retry(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        max_retries = 3
+        delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < max_retries - 1:
+                    time.sleep(delay * (2 ** attempt))
+                    continue
+                raise
+    return wrapper
+
 
 _conn_local = threading.local()
 
@@ -62,6 +80,7 @@ def _make_connection(db_type: str) -> sqlite3.Connection:
     return conn
 
 
+@with_retry
 def db_connect(db_type: str = "index") -> sqlite3.Connection:
     if db_type not in DB_FILES:
         raise ValueError(f"Unknown database type: {db_type}")

@@ -32,13 +32,11 @@ def _get_graph_state(conn, cur):
     if _graph_cache["existing_nodes"] is None:
         cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
         nodes = [dict(row) for row in cur.fetchall()]
-        # If too many nodes, don't cache embeddings to save RAM
         if len(nodes) > getattr(config, "EXTERNAL_GRAPH_CACHE_MAX_NODES", 100000):
             print(f"  (External graph has {len(nodes)} nodes; disabling embedding cache to save RAM)")
             _graph_cache["existing_emb_matrix"] = None
             _graph_cache["existing_emb_ids"] = []
         else:
-            # Build embedding matrix
             existing_embeddings = []
             existing_emb_ids = []
             for node in nodes:
@@ -53,21 +51,28 @@ def _get_graph_state(conn, cur):
             norm_name = normalize_name(node["canonical_name"])
             key = (node["node_type"], norm_name)
             _graph_cache["exact_match_map"][key] = node["global_node_id"]
-
-        existing_embeddings = []
-        existing_emb_ids = []
-        for node in _graph_cache["existing_nodes"]:
-            if node.get("embedding") is not None:
-                existing_embeddings.append(np.frombuffer(node["embedding"], dtype=np.float32))
-                existing_emb_ids.append(node["global_node_id"])
-        _graph_cache["existing_emb_matrix"] = np.stack(existing_embeddings) if existing_embeddings else None
-        _graph_cache["existing_emb_ids"] = existing_emb_ids
     return (
         _graph_cache["existing_nodes"],
         _graph_cache["exact_match_map"],
         _graph_cache["existing_emb_matrix"],
         _graph_cache["existing_emb_ids"],
     )
+
+def _add_node_to_cache(node):
+    """Incrementally update the cache when a new node is added."""
+    if _graph_cache["existing_nodes"] is None:
+        return  # Cache not yet built; will be built on next access
+    _graph_cache["existing_nodes"].append(node)
+    norm_name = normalize_name(node["canonical_name"])
+    key = (node["node_type"], norm_name)
+    _graph_cache["exact_match_map"][key] = node["global_node_id"]
+    if _graph_cache["existing_emb_matrix"] is not None and node.get("embedding") is not None:
+        emb = np.frombuffer(node["embedding"], dtype=np.float32).reshape(1, -1)
+        if _graph_cache["existing_emb_matrix"].shape[0] == 0:
+            _graph_cache["existing_emb_matrix"] = emb
+        else:
+            _graph_cache["existing_emb_matrix"] = np.vstack([_graph_cache["existing_emb_matrix"], emb])
+        _graph_cache["existing_emb_ids"].append(node["global_node_id"])
 
 
 def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
@@ -208,6 +213,15 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             VALUES (?, ?, ?, ?, ?)
         """, (_safe_str(name), _safe_str(node_type), json.dumps([_safe_str(name)]), attrs_json, emb_blob))
         new_id = cur.lastrowid
+        # Incrementally update cache
+        node_dict = {
+            "global_node_id": new_id,
+            "canonical_name": _safe_str(name),
+            "node_type": _safe_str(node_type),
+            "aliases_json": json.dumps([_safe_str(name)]),
+            "embedding": emb_blob,
+        }
+        _add_node_to_cache(node_dict)
         cache_dirty = True
         local_to_global[key] = new_id
         return new_id
@@ -330,10 +344,6 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
 
     conn.commit()
     conn.close()
-    if cache_dirty:
-        # Invalidate only when new nodes were added this document.
-        _graph_cache["existing_nodes"] = None
-        _graph_cache["exact_match_map"] = None
-        _graph_cache["existing_emb_matrix"] = None
-        _graph_cache["existing_emb_ids"] = None
+    # No need to invalidate entire cache; we've updated incrementally.
+    # Leave cache_dirty for potential future use.
     print("  (Graph building complete)")

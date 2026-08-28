@@ -65,7 +65,15 @@ class LinearRanker:
             if q_emb is not None and dp_emb is not None:
                 q = np.array(q_emb, dtype=np.float32)
                 d = np.array(dp_emb, dtype=np.float32)
-                sim = float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
+                if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+                    from core.hyperbolic import exp_map, hyperbolic_distance
+                    q_h = exp_map(q)
+                    d_h = exp_map(d)
+                    dist = hyperbolic_distance(q_h, d_h)
+                    # Convert distance to similarity (inverse, bounded)
+                    sim = float(1.0 / (1.0 + dist))
+                else:
+                    sim = float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
                 features.append(sim)
             else:
                 features.append(0.0)

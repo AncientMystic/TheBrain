@@ -32,7 +32,7 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
     return results
 
 
-def get_embeddings_batch(texts, model=None, batch_size=None):
+def get_embeddings_batch(texts, model=None, batch_size=None, space='euclidean'):
     if model is None:
         model = config.EMBEDDING_ENDPOINTS[0]["model"]
     if batch_size is None:
@@ -47,7 +47,6 @@ def get_embeddings_batch(texts, model=None, batch_size=None):
 
     conn = db.db_connect("embeddings")
     cur = conn.cursor()
-    # Batch cache lookup for efficiency
     BATCH = 500
     for start in range(0, len(texts), BATCH):
         chunk = texts[start:start+BATCH]
@@ -69,6 +68,9 @@ def get_embeddings_batch(texts, model=None, batch_size=None):
     conn.close()
 
     if not uncached_texts:
+        if space == 'hyperbolic':
+            from core.hyperbolic import exp_map
+            result = [exp_map(r) if r is not None else None for r in result]
         return result
 
     batches = [uncached_texts[i:i+batch_size] for i in range(0, len(uncached_texts), batch_size)]
@@ -105,7 +107,16 @@ def get_embeddings_batch(texts, model=None, batch_size=None):
     conn.commit()
     conn.close()
 
+    if space == 'hyperbolic':
+        from core.hyperbolic import exp_map
+        result = [exp_map(r) if r is not None else None for r in result]
     return result
+
+
+def get_embedding(text, model=None, space='euclidean'):
+    result = get_embeddings_batch([text], model=model, space=space)
+    return result[0] if result else None
+
 
 
 def get_embedding(text, model=None):

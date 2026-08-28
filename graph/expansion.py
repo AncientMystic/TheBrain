@@ -60,62 +60,90 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
 
     for depth in range(max_depth):
         new_facts = []
+        # Collect all keywords from current frontier
+        all_keywords = set()
         for fact in current_frontier:
-            # get keywords from fact text and canonical value using stopword-filtered tokens
             from core.text_utils import tokenize, get_bigrams
             text = fact.get("fact_text", "")
             val = fact.get("canonical_value", "")
             combined = text + " " + val
             tokens = tokenize(combined)
             keywords = tokens[:5] + list(get_bigrams(tokens))[:3]
-            conn = db.db_connect("external_graph")
-            cur = conn.cursor()
+            all_keywords.update(keywords)
+            # Also expand via related keywords
             for kw in keywords:
-                # related keywords via co-occurrence
                 for rel_kw, _ in get_related_keywords(kw, min_weight=0.3):
-                    for f in get_facts_by_keyword(rel_kw, limit=20):
-                        if f.get("fact_id") not in seen_ids:
-                            new_facts.append(f)
-                            seen_ids.add(f.get("fact_id"))
-                # direct keyword facts
-                for f in get_facts_by_keyword(kw, limit=20):
-                    if f.get("fact_id") not in seen_ids:
-                        new_facts.append(f)
-                        seen_ids.add(f.get("fact_id"))
+                    all_keywords.add(rel_kw)
 
-            # expand via global graph nodes using same connection
-            from chat.query_analyzer import analyze_query
+        # Batch fetch facts for all keywords
+        if all_keywords:
+            batch_facts = batch_get_facts_by_keywords(list(all_keywords), limit_per_keyword=20)
+            for f in batch_facts:
+                if f.get("fact_id") not in seen_ids:
+                    new_facts.append(f)
+                    seen_ids.add(f.get("fact_id"))
+
+        # Batch expand via global graph nodes
+        entity_names = set()
+        for fact in current_frontier:
+            text = fact.get("fact_text", "")
             if text not in analysis_cache:
                 analysis_cache[text] = analyze_query(text)
             analysis = analysis_cache[text]
             for ent in analysis.get("entities", []):
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
-                if not ent_name:
-                    continue
-                # Use cached connection already open; just execute
+                if ent_name:
+                    entity_names.add(ent_name)
+
+        if entity_names:
+            # Batch lookup global_node_ids for all entity names (by canonical_name or alias)
+            conn = db.db_connect("external_graph")
+            cur = conn.cursor()
+            node_ids = set()
+            placeholders = ",".join("?" for _ in entity_names)
+            # First by canonical_name
+            cur.execute(f"SELECT global_node_id FROM global_nodes WHERE canonical_name IN ({placeholders})", list(entity_names))
+            node_ids.update(row[0] for row in cur.fetchall())
+            # Then by aliases using EXISTS
+            for ent_name in entity_names:
                 cur.execute("""
                     SELECT global_node_id FROM global_nodes
-                    WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value=?)
-                    LIMIT 1
-                """, (ent_name, ent_name))
-                row = cur.fetchone()
-                if row:
-                    gid = row[0]
-                    edges = get_global_node_edges(gid)
+                    WHERE EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?)
+                """, (ent_name,))
+                node_ids.update(row[0] for row in cur.fetchall())
+            conn.close()
+
+            # Batch get edges for all node_ids
+            if node_ids:
+                edges_by_node = batch_get_global_node_edges(list(node_ids))
+                all_other_gids = set()
+                for gid, edges in edges_by_node.items():
                     for edge in edges:
                         other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
-                        cur.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (other_gid,))
-                        other = cur.fetchone()
-                        if other:
-                            for f in get_facts_by_keyword(other[0], limit=20):
-                                if f.get("fact_id") not in seen_ids:
-                                    new_facts.append(f)
-                                    seen_ids.add(f.get("fact_id"))
-            conn.close()
+                        all_other_gids.add(other_gid)
+
+                # Batch get canonical names for other nodes
+                if all_other_gids:
+                    conn = db.db_connect("external_graph")
+                    cur = conn.cursor()
+                    placeholders = ",".join("?" for _ in all_other_gids)
+                    cur.execute(f"SELECT global_node_id, canonical_name FROM global_nodes WHERE global_node_id IN ({placeholders})", list(all_other_gids))
+                    name_map = {row[0]: row[1] for row in cur.fetchall()}
+                    conn.close()
+
+                    # Batch fetch facts for those node names
+                    node_names = list(name_map.values())
+                    if node_names:
+                        batch_facts = batch_get_facts_by_keywords(node_names, limit_per_keyword=20)
+                        for f in batch_facts:
+                            if f.get("fact_id") not in seen_ids:
+                                new_facts.append(f)
+                                seen_ids.add(f.get("fact_id"))
+
         if not new_facts:
             break
         all_facts.extend(new_facts)
-        current_frontier = new_facts[:50]  # limit next frontier
+        current_frontier = new_facts[:50]
         if len(all_facts) >= max_facts:
             break
     return all_facts[:max_facts]
@@ -130,6 +158,30 @@ def embed_based_retrieval(query, top_k=20):
     chunks = fallback_to_chunks(query, top_k=top_k)
     return chunks
 
+
+def batch_get_facts_by_keywords(keywords, limit_per_keyword=20):
+    """Retrieve facts for multiple keywords using a single DB query."""
+    if not keywords:
+        return []
+    conn = db.db_connect("key_facts")
+    cur = conn.cursor()
+    # Use OR of LIKE conditions for each keyword
+    likes = []
+    params = []
+    for kw in keywords:
+        likes.append("(f.fact_text LIKE ? OR f.canonical_value LIKE ?)")
+        params.extend([f"%{kw}%", f"%{kw}%"])
+    like_sql = " OR ".join(likes) if likes else "1=0"
+    cur.execute(f"""
+        SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,
+               f.canonical_value, f.source_span, f.confidence
+        FROM key_facts f
+        WHERE {like_sql}
+        LIMIT {limit_per_keyword * len(keywords)}
+    """, params)
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_fact_ids_by_entity(entity_name):
     """Retrieve fact IDs associated with a normalized entity name."""

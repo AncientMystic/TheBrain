@@ -97,20 +97,22 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
                             new_facts.append(f)
                             seen_ids.add(f.get("fact_id"))
 
-        # Keyword expansion (same as before)
+        # Collect all keywords and batch fetch facts
+        all_keywords = set()
         for fact in all_facts[:20]:
             keywords = extract_keywords_from_fact(fact)
+            all_keywords.update(keywords)
             for kw in keywords:
-                related = get_related_keywords(kw, min_weight=0.3)
-                for rel_kw, _ in related:
-                    for f in get_facts_by_keyword(rel_kw):
-                        if f.get("fact_id") not in seen_ids:
-                            new_facts.append(f)
-                            seen_ids.add(f.get("fact_id"))
-                for f in get_facts_by_keyword(kw):
-                    if f.get("fact_id") not in seen_ids:
-                        new_facts.append(f)
-                        seen_ids.add(f.get("fact_id"))
+                for rel_kw, _ in get_related_keywords(kw, min_weight=0.3):
+                    all_keywords.add(rel_kw)
+
+        if all_keywords:
+            from graph.expansion import batch_get_facts_by_keywords
+            batch_facts = batch_get_facts_by_keywords(list(all_keywords), limit_per_keyword=20)
+            for f in batch_facts:
+                if f.get("fact_id") not in seen_ids:
+                    new_facts.append(f)
+                    seen_ids.add(f.get("fact_id"))
 
         if not new_facts:
             break

@@ -515,6 +515,34 @@ def init_all():
     init_reasoning_db()
     init_recoll_log_db()
     init_verification_standards_db()
+    # Verification gate training data table (in reasoning.db)
+    conn = db.db_connect("reasoning")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS verification_gate_training_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_id INTEGER,
+            features BLOB,
+            labels TEXT,   -- JSON object: {"verifier_name": 0/1, ...}
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+    # Create gate training data table (in key_facts.db)
+    conn = db.db_connect("key_facts")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gate_training_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_hash TEXT,
+            features BLOB,
+            label INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
     apply_existing_table_migrations()
     print("All databases ready.")
 

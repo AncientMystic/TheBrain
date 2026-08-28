@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import config
 import hashlib
+from core.logger import get_logger
+logger = get_logger(__name__)
 
 def validate_config():
     """Check basic requirements and optionally progress bar availability."""
@@ -74,12 +76,16 @@ def deduplicate_list(items, key_func):
 
 
 def process_file(filepath, tracker, logic_context=""):
+    import numpy as np
+    import json
     _t0 = time.time()
     file_hash = get_file_hash(filepath)
     if tracker.is_processed(file_hash):
         print(f"Skipping already processed: {filepath.name}")
         return False
     print(f"\n[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
+    logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
+    logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
     try:
         # Check document text cache first
         conn_cache = db.db_connect("index")
@@ -121,32 +127,25 @@ def process_file(filepath, tracker, logic_context=""):
         conn.close()
 
         print("  Generating embeddings...")
-        doc_emb = get_embeddings_batch([text])[0]
-        if doc_emb:
-            blob = sqlite3.Binary(np.array(doc_emb, dtype=np.float32).tobytes())
-            conn_emb = db.db_connect("embeddings")
-            conn_emb.execute("INSERT OR REPLACE INTO document_embeddings (doc_hash, embedding, model) VALUES (?,?,?)",
-                             (file_hash, blob, config.EMBEDDING_MODEL))
-            conn_emb.commit(); conn_emb.close()
         chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
-        conn_emb = db.db_connect("embeddings")
-        cur_emb = conn_emb.cursor()
-        conn_index = db.db_connect("index")
-        cur_index = conn_index.cursor()
-        for i, (chunk_text, emb) in enumerate(zip(chunks, chunk_embs)):
-            if emb:
-                cur_index.execute("SELECT chunk_id FROM document_chunks WHERE doc_hash=? AND chunk_index=?",
-                                  (file_hash, i))
-                row = cur_index.fetchone()
-                if row:
-                    chunk_id = row[0]
-                    blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes())
-                    cur_emb.execute("INSERT OR REPLACE INTO chunk_embeddings (chunk_id, doc_hash, chunk_text, embedding, model) VALUES (?,?,?,?,?)",
-                                    (chunk_id, file_hash, chunk_text, blob, config.EMBEDDING_MODEL))
-        conn_emb.commit(); conn_emb.close(); conn_index.close()
-
+        # Compute document embedding as hyperbolic Frechet mean of chunk embeddings
+        if chunk_embs:
+            valid_embs = [np.array(emb, dtype=np.float32) for emb in chunk_embs if emb is not None]
+            if valid_embs:
+                from core.hyperbolic import exp_map, frechet_mean
+                hyperbolic_points = [exp_map(emb) for emb in valid_embs]
+                doc_emb_hyper = frechet_mean(hyperbolic_points)
+                blob = sqlite3.Binary(doc_emb_hyper.tobytes())
+                conn_emb = db.db_connect("embeddings")
+                conn_emb.execute("INSERT OR REPLACE INTO document_embeddings (doc_hash, embedding, model, embedding_space) VALUES (?,?,?, 'hyperbolic')",
+                                 (file_hash, blob, config.EMBEDDING_MODEL))
+                conn_emb.commit(); conn_emb.close()
         print("  Extracting knowledge via LLM...")
-        chunk_results = extract_from_chunks(chunks, model=None, chunk_embeddings=chunk_embs, logic_context=logic_context)
+        print("  Extracting knowledge via LLM...")
+        from core.metrics import inc_counter, Timer
+        inc_counter('files_processed_total')
+        with Timer('extraction_duration_seconds'):
+            chunk_results = extract_from_chunks(chunks, model=None, chunk_embeddings=chunk_embs, logic_context=logic_context)
         all_extracted = {"facts": [], "entities": [], "relationships": [], "people": [], "locations": [],
                          "dates": [], "events": [], "discoveries": [], "gems": []}
         for chunk_data in chunk_results:
@@ -168,6 +167,72 @@ def process_file(filepath, tracker, logic_context=""):
         all_extracted["events"] = deduplicate_list(all_extracted["events"], key_func=lambda e: normalize_key(e.get("event_name","")))
         all_extracted["discoveries"] = deduplicate_list(all_extracted["discoveries"], key_func=lambda d: normalize_key(d.get("discovery_name","")))
         all_extracted["gems"] = deduplicate_list(all_extracted["gems"], key_func=lambda g: normalize_key(g.get("gem_text","")))
+
+        # Collect gate training data (label based on verified facts)
+        if getattr(config, "USE_PRIME_EVEN_GATE", False):
+            try:
+                from core.spectral import compute_spectral_features
+                import numpy as np
+                if chunk_embs:
+                    emb_matrix = np.array([np.array(e, dtype=np.float32) for e in chunk_embs if e is not None])
+                    if emb_matrix.shape[0] > 0:
+                        feat = compute_spectral_features(emb_matrix, top_k=22)
+                        label = 0
+                        for fact in all_extracted.get("facts", []):
+                            if fact.get("verification_status") in ("verified", "partially_verified"):
+                                label = 1
+                                break
+                        conn_gate = db.db_connect("key_facts")
+                        conn_gate.execute(
+                            "INSERT INTO gate_training_data (chunk_hash, features, label) VALUES (?,?,?)",
+                            (file_hash, sqlite3.Binary(feat.tobytes()), label)
+                        )
+                        conn_gate.commit()
+                        conn_gate.close()
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Gate training data collection error: {e})")
+
+        # Collect verification gate training data
+        if getattr(config, "USE_GATED_VERIFICATION", False):
+            try:
+                import numpy as np
+                import json
+                from core.spectral import compute_spectral_features
+                from core.embeddings import get_embedding
+                from reasoning.verification_gate import VerificationGate
+                # Use the first fact with verification layers as representative
+                for fact in all_extracted.get("facts", []):
+                    if not isinstance(fact, dict):
+                        continue
+                    fact_text = fact.get("fact_text", "")
+                    emb = get_embedding(fact_text)
+                    if emb is None:
+                        continue
+                    features = compute_spectral_features(np.array([emb], dtype=np.float32))
+                    layers = fact.get("verification_layers", [])
+                    if not layers:
+                        continue
+                    # Build a dict of verifier_name -> success (1/0)
+                    label_dict = {}
+                    for v in layers:
+                        layer_name = v.get("layer")
+                        if layer_name:
+                            label_dict[layer_name] = 1 if v.get("verified") else 0
+                    if not label_dict:
+                        continue
+                    # Store features and labels (fact_id is NULL for now)
+                    conn_gate = db.db_connect("reasoning")
+                    conn_gate.execute(
+                        "INSERT INTO verification_gate_training_data (fact_id, features, labels) VALUES (?,?,?)",
+                        (fact.get("fact_id"), sqlite3.Binary(features.tobytes()), json.dumps(label_dict))
+                    )
+                    conn_gate.commit()
+                    conn_gate.close()
+                    break  # only one per document for now
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Verification gate training data collection error: {e})")
 
         print("  Storing key facts...")
         conn_facts = db.db_connect("key_facts")
@@ -333,9 +398,10 @@ def process_file(filepath, tracker, logic_context=""):
                     print(f"    (Statistical keyword extraction error: {e})")
 
         print("  Building hypergraph...")
-        build_hypergraph(file_hash, all_extracted, {})
-        print("  Building external graph...")
-        build_external_graph(file_hash, all_extracted, {})
+        with Timer('graph_build_duration_seconds'):
+            build_hypergraph(file_hash, all_extracted, {})
+            print("  Building external graph...")
+            build_external_graph(file_hash, all_extracted, {})
         print("  Generating summary...")
         summary, key_points = summarize_document(chunks)
         conn_summ = db.db_connect("summaries")
@@ -578,6 +644,7 @@ def main():
     recoll_fast = "--recoll-fast" in sys.argv
     build_recoll_index = "--build-recoll-index" in sys.argv
     train_gnn_flag = "--train-gnn" in sys.argv
+    maintenance_mode = "--maintenance" in sys.argv
     interactive = "--interactive" in sys.argv
     input_path = None
     if "--input" in sys.argv:
@@ -625,6 +692,16 @@ def main():
         idx = sys.argv.index("--recoll-model") + 1
         if idx < len(sys.argv):
             recoll_model = sys.argv[idx]
+
+    dry_run = "--dry-run" in sys.argv
+    limit_files = None
+    if "--limit" in sys.argv:
+        idx = sys.argv.index("--limit") + 1
+        if idx < len(sys.argv):
+            try:
+                limit_files = int(sys.argv[idx])
+            except ValueError:
+                print("Invalid --limit value, ignoring.")
 
     validate_config()
     init_all()
@@ -704,6 +781,25 @@ def main():
             print("Recoll index build complete.")
         except ImportError as e:
             print(f"Recoll not available: {e}")
+        return
+
+    if maintenance_mode:
+        from core.maintenance import run_maintenance_once, start_background_maintenance
+        interval = 3600
+        if "--interval" in sys.argv:
+            idx = sys.argv.index("--interval") + 1
+            if idx < len(sys.argv):
+                try:
+                    interval = int(sys.argv[idx])
+                except ValueError:
+                    pass
+        start_background_maintenance(interval_seconds=interval)
+        print(f"Maintenance mode started (interval {interval}s). Press Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("Exiting maintenance mode.")
         return
 
     if server_mode:
@@ -978,10 +1074,24 @@ Return only JSON."""
                     gc.collect()
                     return None
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(config, 'PARALLEL_INGESTION_WORKERS', getattr(config, 'PARALLEL_WORKERS', 1))) as executor:
-                    list(executor.map(process_one, files))
+                if limit_files is not None:
+                    files = files[:limit_files]
+                if dry_run:
+                    for f in files:
+                        print(f"[DRY-RUN] Would process: {f.name}")
+                else:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(config, 'PARALLEL_INGESTION_WORKERS', getattr(config, 'PARALLEL_WORKERS', 1))) as executor:
+                        list(executor.map(process_one, files))
             else:
+                file_count = 0
                 for f in files:
+                    if limit_files is not None and file_count >= limit_files:
+                        print(f"Reached limit of {limit_files} files, stopping.")
+                        break
+                    file_count += 1
+                    if dry_run:
+                        print(f"[DRY-RUN] Would process: {f.name}")
+                        continue
                     # sequential code preserved as before
                     logic_context = ""
                     if logic_mode:

@@ -51,7 +51,17 @@ def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict
         for node in global_nodes:
             if node["node_type"] == node_type and node.get("embedding") is not None:
                 emb = np.frombuffer(node["embedding"], dtype=np.float32)
-                sim = cosine_similarity(name_embedding, emb)
+                if node.get("embedding_space") == "hyperbolic":
+
+                    from core.hyperbolic import hyperbolic_distance
+
+                    dist = hyperbolic_distance(name_embedding, emb)
+
+                    sim = 1.0 / (1.0 + dist)
+
+                else:
+
+                    sim = cosine_similarity(name_embedding, emb)
                 if sim > best_sim:
                     best_sim = sim
                     best_id_emb = node["global_node_id"]
