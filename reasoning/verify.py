@@ -7,7 +7,7 @@ from core.llm import call_model_json
 
 
 def _safe_str(value):
-    """Convert any value to string, handling dict/list/None."""
+    """Convert any value to string, or return empty string for None/dict/list."""
     if isinstance(value, str):
         return value
     if value is None:
@@ -18,12 +18,9 @@ def _safe_str(value):
         return ""
 
 
-
-# ============================================================
-#  Knowledge Base Helpers
-# ============================================================
 def triple_to_key(subject, predicate, obj):
     return (_safe_str(subject).lower().strip(), _safe_str(predicate).lower().strip(), _safe_str(obj).lower().strip())
+
 
 def claims_to_triples(claims):
     triples = set()
@@ -31,20 +28,15 @@ def claims_to_triples(claims):
         triples.add(triple_to_key(_safe_str(c.get("subject")), _safe_str(c.get("predicate")), _safe_str(c.get("object"))))
     return triples
 
+
 def derive_implied_triples(triples: set) -> set:
-    """
-    Compute transitive closure for selected predicates:
-    is_a, part_of, located_in, belongs_to, works_for.
-    """
+    """Compute transitive closure for selected predicates."""
     new_triples = set(triples)
-    # Simple forward chaining
     changed = True
     while changed:
         changed = False
-        # For each pair (A, pred, B) and (B, pred, C) where pred is transitive
         for subj, pred, obj in list(new_triples):
             if pred in ("is_a", "part_of", "located_in", "belongs_to"):
-                # Find triples where subject == obj
                 for subj2, pred2, obj2 in list(new_triples):
                     if subj2 == obj and pred2 == pred:
                         new_triple = (subj, pred, obj2)
@@ -54,13 +46,9 @@ def derive_implied_triples(triples: set) -> set:
     return new_triples
 
 
-# ============================================================
-#  SymStep with implication cascade
-# ============================================================
 def verify_symstep(claim: Dict, prior_claims: List[Dict]) -> bool:
     """
     Check claim consistency with prior claims, including implied facts.
-    Returns True if no contradiction, False otherwise.
     """
     subject = _safe_str(claim.get("subject")).strip()
     predicate = _safe_str(claim.get("predicate")).strip()
@@ -68,17 +56,14 @@ def verify_symstep(claim: Dict, prior_claims: List[Dict]) -> bool:
     if not subject or not predicate:
         return False
 
-    # Build set of prior triples plus implied triples
     prior_triples = claims_to_triples(prior_claims)
     implied_triples = derive_implied_triples(prior_triples)
     claim_triple = triple_to_key(subject, predicate, obj)
 
-    # Check direct contradiction
     for t in implied_triples:
         if t[0] == claim_triple[0] and t[1] == claim_triple[1]:
             if t[2] != claim_triple[2]:
                 return False
-    # Check if claim contradicts any existing triple by same subject/predicate different object
     for t in prior_triples:
         if t[0] == claim_triple[0] and t[1] == claim_triple[1]:
             if t[2] != claim_triple[2]:
@@ -86,9 +71,6 @@ def verify_symstep(claim: Dict, prior_claims: List[Dict]) -> bool:
     return True
 
 
-# ============================================================
-#  VeriCoT with derivation
-# ============================================================
 def extract_triple_from_text(step_text: str) -> Optional[Dict]:
     if not step_text:
         return None
@@ -111,8 +93,8 @@ def extract_triple_from_text(step_text: str) -> Optional[Dict]:
     for pattern, pred in patterns:
         m = re.search(pattern, step_text, re.IGNORECASE)
         if m:
-            subject = m.group(1).strip()
-            obj = m.group(2).strip()
+            subject = _safe_str(m.group(1)).strip()
+            obj = _safe_str(m.group(2)).strip()
             subject = re.sub(r'^(a|an|the)\s+', '', subject, flags=re.IGNORECASE)
             obj = re.sub(r'^(a|an|the)\s+', '', obj, flags=re.IGNORECASE)
             return {"subject": subject, "predicate": pred, "object": obj}
@@ -123,27 +105,26 @@ Return only JSON.
 """
     data = call_model_json(prompt, max_tokens=128)
     if data and all(k in data for k in ("subject", "predicate", "object")):
-        return data
+        return {
+            "subject": _safe_str(data.get("subject")),
+            "predicate": _safe_str(data.get("predicate")),
+            "object": _safe_str(data.get("object")),
+        }
     return None
 
 
 def verify_vericot(step_text: str, context: str, kg) -> bool:
-    """
-    Extract triple and verify through direct lookup or transitive derivation.
-    """
     triple = extract_triple_from_text(step_text)
     if not triple:
         return False
 
-    subject = triple["subject"]
-    predicate = triple["predicate"]
-    obj = triple["object"]
+    subject = _safe_str(triple.get("subject"))
+    predicate = _safe_str(triple.get("predicate"))
+    obj = _safe_str(triple.get("object"))
 
-    # Direct check in kg_triples
     if query_kg_triples(subject=subject, predicate=predicate, object_=obj):
         return True
 
-    # Check materialized implied triples
     conn = db.db_connect("reasoning")
     cur = conn.cursor()
     cur.execute("SELECT 1 FROM implied_triples WHERE subject=? AND predicate=? AND object=?",
@@ -153,9 +134,6 @@ def verify_vericot(step_text: str, context: str, kg) -> bool:
     return found
 
 
-# ============================================================
-#  FiDeLiS: grounding
-# ============================================================
 def verify_fidelis(claim: Dict, kg) -> bool:
     subject = _safe_str(claim.get("subject")).strip()
     predicate = _safe_str(claim.get("predicate")).strip()
@@ -185,18 +163,10 @@ def verify_fidelis(claim: Dict, kg) -> bool:
     return False
 
 
-# ============================================================
-#  R-CoT: reverse chain reconstruction
-# ============================================================
 def verify_rcot(conclusion: str, kg) -> bool:
-    """
-    Reconstruct a reverse chain from conclusion to premises using kg_triples.
-    Returns True if a chain of length >= 1 exists.
-    """
     if not conclusion:
         return False
 
-    # BFS from conclusion as object to subjects, then those subjects as objects, etc.
     visited = set()
     queue = [conclusion.lower().strip()]
     found = False
@@ -206,7 +176,6 @@ def verify_rcot(conclusion: str, kg) -> bool:
             continue
         visited.add(current)
 
-        # Find triples where current is the object
         conn = db.db_connect("reasoning")
         cur = conn.cursor()
         cur.execute("SELECT subject, predicate FROM kg_triples WHERE LOWER(object)=?", (current,))
@@ -215,23 +184,11 @@ def verify_rcot(conclusion: str, kg) -> bool:
 
         if rows:
             found = True
-            # If at least one row exists, conclusion is grounded
             break
-        # Optionally, continue to subjects if no direct grounding? We'll stop at first level.
     return found
 
 
-# ============================================================
-#  ARES: probabilistic entailment stability
-# ============================================================
 def verify_ares(reasoning_chain: List[Dict]) -> float:
-    """
-    Inductively verify each step based solely on previous steps.
-    Returns average entailment probability (0-1).
-
-    If config.ENABLE_CALIBRATED_ARES is True, uses actual entailment
-    confidence instead of hardcoded values.
-    """
     if not reasoning_chain:
         return 0.0
 
@@ -248,14 +205,13 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
             triples = claims_to_triples(accepted)
             implied = derive_implied_triples(triples)
             claim_triple = triple_to_key(
-                step.get("subject",""), step.get("predicate",""), step.get("object","")
+                _safe_str(step.get("subject")), _safe_str(step.get("predicate")), _safe_str(step.get("object"))
             )
             if claim_triple in implied:
                 score = 1.0
             else:
                 consistent = verify_symstep(step, accepted)
                 if calibrated:
-                    # Use embedding similarity to prior accepted facts as confidence
                     try:
                         from core.embeddings import get_embedding
                         import numpy as np
@@ -281,13 +237,9 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
     return sum(scores) / len(scores)
 
 
-# ============================================================
-#  Unified verification orchestrator
-# ============================================================
 def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> List[Dict]:
     results = []
 
-    # Text grounding
     if source_text and claim.get("source_span"):
         results.append({
             "layer": "text_grounding",
@@ -295,19 +247,15 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
             "confidence": 1.0 if claim["source_span"] in source_text else 0.0,
         })
 
-    # SymStep (with empty prior claims; orchestrator will pass actual)
     sym = verify_symstep(claim, claim.get("_prior_claims", []))
     results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
 
-    # VeriCoT
     vericot = verify_vericot(claim.get("text", ""), source_text, kg)
     results.append({"layer": "vericot", "verified": vericot, "confidence": 0.8 if vericot else 0.0})
 
-    # FiDeLiS
     fidelis = verify_fidelis(claim, kg)
     results.append({"layer": "fidelis", "verified": fidelis, "confidence": 0.9 if fidelis else 0.0})
 
-    # R-CoT
     rcot = verify_rcot(claim.get("conclusion", claim.get("object", "")), kg)
     results.append({"layer": "rcot", "verified": rcot, "confidence": 0.7 if rcot else 0.0})
 
@@ -315,9 +263,7 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
 
 
 def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
-    """Adaptive verification: first cheap checks, escalate if confidence low."""
     results = []
-    # Cheap checks
     if source_text and claim.get("source_span"):
         results.append({
             "layer": "text_grounding",
@@ -327,12 +273,10 @@ def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
     sym = verify_symstep(claim, claim.get("_prior_claims", []))
     results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
 
-    # Compute initial confidence
     initial_conf = sum(v["confidence"] for v in results if v["verified"]) / max(1, len(results))
     if initial_conf >= threshold:
         return results
 
-    # Escalate to heavier checks
     vericot = verify_vericot(claim.get("text", ""), source_text, kg)
     results.append({"layer": "vericot", "verified": vericot, "confidence": 0.8 if vericot else 0.0})
     fidelis = verify_fidelis(claim, kg)

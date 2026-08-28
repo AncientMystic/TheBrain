@@ -1,6 +1,18 @@
 import json
 from core import db
 
+
+def _safe_str(value):
+    """Convert any value to string, or return empty string for None/dict/list."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
 def create_reasoning_node(query_id, step_number, node_type, content, formal_repr=None, confidence=0.0):
     conn = db.db_connect("reasoning")
     cur = conn.cursor()
@@ -60,17 +72,22 @@ def store_kg_triples_batch(triples):
     """Insert multiple kg_triples and rebuild closure once."""
     if not triples:
         return
+    # Coerce all subject/predicate/object to strings
+    safe_triples = []
+    for t in triples:
+        s, p, o, doc_id, conf = t
+        safe_triples.append((_safe_str(s), _safe_str(p), _safe_str(o), doc_id, conf))
     conn = db.db_connect("reasoning")
     conn.executemany("""
         INSERT INTO kg_triples (subject, predicate, object, source_document_id, confidence)
         VALUES (?, ?, ?, ?, ?)
-    """, triples)
+    """, safe_triples)
     conn.commit(); conn.close()
     rebuild_implied_triples()
 
 
 def store_kg_triple(subject, predicate, object_, source_document_id=None, confidence=0.0):
-    return store_kg_triples_batch([(subject, predicate, object_, source_document_id, confidence)])
+    return store_kg_triples_batch([(_safe_str(subject), _safe_str(predicate), _safe_str(object_), source_document_id, confidence)])
 
 def query_kg_triples(subject=None, predicate=None, object_=None):
     conn = db.db_connect("reasoning")
@@ -79,13 +96,13 @@ def query_kg_triples(subject=None, predicate=None, object_=None):
     params = []
     if subject:
         sql += " AND subject=?"
-        params.append(subject)
+        params.append(_safe_str(subject))
     if predicate:
         sql += " AND predicate=?"
-        params.append(predicate)
+        params.append(_safe_str(predicate))
     if object_:
         sql += " AND object=?"
-        params.append(object_)
+        params.append(_safe_str(object_))
     cur.execute(sql, params)
     rows = cur.fetchall()
     conn.close()

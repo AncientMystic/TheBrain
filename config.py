@@ -440,7 +440,9 @@ ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lowe
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
 VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "5"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "2"))
-VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
+VALIDATION_MODEL_GROUP
+VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "120"))
+ = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
 
 # --- Phase 3 Settings ---

@@ -66,7 +66,7 @@ class ValidationQueue:
                 endpoint_type=config.VALIDATION_MODEL_GROUP,
             )
             try:
-                resp = future.result(timeout=30)
+                resp = future.result(timeout=240)
             except concurrent.futures.TimeoutError:
                 print("    (Validation batch timed out; skipping validation)")
                 resp = None
