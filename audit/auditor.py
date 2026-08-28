@@ -74,7 +74,12 @@ def audit_against_standards():
                 continue
             a = np.array(fact_emb, dtype=np.float32)
             b = np.array(std_emb, dtype=np.float32)
-            sim = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+            if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+                from core.hyperbolic import exp_map, hyperbolic_distance
+                dist = hyperbolic_distance(exp_map(a), exp_map(b))
+                sim = 1.0 / (1.0 + dist)
+            else:
+                sim = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
             if sim > best_sim:
                 best_sim = sim
                 best_match = std

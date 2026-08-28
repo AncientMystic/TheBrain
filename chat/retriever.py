@@ -247,28 +247,60 @@ def fallback_to_chunks(query, top_k=None, debug=False):
     q_emb = get_embedding(query, model=model)
     if q_emb:
         try:
-            store = _get_vector_store(model)
-            if store.embeddings is not None:
-                results_all = store.search(q_emb, top_k=config.CHAT_TOP_K_CHUNKS * 5)  # get more then trim
-                # Fetch chunk details from DB
-                if results_all:
-                    conn = db.db_connect("index")
-                    cur = conn.cursor()
-                    ids = [id for id, _ in results_all]
-                    placeholders = ",".join("?" for _ in ids)
-                    cur.execute(
-                        f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})",
-                        ids,
-                    )
-                    rows = cur.fetchall()
-                    conn.close()
-                    # Map id to row
-                    id_to_row = {row["chunk_id"]: row for row in rows}
-                    for cid, sim in results_all:
-                        if cid in id_to_row and cid not in seen:
-                            seen.add(cid)
-                            row = id_to_row[cid]
-                            results.append((float(sim) * 0.5, cid, row["doc_hash"], row["chunk_text"]))
+            if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+                # Use hyperbolic distance for vector search
+                from core.hyperbolic import exp_map, hyperbolic_distance
+                q_h = exp_map(q_emb)
+                store = _get_vector_store(model)
+                if store.embeddings is not None and len(store.ids) > 0:
+                    # Compute distances to all stored embeddings
+                    distances = []
+                    for i, emb in enumerate(store.embeddings):
+                        d = hyperbolic_distance(q_h, exp_map(emb))
+                        distances.append((d, store.ids[i]))
+                    distances.sort(key=lambda x: x[0])  # ascending distance
+                    top_distances = distances[:config.CHAT_TOP_K_CHUNKS * 5]
+                    ids = [cid for _, cid in top_distances]
+                    if ids:
+                        conn = db.db_connect("index")
+                        cur = conn.cursor()
+                        placeholders = ",".join("?" for _ in ids)
+                        cur.execute(
+                            f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})",
+                            ids,
+                        )
+                        rows = cur.fetchall()
+                        conn.close()
+                        id_to_row = {row["chunk_id"]: row for row in rows}
+                        for dist, cid in top_distances:
+                            if cid in id_to_row and cid not in seen:
+                                seen.add(cid)
+                                row = id_to_row[cid]
+                                # Convert distance to similarity
+                                sim = 1.0 / (1.0 + dist)
+                                results.append((float(sim) * 0.5, cid, row["doc_hash"], row["chunk_text"]))
+            else:
+                # Original Euclidean path using ExactVectorStore
+                store = _get_vector_store(model)
+                if store.embeddings is not None:
+                    results_all = store.search(q_emb, top_k=config.CHAT_TOP_K_CHUNKS * 5)  # get more then trim
+                    if results_all:
+                        conn = db.db_connect("index")
+                        cur = conn.cursor()
+                        ids = [id for id, _ in results_all]
+                        placeholders = ",".join("?" for _ in ids)
+                        cur.execute(
+                            f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})",
+                            ids,
+                        )
+                        rows = cur.fetchall()
+                        conn.close()
+                        id_to_row = {row["chunk_id"]: row for row in rows}
+                        for cid, sim in results_all:
+                            if cid in id_to_row and cid not in seen:
+                                seen.add(cid)
+                                row = id_to_row[cid]
+                                results.append((float(sim) * 0.5, cid, row["doc_hash"], row["chunk_text"]))
         except Exception as e:
             if config.DEBUG_VERBOSE:
                 print(f"    (Embedding fallback error: {e})")

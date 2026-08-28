@@ -50,7 +50,7 @@ def rare_term_boost(query, text):
 
 
 def semantic_similarity(query, text):
-    """Cosine similarity between query and text embeddings."""
+    """Similarity between query and text embeddings. Uses hyperbolic distance if enabled."""
     q_emb = get_embedding(query)
     d_emb = get_embedding(text)
     if not q_emb or not d_emb:
@@ -58,6 +58,10 @@ def semantic_similarity(query, text):
     import numpy as np
     q = np.array(q_emb, dtype=np.float32)
     d = np.array(d_emb, dtype=np.float32)
+    if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+        from core.hyperbolic import exp_map, hyperbolic_distance
+        dist = hyperbolic_distance(exp_map(q), exp_map(d))
+        return float(1.0 / (1.0 + dist))
     return float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
 
 

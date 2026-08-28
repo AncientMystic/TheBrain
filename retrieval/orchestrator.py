@@ -10,6 +10,7 @@ from retrieval.datapoint_retriever import retrieve_datapoints
 from chat.retriever import retrieve_from_graph, fallback_to_chunks
 from core.recoll_client import RecollClient
 from retrieval.ranking import get_ranker
+from core.embeddings import get_embedding
 from core.metrics import inc_counter, observe_histogram, Timer
 
 
@@ -218,11 +219,63 @@ class RetrievalOrchestrator:
                 for dp in dps:
                     id_to_dp[dp['id']] = dp
 
-            final_dps = []
-            for dp_id, score in fused[:top_k]:
+            # Build candidate list with fused scores
+            candidates = []
+            for dp_id, score in fused:
                 dp = id_to_dp.get(dp_id)
                 if dp:
-                    dp = dp.copy()
-                    dp['_fused_score'] = score
-                    final_dps.append(dp)
+                    dp_copy = dp.copy()
+                    dp_copy['_fused_score'] = score
+                    candidates.append(dp_copy)
+
+            # Post-fusion hyperbolic reranking
+            if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+                from core.hyperbolic import exp_map, hyperbolic_distance
+                query_emb = get_embedding(query)
+                if query_emb is not None:
+                    q_h = exp_map(query_emb)
+                    for dp in candidates:
+                        text = dp.get('text', '')
+                        emb = get_embedding(text)
+                        if emb is not None:
+                            d = hyperbolic_distance(q_h, exp_map(emb))
+                            dp['_hyperbolic_sim'] = 1.0 / (1.0 + d)
+                        else:
+                            dp['_hyperbolic_sim'] = 0.0
+                # Combine fused score and hyperbolic similarity (weighted)
+                for dp in candidates:
+                    dp['_final_score'] = 0.7 * dp.get('_fused_score', 0) + 0.3 * dp.get('_hyperbolic_sim', 0)
+            else:
+                for dp in candidates:
+                    dp['_final_score'] = dp.get('_fused_score', 0)
+
+            # Type-aware boost: facts primary, chunks secondary
+            for dp in candidates:
+                if dp.get('type') == 'fact':
+                    dp['_final_score'] += 0.1
+                elif dp.get('type') == 'summary':
+                    dp['_final_score'] += 0.05
+
+            # Sort by final score
+            candidates.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
+
+            # Balanced selection: ensure min facts and min chunks
+            min_facts = getattr(config, "CHAT_MIN_FACTS", 10)
+            min_chunks = getattr(config, "CHAT_MIN_CHUNKS", 5)
+
+            selected_facts = [dp for dp in candidates if dp.get('type') == 'fact'][:max(min_facts, top_k)]
+            selected_chunks = [dp for dp in candidates if dp.get('type') == 'chunk_ref']
+            selected_other = [dp for dp in candidates if dp.get('type') not in ('fact', 'chunk_ref')]
+
+            final_dps = selected_facts[:min_facts]
+            final_dps.extend(selected_chunks[:min_chunks])
+
+            remaining_slots = top_k - len(final_dps)
+            if remaining_slots > 0:
+                remaining = [dp for dp in candidates if dp not in final_dps]
+                remaining.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
+                final_dps.extend(remaining[:remaining_slots])
+
+            # Trim to top_k
+            final_dps = final_dps[:top_k]
             return final_dps

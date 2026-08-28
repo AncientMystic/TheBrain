@@ -61,7 +61,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://localhost:1234/v1")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "lfm2.5-vl-3b-absolute-heresy-i1:2")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "text-embedding-mxbai-embed-large-v1:2")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -147,8 +147,8 @@ USE_JSON_MODE = False
 LLM_EXTRACTION_CACHE = True
 LLM_CACHE_DB = "index"
 
-LLM_BATCH_CHUNKS = 1
-CHUNK_EXTRACTION_WORKERS = 3
+LLM_BATCH_CHUNKS = 4
+CHUNK_EXTRACTION_WORKERS = 5
 
 NOVELTY_ENABLED = True
 NOVELTY_SIM_THRESHOLD = 0.92
@@ -258,7 +258,7 @@ AUDIT_MODEL_ENDPOINT = None
 
 # --- Parallel processing ---
 PARALLEL_PROCESSING_ENABLED = False
-PARALLEL_WORKERS = 2
+PARALLEL_WORKERS = 3
 
 # --- Graph optimization ---
 BATCH_GLOBAL_NODE_LOOKUPS = True  # use in-memory map for exact matches
@@ -324,12 +324,12 @@ ENABLE_BATCH_VERIFICATION = os.environ.get("ENABLE_BATCH_VERIFICATION", "false")
 ENABLE_STATISTICAL_KEYWORDS = True
 
 # Optional advanced features (disabled by default)
-ENABLE_BATCH_VERIFICATION = False
-ENABLE_CALIBRATED_ARES = False
-ENABLE_GRAPH_KEYWORD_PAGERANK = False
-ENABLE_TEMPORAL_KEYWORDS = False
-ENABLE_LOGIC_LEARNING_FROM_PATHS = False
-ENABLE_COMMUNITY_DETECTION = False
+ENABLE_BATCH_VERIFICATION = True
+ENABLE_CALIBRATED_ARES = True
+ENABLE_GRAPH_KEYWORD_PAGERANK = True
+ENABLE_TEMPORAL_KEYWORDS = True
+ENABLE_LOGIC_LEARNING_FROM_PATHS = True
+ENABLE_COMMUNITY_DETECTION = True
 
 # --- Adaptive verification ---
 ADAPTIVE_VERIFICATION = True
@@ -347,7 +347,7 @@ LLM_BATCH_RETRY_SINGLE = True  # on batch failure, retry each chunk individually
 
 # --- Deep research enhancements ---
 DEEP_RESEARCH_INTERACTIVE = True  # ask user to continue on subtopics
-DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 2
+DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 5
 
 # --- Audit model selection ---
 AUDIT_MODEL = None  # will be set from AUDIT_MODEL_ENDPOINT if exists
@@ -416,6 +416,8 @@ USE_PRIME_EVEN_GATE = True
 
 USE_HYPERBOLIC_RETRIEVAL = True
 USE_GATED_VERIFICATION = True
+CHAT_MIN_FACTS = int(os.environ.get('CHAT_MIN_FACTS', '10'))
+CHAT_MIN_CHUNKS = int(os.environ.get('CHAT_MIN_CHUNKS', '5'))
 
 BACKGROUND_MAINTENANCE = os.environ.get("BACKGROUND_MAINTENANCE", "false").lower() == "true"
 
@@ -447,8 +449,8 @@ VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or
 # Async validation queue (small models extract, large models validate)
 ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
-VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "5"))
-VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "2"))
+VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "24"))
+VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "5"))
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "180"))
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
@@ -459,7 +461,7 @@ GNN_MODEL_DIR = str(BASE_DIR / "models" / "gnn")
 GNN_EMBEDDING_DIM = 64
 USE_VERIFIED_CHAT = True
 PARALLEL_INGESTION = False
-PARALLEL_INGESTION_WORKERS = 1
+PARALLEL_INGESTION_WORKERS = 2
 
 
 # --- Phase 4 Settings ---

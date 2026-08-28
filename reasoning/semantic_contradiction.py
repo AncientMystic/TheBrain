@@ -11,6 +11,10 @@ import config
 def cosine_similarity(a, b):
     a = np.array(a, dtype=np.float32)
     b = np.array(b, dtype=np.float32)
+    if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
+        from core.hyperbolic import exp_map, hyperbolic_distance
+        dist = hyperbolic_distance(exp_map(a), exp_map(b))
+        return float(1.0 / (1.0 + dist))
     denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-8
     return float(np.dot(a, b) / denom)
 
