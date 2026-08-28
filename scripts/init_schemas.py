@@ -515,6 +515,20 @@ def init_all():
     init_reasoning_db()
     init_recoll_log_db()
     init_verification_standards_db()
+    # Add embedding_space to memory_entries
+    conn = db.db_connect("memories")
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(memory_entries)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "embedding_space" not in cols:
+        cur.execute("ALTER TABLE memory_entries ADD COLUMN embedding_space TEXT DEFAULT 'euclidean'")
+    # Add topic_centroid to memory_sessions
+    cur.execute("PRAGMA table_info(memory_sessions)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "topic_centroid" not in cols:
+        cur.execute("ALTER TABLE memory_sessions ADD COLUMN topic_centroid BLOB")
+    conn.commit()
+    conn.close()
     # Verification gate training data table (in reasoning.db)
     conn = db.db_connect("reasoning")
     cur = conn.cursor()

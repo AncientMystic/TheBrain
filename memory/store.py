@@ -5,6 +5,10 @@ from core.embeddings import get_embedding
 
 
 def store_memory(session_id, content, memory_type="fact", importance=0.5):
+    if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
+        from memory.hyperbolic_memory import store_memory_hyperbolic
+        return store_memory_hyperbolic(session_id, content, memory_type, importance)
+
     emb = get_embedding(content)
     blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes()) if emb else None
     conn = db.db_connect("memories")

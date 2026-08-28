@@ -930,6 +930,9 @@ def main():
                         answer = generate_answer(query, context)
                     topic_state.update(query, answer)
 
+                if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
+                    from memory.hyperbolic_memory import update_session_centroid
+                    update_session_centroid(session_id, query, answer)
                 add_message(session_id, "assistant", answer)
                 print(f"Assistant:\n{answer}\n---")
             except KeyboardInterrupt:

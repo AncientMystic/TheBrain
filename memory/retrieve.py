@@ -7,6 +7,10 @@ import config
 
 
 def retrieve_memories(query, top_k=5, session_id=None):
+    if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
+        from memory.hyperbolic_memory import retrieve_memories_hyperbolic
+        return retrieve_memories_hyperbolic(query, top_k, session_id)
+
     q_emb = get_embedding(query)
     if not q_emb:
         return []
