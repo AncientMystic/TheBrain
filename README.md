@@ -5,6 +5,8 @@ It ingests large collections of mixed-format documents (PDF, HTML, Markdown, DOC
 
 The system includes **graph-based retrieval**, **verification-first reasoning**, **long-term memory**, **learned logic modules**, an **OpenAI-compatible server**, automatic **audit/governance**, optional **deep research mode**, autonomous report generation, **Recoll full-text search integration**, and a **curated verification standard corpus** for truth anchoring and Socratic/PSYOP vetting.
 
+TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) for document and entity representation, **prime-even gated extraction** to intelligently reduce LLM calls, and **gated verification** that learns to trust or skip verification layers.
+
 ---
 
 ## Table of Contents
@@ -23,6 +25,8 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - [Concurrency and Chunking](#concurrency-and-chunking)
   - [Novelty Gating and Fast Extractor](#novelty-gating-and-fast-extractor)
   - [Performance / Quality Flags](#performance--quality-flags)
+  - [Hyperbolic Embeddings & Prime-Even Gate](#hyperbolic-embeddings--prime-even-gate)
+  - [Gated Verification](#gated-verification)
   - [Recoll Settings](#recoll-settings)
   - [Environment Variables](#environment-variables)
 - [Usage](#usage)
@@ -40,6 +44,8 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - [Server](#server)
   - [Logic Learning](#logic-learning)
   - [Socratic/PSYOP Scoring](#socraticpsyop-scoring)
+  - [Training Gate Models](#training-gate-models)
+  - [Active Learning Review](#active-learning-review)
 - [Directory Structure](#directory-structure)
 - [Database Schemas](#database-schemas)
 - [How It Works](#how-it-works)
@@ -65,7 +71,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   Every page and every chunk is processed—no truncation or arbitrary limits.
 
 - **OCR fallback for scanned PDFs**  
-  PyMuPDF + Tesseract OCR when text extraction fails.
+  PyMuPDF + Tesseract OCR when text extraction fails. OCR batches process pages in parallel to keep memory bounded.
 
 - **Deep LLM knowledge extraction**  
   Extracts atomic facts, typed entities, people, locations, dates, events, discoveries, gems, and relationships with source spans. Includes:
@@ -74,12 +80,19 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - Relationship type vocabulary.
   - Hierarchical summarization for long documents.
   - Optional fast pre-extraction using ONNX NER, with LLM verification.
+  - **Prime-even gated extraction** learns which chunks warrant full LLM extraction, reducing calls without quality loss.
 
 - **Verification-first reasoning**  
   Implements multiple verification layers (SymStep, VeriCoT, FiDeLiS, R-CoT, ARES) with optional adaptive escalation.
 
+- **Gated verification**  
+  A learned gate scales the confidence of each verification layer per claim, allowing cheap layers to run first and expensive ones only when needed.
+
 - **Curated truth anchors**  
   Admin claims and verified-folder facts form a trusted reference corpus. New information is compared against these standards, not treated as inherently true or false.
+
+- **Hyperbolic embeddings**  
+  Document and entity embeddings are computed in the Poincaré ball model (`core/hyperbolic.py`), capturing hierarchical relationships better than Euclidean space. Document embeddings are the hyperbolic Fréchet mean of chunk embeddings, ensuring full coverage without memory blow.
 
 - **Multi-backend support**  
   Works with LM Studio, Ollama, Kobold.cpp, and any OpenAI-compatible API. Supports API-key authentication and per-backend model configuration.
@@ -125,12 +138,15 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - Precompiled regex patterns.
   - Parallel chunk summarization.
   - Parallel file ingestion (configurable).
+  - Exact vector store for fast nearest-neighbour search.
+  - Incremental graph cache updates.
 
 - **Enhanced retrieval pipeline**  
   - Multi-stage retrieval with Weighted Reciprocal Rank Fusion (WRRF).
   - Feature-based ranking (`retrieval/features.py`, `retrieval/ranking.py`).
   - Hierarchical datapoint retriever with learned ranking potential.
   - Optional Graph Neural Network (GNN) embeddings for structural retrieval.
+  - Optional hyperbolic distance for semantic similarity (`USE_HYPERBOLIC_RETRIEVAL`).
 
 - **Contextual topic shift detection**  
   - LSTM-based model (`core/topic_shift_model.py`) learns conversational topic boundaries.
@@ -141,6 +157,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
   - Knowledge gap detection with priority scores.
   - Thompson sampling for gap selection (`learning/active_learner.py`).
   - Integration with Recoll-guided learning.
+  - Script `scripts/active_learning_review.py` to flag uncertain chunks for review.
 
 - **Observability**  
   - JSON structured logging (`core/logging_config.py`).
@@ -163,6 +180,7 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
 - *(Optional)* **ONNX Runtime** and **Hugging Face Hub** for the fast NER extractor
 - *(Optional)* **Recoll** with Python API or `recollq` CLI for full-text search
 - *(Optional)* **PyTorch** and **PyTorch Geometric** for GNN training (fallback available)
+- *(Optional)* **scikit-learn** for training the verification gate
 
 ### Install Dependencies
 
@@ -199,6 +217,7 @@ huggingface_hub
 transformers
 aiohttp
 tqdm
+scikit-learn
 ```
 
 ### Tesseract OCR Setup
@@ -318,12 +337,14 @@ If left empty, the main backend model is used.
 ### Concurrency and Chunking
 
 ```python
-LLM_ENDPOINT_CAPACITIES = [3, 1, 2]
+LLM_ENDPOINT_CAPACITIES = [3, 1, 2]   # balance these to use all endpoints
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 200
-LLM_BATCH_CHUNKS = 1
-CHUNK_EXTRACTION_WORKERS = 3
+LLM_BATCH_CHUNKS = 4                  # batch chunks per LLM call (2-4 recommended)
+CHUNK_EXTRACTION_WORKERS = 4          # should match sum of capacities
 ```
+
+**Performance Tip:** If you have multiple endpoints but only one seems busy, set `LLM_ENDPOINT_CAPACITIES` to equal values (e.g., `[1, 1, 1]`) or enable `USE_DYNAMIC_ENDPOINT_BALANCING = True`.
 
 ### Novelty Gating and Fast Extractor
 
@@ -343,7 +364,7 @@ FAST_EXTRACTOR_CONFIDENCE_THRESHOLD = 0.7
 LLM_EXTRACTION_CACHE = True
 USE_LLM_HTTP_SESSION = True
 FTS_ENABLED = True
-EMBEDDING_BATCH_SIZE = 32
+EMBEDDING_BATCH_SIZE = 128
 PARALLEL_PROCESSING_ENABLED = False
 PARALLEL_WORKERS = 2
 USE_PROGRESS_BARS = True
@@ -351,57 +372,41 @@ ADAPTIVE_VERIFICATION = True
 AUTO_RESOLVE_CONTRADICTIONS = False
 DEEP_RESEARCH_INTERACTIVE = True
 DEEP_RESEARCH_AUTO_SUBTOPIC_DEPTH = 2
+OCR_BATCH_SIZE = 64                  # pages per OCR batch (memory-safe)
 ```
 
-### Enhanced Retrieval Settings
+### Hyperbolic Embeddings & Prime-Even Gate
 
 ```python
-# Multi-stage retrieval
-USE_MULTI_STAGE_RETRIEVAL = True
-RETRIEVAL_RANKING_WEIGHTS = {
-    'query_overlap': 0.25,
-    'rare_term_boost': 0.1,
-    'semantic_similarity': 0.2,
-    'graph_proximity': 0.1,
-    'entity_salience': 0.05,
-    'doc_relevance': 0.1,
-    'type_weight': 0.1,
-    'confidence': 0.1,
-}
-RETRIEVAL_STAGE_WEIGHTS = {
-    'graph': 0.5,
-    'vector': 0.3,
-    'lexical': 0.2,
-    'gnn': 0.0,
-}
+# Enable hyperbolic document embeddings and retrieval
+USE_HYPERBOLIC_RETRIEVAL = True
 
-# GNN
-USE_GNN = True
-GNN_MODEL_DIR = "models/gnn"
-GNN_EMBEDDING_DIM = 64
-
-# Verified chat
-USE_VERIFIED_CHAT = True
-
-# Parallel ingestion
-PARALLEL_INGESTION = True
-PARALLEL_INGESTION_WORKERS = 4
+# Enable prime-even gated extraction (reduces LLM calls on redundant chunks)
+USE_PRIME_EVEN_GATE = True
 ```
 
-### Semantic Contradiction & Active Learning Settings
+When `USE_PRIME_EVEN_GATE` is enabled, the system will:
+- Compute spectral features for each document.
+- Use a learned gate to decide which chunks need full LLM extraction.
+- Skip redundant chunks while still using the fast ONNX extractor for entities.
+
+**Training the gate:** Process some documents with `USE_PRIME_EVEN_GATE=true` to collect training data, then run:
+```bash
+python scripts/train_gate.py
+```
+The trained gate is saved to `models/gate.json`.
+
+### Gated Verification
 
 ```python
-ENABLE_SEMANTIC_CONTRADICTIONS = True
-ACTIVE_LEARNING_ENABLED = True
-ACTIVE_LEARNING_ROUNDS = 3
+USE_GATED_VERIFICATION = True
 ```
 
-### Logging & Metrics Settings
-
-```python
-ENABLE_JSON_LOGGING = True
-METRICS_ENABLED = True
-```
+When enabled, a learned verification gate scales the confidence of each verification layer per claim. To train:
+1. Enable `USE_GATED_VERIFICATION=true` during processing.
+2. Process documents to collect training data.
+3. Run `python scripts/train_verification_gate.py`.
+4. The gate will be saved to `models/verification_gate.json`.
 
 ### Recoll Settings
 
@@ -429,8 +434,13 @@ RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "t
 | `EMBEDDING_MODEL` | `smcleod/text-embedding-mxbai-embed-large-v1` | Legacy embedding model |
 | `CHUNK_SIZE` | `2000` | Document chunk size |
 | `CHUNK_OVERLAP` | `200` | Chunk overlap |
-| `EMBEDDING_BATCH_SIZE` | `32` | Embedding batch size |
-| `LLM_BATCH_CHUNKS` | `1` | Chunks per LLM extraction call |
+| `EMBEDDING_BATCH_SIZE` | `128` | Embedding batch size |
+| `LLM_BATCH_CHUNKS` | `4` | Chunks per LLM extraction call |
+| `OCR_BATCH_SIZE` | `64` | Pages per OCR batch |
+| `USE_PRIME_EVEN_GATE` | `false` | Enable prime-even gated extraction |
+| `USE_HYPERBOLIC_RETRIEVAL` | `false` | Use hyperbolic distance in retrieval |
+| `USE_GATED_VERIFICATION` | `false` | Enable learned verification gate |
+| `USE_DYNAMIC_ENDPOINT_BALANCING` | `false` | Dynamically balance endpoint capacities |
 | `RECOLL_BIN` | `recollq` | Path to Recoll CLI binary |
 | `RECOLL_DB` | empty | Recoll config directory |
 | `RECOLL_MAX_RESULTS` | `50` | Default max results for Recoll queries |
@@ -461,6 +471,8 @@ Optional flags:
 
 - `--debug` — detailed logs.
 - `--logic` — use learned logic modules during processing.
+- `--dry-run` — do not write to databases (simulate processing).
+- `--limit N` — process only the first N files.
 
 ### Verified Sources and Admin Claims
 
@@ -476,10 +488,7 @@ python main.py --guided-learning --verified --input "A:/verified_standards"
 
 Extracted facts from this folder are marked `verified_true` and inserted into the standards corpus. Documents are promoted only once.
 
-Add this section to the README under **Usage**, near the verification facts and logic learning sections:
-
-
-### Bulk Import Facts and Logic Training Data
+#### Bulk Import Facts and Logic Training Data
 
 The `import_data.py` helper imports pre-generated JSON datasets into TheBrain.
 
@@ -535,41 +544,6 @@ Supported modes:
 }
 ```
 
-#### Usage
-
-Dry-run validation without writing:
-
-```bash
-python import_data.py --facts facts.json --dry-run
-python import_data.py --logic logic.json --dry-run
-```
-
-Import only facts:
-
-```bash
-python import_data.py --facts facts.json
-```
-
-Import only logic training data:
-
-```bash
-python import_data.py --logic logic.json
-```
-
-Import both:
-
-```bash
-python import_data.py --facts facts.json --logic logic.json
-```
-
-Keep temporary logic files for inspection:
-
-```bash
-python import_data.py --logic logic.json --keep-temp
-```
-
-The script assumes the JSON files already contain safe, grounded facts and safe logic-training content. It does not call any LLM or external service for topic filtering.
-
 #### Admin Claim Ingestion
 
 Add individual indisputable claims directly:
@@ -616,31 +590,6 @@ The standard corpus can be imported and exported as JSON.
 python scripts/import_verification_facts.py data/verification_facts.json
 ```
 
-Example JSON structure:
-
-```json
-{
-  "version": 1,
-  "facts": [
-    {
-      "id": "admin-water-freeze",
-      "statement": "Water freezes at 0C under 1 atm",
-      "subject": "Water",
-      "predicate": "freezes_at",
-      "object": "0C",
-      "negation": 0,
-      "truth_status": "admin_claim",
-      "source_type": "admin_claim",
-      "priority": 0,
-      "confidence": 1.0,
-      "socratic_metadata": {},
-      "supporting_evidence": [],
-      "provenance": {}
-    }
-  ]
-}
-```
-
 #### Export
 
 ```bash
@@ -659,17 +608,7 @@ Enable verification-first reasoning:
 python main.py --chat --reasoning
 ```
 
-Use `--debug` for detailed logs.
-
-Chat supports:
-
-- Conversation history.
-- Memory storage via `remember: <content>`.
-- Graph-first retrieval and multi-hop expansion.
-- Intent-aware answer generation.
-- Markdown output with source citations.
-- Optional Recoll full-text search.
-- Verified chat via GIVE pattern (default if `USE_VERIFIED_CHAT=True`).
+Chat supports conversation history, memory, graph-first retrieval, multi-hop expansion, intent-aware answers, Markdown output, optional Recoll search, and verified chat via GIVE pattern.
 
 ### Deep Research Mode
 
@@ -685,11 +624,7 @@ Generates a comprehensive Markdown report in `reports/`.
 python main.py --guided-learning --recoll
 ```
 
-Optional:
-
-```bash
-python main.py --guided-learning --recoll --recoll-max-rounds 5 --recoll-interactive
-```
+Optional: `--recoll-max-rounds 5 --recoll-interactive`.
 
 ### Recoll Fast Mode
 
@@ -699,23 +634,8 @@ Search a specific keyword:
 python main.py --recoll-fast --recoll-query "keyword"
 ```
 
-Automatic seed-keyword mode:
-
-```bash
-python main.py --recoll-fast
-```
-
-Interactive mode:
-
-```bash
-python main.py --recoll-fast --interactive
-```
-
-Options:
-
-- `--recoll-query "keyword"`
-- `--recoll-limit 50`
-- `--preview-chars 1000`
+Automatic seed-keyword mode: `python main.py --recoll-fast`  
+Interactive: `python main.py --recoll-fast --interactive`
 
 ### Build Recoll Index
 
@@ -729,16 +649,7 @@ python main.py --build-recoll-index --input "A:/documents"
 python main.py --server
 ```
 
-Endpoints:
-
-- `POST /v1/chat/completions`
-- `POST /v1/completions`
-- `POST /v1/responses`
-- `POST /v1/embeddings`
-- `GET /v1/models`
-- `POST /v1/reasoning`
-- `GET /v1/health`
-- `GET /metrics` (Prometheus format)
+Endpoints: `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, `/metrics`.
 
 ### Logic Learning
 
@@ -748,27 +659,31 @@ python main.py --logic --input "A:/logic_examples"
 
 ### Socratic/PSYOP Scoring
 
-Verified-folder documents are automatically assessed using the Socratic/PSYOP scorer in `reasoning/socratic_scorer.py`. The scorer evaluates:
+Verified-folder documents are automatically assessed using the Socratic/PSYOP scorer. The result is attached to standards as provenance metadata.
 
-- 20 PSYOP narrative-manipulation criteria
-- Enforcement-vector detection
-- Triad of Intentionality
-- Data/Model/Policy classification
-- Funding and gatekeeping flags
-- Lived-experience cluster detection
-- Source hierarchy level
+### Training Gate Models
 
-The result is attached to standards as provenance metadata. It does not override admin or verified truth anchors.
+**Prime-even gate (for extraction):**
+1. Enable `USE_PRIME_EVEN_GATE=true` in `config.py` or environment.
+2. Process some documents to collect training data.
+3. Run `python scripts/train_gate.py`.
+4. The gate is saved to `models/gate.json` and will be used automatically when the flag remains enabled.
 
-### Evaluation
+**Verification gate:**
+1. Enable `USE_GATED_VERIFICATION=true`.
+2. Process documents to collect verification outcomes.
+3. Run `python scripts/train_verification_gate.py` (requires scikit-learn).
+4. The gate is saved to `models/verification_gate.json`.
 
-To evaluate retrieval quality with a labeled set:
+### Active Learning Review
+
+After training a prime-even gate, run:
 
 ```bash
-python scripts/evaluate.py --eval-file data/eval_queries.json
+python scripts/active_learning_review.py
 ```
 
-The JSON file should contain a list of objects with `query` and `relevant_fact_ids`. The script reports Recall@10, Precision@10, and MRR.
+This flags chunks where the gate is uncertain (weight near 0.5), so you can review or reprocess them.
 
 ---
 
@@ -786,12 +701,16 @@ TheBrain/
 ├── configs/                  # Example backend configs
 ├── core/
 │   ├── backends/             # Backend provider abstraction
+│   ├── hyperbolic.py         # Poincaré ball geometry, Fréchet mean
+│   ├── spectral.py           # Spectral feature extraction
 │   ├── metrics.py            # Metrics registry
 │   ├── logging_config.py     # JSON logging setup
 │   ├── topic_shift_model.py  # LSTM topic shift detector
 │   └── ...
 ├── deep_research/
 ├── extraction/
+│   ├── gate.py               # Prime-even gated extraction
+│   └── ...
 ├── extractors/
 ├── fast_extractor/
 ├── graph/
@@ -804,14 +723,19 @@ TheBrain/
 ├── memory/
 ├── reasoning/
 │   ├── verification_manager.py
+│   ├── verification_gate.py  # Learned verification gate
 │   ├── semantic_contradiction.py
 │   └── ...
 ├── scripts/
+│   ├── train_gate.py
+│   ├── train_verification_gate.py
 │   ├── train_topic_shift.py
 │   ├── train_gnn.py
 │   ├── evaluate.py
+│   ├── active_learning_review.py
+│   ├── migrate_hyperbolic.py
 │   └── ...
-├── models/                   # ONNX NER model, GNN, topic shift
+├── models/                   # ONNX NER model, GNN, topic shift, gates
 ├── reports/                  # generated research reports
 ├── data/                     # SQLite databases and verification standards
 └── gazetteers/
@@ -827,14 +751,14 @@ TheBrain uses multiple SQLite databases:
 |----------|--------|
 | `data/index.db` | documents, document_chunks, processing_progress, llm_extraction_cache |
 | `data/summaries.db` | doc_summaries, summary_versions |
-| `data/key_facts.db` | key_facts, entities, people, locations, dates, events, discoveries, gems, fact_sources, entity_fact_index, key_facts_fts |
+| `data/key_facts.db` | key_facts, entities, people, locations, dates, events, discoveries, gems, fact_sources, entity_fact_index, key_facts_fts, gate_training_data |
 | `data/embeddings.db` | document_embeddings, chunk_embeddings, embedding_cache |
 | `data/hypergraph.db` | nodes, edges, doc_entity_nodes |
 | `data/external-graph.db` | global_nodes, global_edges, topic_nodes, keyword_topic_edges, keyword_cooccurrence, cross_doc_links, topic_hierarchy, global_nodes_fts |
 | `data/ocr_cache.db` | ocr_cache |
 | `data/memories.db` | memory_entries, memory_keywords, memory_sessions, conversation_history |
 | `data/logic.db` | logic_modules, logic_examples, logic_keywords, logic_tags |
-| `data/reasoning.db` | reasoning_nodes, reasoning_edges, grounding_records, kg_triples, reasoning_paths, reasoning_dependencies, verification_results, contradiction_log, agent_actions, research_nodes, research_edges, implied_triples |
+| `data/reasoning.db` | reasoning_nodes, reasoning_edges, grounding_records, kg_triples, reasoning_paths, reasoning_dependencies, verification_results, contradiction_log, agent_actions, research_nodes, research_edges, implied_triples, verification_gate_training_data |
 | `data/recoll_log.db` | recoll_queries, recoll_query_results, recoll_log |
 | `data/verification_standards.db` | verified_standards, verified_standard_sources, standard_comparisons, verification_promotions |
 
@@ -850,14 +774,15 @@ All schemas are created automatically on first run.
 2. Hash each file and check processing status.
 3. Extract full text using the appropriate extractor.
 4. Chunk text with overlap.
-5. Generate document and chunk embeddings.
+5. Generate chunk embeddings and compute document embedding as hyperbolic Fréchet mean.
 6. Optional fast extractor pre-pass.
 7. Novelty gate determines which chunks need LLM extraction.
-8. LLM extracts facts, entities, relationships, etc.
-9. Validate, deduplicate, and verify facts using VerificationManager (SymStep, VeriCoT, R-CoT, ARES).
-10. Build hypergraph and external graph.
-11. Generate hierarchical summary and mark processed.
-12. Files can be processed in parallel (configurable).
+8. Prime-even gate (if enabled) further filters chunks for full LLM extraction.
+9. LLM extracts facts, entities, relationships, etc.
+10. Validate, deduplicate, and verify facts using VerificationManager (SymStep, VeriCoT, R-CoT, ARES).
+11. Build hypergraph and external graph.
+12. Generate hierarchical summary and mark processed.
+13. Files can be processed in parallel (configurable).
 
 ### Reasoning and Chat
 
@@ -920,6 +845,7 @@ All schemas are created automatically on first run.
 - Socratic/PSYOP scoring quality depends on the selected LLM.
 - Backend-specific behavior, especially embedding formats, may vary between providers.
 - GNN training requires PyTorch and may be resource-intensive for very large graphs.
+- Hyperbolic embeddings require re-processing documents to generate them; existing Euclidean embeddings remain until backfilled.
 
 ---
 
