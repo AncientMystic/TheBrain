@@ -26,24 +26,22 @@ def generate_answer_verified(query: str, conversation_history: str = "") -> str:
     orchestrator = RetrievalOrchestrator()
     datapoints = orchestrator.retrieve(query, analysis, top_k=50)
 
-    facts = [dp for dp in datapoints if dp.get('type') == 'fact']
+    facts = [dp for dp in datapoints if dp.get("type") == "fact"]
     chunks = []
     for dp in datapoints:
-        if dp.get('type') == 'chunk_ref':
-            chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
+        if dp.get("type") == "chunk_ref":
+            chunks.append((0, dp.get("chunk_id"), dp.get("doc_hash"), dp.get("text", "")))
 
     # Reflect: verify facts
     vm = VerificationManager()
     verified_facts = []
     for fact in facts:
         vfact = vm.verify_single_online(fact)
-        if vfact['verification_status'] in ('verified', 'partially_verified'):
-            # Keep only high confidence verified facts
-            if vfact.get('confidence_final', 0) >= 0.6:
+        if vfact["verification_status"] in ("verified", "partially_verified"):
+            if vfact.get("confidence_final", 0) >= 0.6:
                 verified_facts.append(vfact)
 
     if not verified_facts:
-        # Fall back to chunks only
         context = build_context([], chunks=chunks, conversation_history=conversation_history)
         prompt = f"""The user asked: {query}
 
@@ -53,20 +51,26 @@ Context:
 {context}
 
 Answer:"""
-        return call_model(prompt, max_tokens=32768)
+        return call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
 
-    # Speak: use verified facts and chunks, with graph reasoning if enabled
-    if getattr(config, "USE_GRAPH_REASONING", True):
+    # Speak: use verified facts and chunks, with graph context organization if enabled
+    if getattr(config, "USE_CONTEXT_ORGANIZER", True):
         try:
-            from chat.graph_reasoner import prepare_reasoning_context
-            reasoning_context = prepare_reasoning_context(query, verified_facts)
-            if reasoning_context:
-                context = reasoning_context
+            from chat.context_organizer import organize_facts
+            organized = organize_facts(verified_facts)
+            if organized:
+                # Keep chunks as a separate section if available
+                if chunks:
+                    chunk_lines = ["[Raw excerpts]"]
+                    for _, _, doc_hash, text in chunks[:10]:
+                        chunk_lines.append(f"- {text[:300]}")
+                    organized = organized + "\n\n" + "\n".join(chunk_lines)
+                context = organized
             else:
                 context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
         except Exception as e:
             if config.DEBUG_VERBOSE:
-                print(f"    (Graph reasoning error: {e})")
+                print(f"    (Context organizer error: {e})")
             context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
     else:
         context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
@@ -80,4 +84,4 @@ Context:
 {context}
 
 Answer:"""
-    return call_model(prompt, max_tokens=32768)
+    return call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))

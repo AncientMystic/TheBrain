@@ -421,6 +421,7 @@ USE_HYPERBOLIC_CONVERSATION_SUMMARY = os.environ.get('USE_HYPERBOLIC_CONVERSATIO
 MEMORY_CONSOLIDATION_THRESHOLD = float(os.environ.get('MEMORY_CONSOLIDATION_THRESHOLD', '0.5'))
 USE_HYPERBOLIC_CLUSTERING = os.environ.get('USE_HYPERBOLIC_CLUSTERING', 'false').lower() == 'true'
 USE_GRAPH_REASONING = os.environ.get('USE_GRAPH_REASONING', 'true').lower() == 'true'
+USE_CONTEXT_ORGANIZER = os.environ.get('USE_CONTEXT_ORGANIZER', 'true').lower() == 'true'
 HYPERBOLIC_FILTER_RADIUS = float(os.environ.get('HYPERBOLIC_FILTER_RADIUS', '1.0'))
 MIN_PATH_CONFIDENCE = float(os.environ.get('MIN_PATH_CONFIDENCE', '0.6'))
 MIN_PATH_DEPTH = int(os.environ.get('MIN_PATH_DEPTH', '3'))

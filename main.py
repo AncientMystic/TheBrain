@@ -924,11 +924,34 @@ def main():
                     if memory_text:
                         context = memory_text + "\n\n" + context
 
+                    # Conversation-aware retrieval: augment query with active topic terms
+                    active_terms = topic_state.get_active_terms() if hasattr(topic_state, "get_active_terms") else []
+                    if active_terms:
+                        augmented_query = query + " " + " ".join(active_terms)
+                    else:
+                        augmented_query = query
+
                     if getattr(config, "USE_VERIFIED_CHAT", True):
                         from chat.give_chat import generate_answer_verified
-                        answer = generate_answer_verified(query, conversation_history=conversation_history)
+                        answer = generate_answer_verified(augmented_query, conversation_history=conversation_history)
                     else:
-                        answer = generate_answer(query, context)
+                        analysis = analyze_query(augmented_query)
+                        # fallback to normal retrieval with augmented query
+                        if getattr(config, 'USE_MULTI_STAGE_RETRIEVAL', True):
+                            from retrieval.orchestrator import RetrievalOrchestrator
+                            orchestrator = RetrievalOrchestrator()
+                            datapoints = orchestrator.retrieve(augmented_query, analysis)
+                            facts = [dp for dp in datapoints if dp.get('type') == 'fact']
+                            chunks = []
+                            for dp in datapoints:
+                                if dp.get('type') == 'chunk_ref':
+                                    chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
+                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
+                        else:
+                            facts = retrieve_from_graph(analysis, top_k=50)
+                            chunks = fallback_to_chunks(augmented_query, top_k=chunk_top_k)
+                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
+                        answer = generate_answer(augmented_query, context)
                     topic_state.update(query, answer)
 
                 if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
