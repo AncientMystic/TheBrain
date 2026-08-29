@@ -5,7 +5,8 @@ import json
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AdamW
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from torch.optim import AdamW
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from core import db
