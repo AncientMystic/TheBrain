@@ -27,6 +27,7 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
   - [Performance / Quality Flags](#performance--quality-flags)
   - [Hyperbolic Embeddings & Prime-Even Gate](#hyperbolic-embeddings--prime-even-gate)
   - [Gated Verification](#gated-verification)
+  - [Hyperbolic Conversation Summarization & Memory](#hyperbolic-conversation-summarization--memory)
   - [Recoll Settings](#recoll-settings)
   - [Environment Variables](#environment-variables)
 - [Usage](#usage)
@@ -46,6 +47,7 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
   - [Socratic/PSYOP Scoring](#socraticpsyop-scoring)
   - [Training Gate Models](#training-gate-models)
   - [Active Learning Review](#active-learning-review)
+  - [Memory Consolidation](#memory-consolidation)
 - [Directory Structure](#directory-structure)
 - [Database Schemas](#database-schemas)
 - [How It Works](#how-it-works)
@@ -93,6 +95,12 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
 
 - **Hyperbolic embeddings**  
   Document and entity embeddings are computed in the Poincaré ball model (`core/hyperbolic.py`), capturing hierarchical relationships better than Euclidean space. Document embeddings are the hyperbolic Fréchet mean of chunk embeddings, ensuring full coverage without memory blow.
+
+- **Hyperbolic conversation summarization**  
+  Older conversation turns are clustered using hyperbolic geometry, and only representative messages are kept in context. This reduces token usage while preserving thematic continuity.
+
+- **Hyperbolic memory and consolidation**  
+  Memories are stored and retrieved in hyperbolic space. A maintenance script (`scripts/consolidate_memories.py`) merges related memories into a single hyperbolic centroid memory, reducing memory clutter.
 
 - **Multi-backend support**  
   Works with LM Studio, Ollama, Kobold.cpp, and any OpenAI-compatible API. Supports API-key authentication and per-backend model configuration.
@@ -408,6 +416,27 @@ When enabled, a learned verification gate scales the confidence of each verifica
 3. Run `python scripts/train_verification_gate.py`.
 4. The gate will be saved to `models/verification_gate.json`.
 
+### Hyperbolic Conversation Summarization & Memory
+
+```python
+# Use hyperbolic clustering to summarize older conversation history
+USE_HYPERBOLIC_CONVERSATION_SUMMARY = True
+
+# Use hyperbolic memory retrieval
+USE_HYPERBOLIC_MEMORY = True
+
+# Similarity threshold for merging memories in consolidation (higher = stricter)
+MEMORY_CONSOLIDATION_THRESHOLD = 0.5
+
+# Optional clustering utilities (off by default)
+USE_HYPERBOLIC_CLUSTERING = False
+```
+
+**How it works:**
+- Older conversation turns are embedded into the Poincaré ball and clustered. Only one representative per cluster is kept in context, plus the most recent turns verbatim. This reduces token usage while preserving thematic flow.
+- Memories are stored with hyperbolic embeddings (`embedding_space='hyperbolic'`) and retrieved using hyperbolic distance, focusing on the most semantically relevant items.
+- `scripts/consolidate_memories.py` merges memories that are closer than the threshold into a single memory with a hyperbolic centroid embedding.
+
 ### Recoll Settings
 
 ```python
@@ -440,6 +469,10 @@ RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "t
 | `USE_PRIME_EVEN_GATE` | `false` | Enable prime-even gated extraction |
 | `USE_HYPERBOLIC_RETRIEVAL` | `false` | Use hyperbolic distance in retrieval |
 | `USE_GATED_VERIFICATION` | `false` | Enable learned verification gate |
+| `USE_HYPERBOLIC_CONVERSATION_SUMMARY` | `true` | Summarize older conversation history with hyperbolic clustering |
+| `USE_HYPERBOLIC_MEMORY` | `true` | Store/retrieve memories in hyperbolic space |
+| `MEMORY_CONSOLIDATION_THRESHOLD` | `0.5` | Similarity threshold for merging memories |
+| `USE_HYPERBOLIC_CLUSTERING` | `false` | Enable hyperbolic clustering utilities |
 | `USE_DYNAMIC_ENDPOINT_BALANCING` | `false` | Dynamically balance endpoint capacities |
 | `RECOLL_BIN` | `recollq` | Path to Recoll CLI binary |
 | `RECOLL_DB` | empty | Recoll config directory |
@@ -610,6 +643,10 @@ python main.py --chat --reasoning
 
 Chat supports conversation history, memory, graph-first retrieval, multi-hop expansion, intent-aware answers, Markdown output, optional Recoll search, and verified chat via GIVE pattern.
 
+**Hyperbolic conversation summarization:** Older turns are automatically summarized via hyperbolic clustering (enabled by default). Recent turns are kept verbatim.
+
+**Hyperbolic memory:** Memories are retrieved using hyperbolic distance, focusing on the most relevant items.
+
 ### Deep Research Mode
 
 ```bash
@@ -685,6 +722,16 @@ python scripts/active_learning_review.py
 
 This flags chunks where the gate is uncertain (weight near 0.5), so you can review or reprocess them.
 
+### Memory Consolidation
+
+Merge related hyperbolic memories to reduce clutter:
+
+```bash
+python scripts/consolidate_memories.py
+```
+
+This uses `MEMORY_CONSOLIDATION_THRESHOLD` (similarity) to decide which memories to merge. The resulting consolidated memories have hyperbolic centroid embeddings.
+
 ---
 
 ## Directory Structure
@@ -697,11 +744,14 @@ TheBrain/
 ├── audit/
 ├── chat/
 │   ├── give_chat.py          # GIVE-pattern verified chat
+│   ├── conversation_summarizer.py  # Hyperbolic conversation summarizer
 │   └── ...
 ├── configs/                  # Example backend configs
 ├── core/
 │   ├── backends/             # Backend provider abstraction
 │   ├── hyperbolic.py         # Poincaré ball geometry, Fréchet mean
+│   ├── hyperbolic_utils.py   # Safe mapping, similarity, interpolation
+│   ├── hyperbolic_clustering.py  # Clustering utilities (opt-in)
 │   ├── spectral.py           # Spectral feature extraction
 │   ├── metrics.py            # Metrics registry
 │   ├── logging_config.py     # JSON logging setup
@@ -721,6 +771,8 @@ TheBrain/
 │   └── active_learner.py     # Thompson sampling for gaps
 ├── logic/
 ├── memory/
+│   ├── hyperbolic_memory.py  # Hyperbolic memory storage/retrieval
+│   └── ...
 ├── reasoning/
 │   ├── verification_manager.py
 │   ├── verification_gate.py  # Learned verification gate
@@ -733,6 +785,7 @@ TheBrain/
 │   ├── train_gnn.py
 │   ├── evaluate.py
 │   ├── active_learning_review.py
+│   ├── consolidate_memories.py
 │   ├── migrate_hyperbolic.py
 │   └── ...
 ├── models/                   # ONNX NER model, GNN, topic shift, gates
@@ -756,7 +809,7 @@ TheBrain uses multiple SQLite databases:
 | `data/hypergraph.db` | nodes, edges, doc_entity_nodes |
 | `data/external-graph.db` | global_nodes, global_edges, topic_nodes, keyword_topic_edges, keyword_cooccurrence, cross_doc_links, topic_hierarchy, global_nodes_fts |
 | `data/ocr_cache.db` | ocr_cache |
-| `data/memories.db` | memory_entries, memory_keywords, memory_sessions, conversation_history |
+| `data/memories.db` | memory_entries (with `embedding_space`), memory_keywords, memory_sessions (with `topic_centroid`), conversation_history |
 | `data/logic.db` | logic_modules, logic_examples, logic_keywords, logic_tags |
 | `data/reasoning.db` | reasoning_nodes, reasoning_edges, grounding_records, kg_triples, reasoning_paths, reasoning_dependencies, verification_results, contradiction_log, agent_actions, research_nodes, research_edges, implied_triples, verification_gate_training_data |
 | `data/recoll_log.db` | recoll_queries, recoll_query_results, recoll_log |
@@ -795,6 +848,7 @@ All schemas are created automatically on first run.
 7. Verify claims with SymStep, VeriCoT, FiDeLiS, R-CoT, ARES.
 8. Re-rank using memory and logic modules.
 9. Synthesize final answer with provenance (GIVE pattern if enabled).
+10. Conversation history is summarized using hyperbolic clustering (older turns) to save context.
 
 ### Deep Research
 
