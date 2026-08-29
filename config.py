@@ -57,9 +57,9 @@ else:
     })
 
 
-LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "http://localhost:1234/v1")
-MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "lfm2.5-vl-3b-absolute-heresy-i1:2")
-EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "text-embedding-mxbai-embed-large-v1:2")
+LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
+MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
+EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
 
 LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
@@ -179,7 +179,7 @@ GUIDED_LEARNING_MIN_CONFIDENCE = 0.5
 GUIDED_LEARNING_PAGES_TO_OCR = None
 GUIDED_LEARNING_OCR_DPI = 100
 
-CHAT_MAX_CONTEXT_TOKENS = 8000
+CHAT_MAX_CONTEXT_TOKENS = 32768
 CHAT_MIN_FACTS_BEFORE_FALLBACK = 50
 CHAT_TOP_K_CHUNKS = int(os.environ.get("CHAT_TOP_K_CHUNKS", "8"))
 
@@ -245,9 +245,9 @@ SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "lfm2-350m-heretic-i1"
 SMALL_MODEL_ENDPOINT = None  # filled dynamically
 
 
-CHAT_MODEL_URL = os.environ.get("CHAT_MODEL_URL", "")
-CHAT_MODEL_NAME = os.environ.get("CHAT_MODEL_NAME", "")
-USE_CHAT_MODEL = os.environ.get("USE_CHAT_MODEL", "false").lower() == "true"
+CHAT_MODEL_URL = os.environ.get("CHAT_MODEL_URL", "http://10.0.0.33:1234/v1")
+CHAT_MODEL_NAME = os.environ.get("CHAT_MODEL_NAME", "lfm2-350m-heretic-i1")
+USE_CHAT_MODEL = os.environ.get("USE_CHAT_MODEL", "true").lower() == "true"
 LARGE_MODEL_URL = os.environ.get("LARGE_MODEL_URL", "")
 LARGE_MODEL_NAME = os.environ.get("LARGE_MODEL_NAME", "")
 LARGE_MODEL_ENDPOINT = None
@@ -420,6 +420,10 @@ USE_HYPERBOLIC_MEMORY = os.environ.get('USE_HYPERBOLIC_MEMORY', 'true').lower() 
 USE_HYPERBOLIC_CONVERSATION_SUMMARY = os.environ.get('USE_HYPERBOLIC_CONVERSATION_SUMMARY', 'true').lower() == 'true'
 MEMORY_CONSOLIDATION_THRESHOLD = float(os.environ.get('MEMORY_CONSOLIDATION_THRESHOLD', '0.5'))
 USE_HYPERBOLIC_CLUSTERING = os.environ.get('USE_HYPERBOLIC_CLUSTERING', 'false').lower() == 'true'
+USE_GRAPH_REASONING = os.environ.get('USE_GRAPH_REASONING', 'true').lower() == 'true'
+HYPERBOLIC_FILTER_RADIUS = float(os.environ.get('HYPERBOLIC_FILTER_RADIUS', '1.0'))
+MIN_PATH_CONFIDENCE = float(os.environ.get('MIN_PATH_CONFIDENCE', '0.6'))
+MIN_PATH_DEPTH = int(os.environ.get('MIN_PATH_DEPTH', '3'))
 USE_DISTILLED_EXTRACTOR = os.environ.get('USE_DISTILLED_EXTRACTOR', 'true').lower() == 'true'
 DISTILLED_MODEL_NAME = os.environ.get('DISTILLED_MODEL_NAME', 't5-small')
 DISTILLED_MODEL_DIR = str(BASE_DIR / 'models' / 'distilled_extractor')
@@ -466,7 +470,7 @@ VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
 VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "24"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "5"))
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
-VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "180"))
+VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "680"))
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
 
 # --- Phase 3 Settings ---

@@ -53,17 +53,31 @@ Context:
 {context}
 
 Answer:"""
-        return call_model(prompt, max_tokens=1024)
+        return call_model(prompt, max_tokens=32768)
 
-    # Speak: use verified facts and chunks
-    context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+    # Speak: use verified facts and chunks, with graph reasoning if enabled
+    if getattr(config, "USE_GRAPH_REASONING", True):
+        try:
+            from chat.graph_reasoner import prepare_reasoning_context
+            reasoning_context = prepare_reasoning_context(query, verified_facts)
+            if reasoning_context:
+                context = reasoning_context
+            else:
+                context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Graph reasoning error: {e})")
+            context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+    else:
+        context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+
     prompt = f"""The user asked: {query}
 
-Use only the verified facts below to answer accurately. Cite sources as [doc: filename] when possible.
+Use only the verified facts and graph paths below to answer accurately. If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked. Cite sources as [doc: filename] when possible.
 If information is insufficient, say so.
 
 Context:
 {context}
 
 Answer:"""
-    return call_model(prompt, max_tokens=1024)
+    return call_model(prompt, max_tokens=32768)
