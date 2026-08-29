@@ -119,7 +119,7 @@ def format_graph_context(paths, facts):
     return "
 ".join(lines)
 
-def prepare_reasoning_context(query, facts):
+def prepare_reasoning_context(query, facts, active_entities=None):
     """Main entry: filter facts by hyperbolic radius and find graph paths."""
     if not facts:
         return ""
@@ -144,6 +144,8 @@ def prepare_reasoning_context(query, facts):
     # Extract query entities (simplified: use all tokens longer than 4)
     from core.text_utils import tokenize
     query_entities = [t for t in tokenize(query) if len(t) > 4]
+    if active_entities:
+        query_entities.extend([e for e in active_entities if e])
 
     paths = build_reasoning_paths(query_entities, candidate_entities,
                                   max_depth=getattr(config, "MIN_PATH_DEPTH", 3),

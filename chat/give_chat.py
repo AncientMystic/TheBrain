@@ -13,7 +13,7 @@ from core.model_router import get_chat_endpoint
 from core.metrics import inc_counter, Timer
 
 
-def generate_answer_verified(query: str, conversation_history: str = "") -> str:
+def generate_answer_verified(query: str, conversation_history: str = "", active_entities=None) -> str:
     inc_counter("chat_verified_requests_total")
     """
     Generate answer using GIVE pattern:
@@ -57,7 +57,7 @@ Answer:"""
     if getattr(config, "USE_CONTEXT_ORGANIZER", True):
         try:
             from chat.context_organizer import organize_facts
-            organized = organize_facts(verified_facts)
+            organized = organize_facts(verified_facts, active_entities=active_entities)
             if organized:
                 # Keep chunks as a separate section if available
                 if chunks:

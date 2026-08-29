@@ -542,6 +542,14 @@ def init_all():
         cur.execute("ALTER TABLE memory_sessions ADD COLUMN topic_centroid BLOB")
     conn.commit()
     conn.close()
+
+    # Add active_entities_json to memory_sessions
+    cur.execute("PRAGMA table_info(memory_sessions)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "active_entities_json" not in cols:
+        cur.execute("ALTER TABLE memory_sessions ADD COLUMN active_entities_json TEXT DEFAULT '[]'")
+    conn.commit()
+    conn.close()
     # Verification gate training data table (in reasoning.db)
     conn = db.db_connect("reasoning")
     cur = conn.cursor()

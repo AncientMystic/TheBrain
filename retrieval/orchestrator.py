@@ -25,7 +25,13 @@ def weighted_rrf(results_by_stage: Dict[str, List[Any]], weights: Dict[str, floa
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
-def run_graph_retriever(query, analysis, top_k=50):
+def run_graph_retriever(query, analysis, top_k=50, anchor_entities=None):
+    if anchor_entities:
+        # Merge anchor entities into analysis
+        if isinstance(anchor_entities, list):
+            for ent in anchor_entities:
+                if isinstance(ent, str):
+                    analysis["entities"].append({"text": ent})
     facts = retrieve_from_graph(analysis, top_k=top_k, max_depth=2)
     datapoints = []
     for f in facts:
@@ -189,13 +195,13 @@ class RetrievalOrchestrator:
             total = 1
         self.stage_weights = {k: v / total for k, v in self.stage_weights.items()}
 
-    def retrieve(self, query, analysis, top_k=30):
+    def retrieve(self, query, analysis, top_k=30, anchor_entities=None):
         """Run retrievers in parallel and fuse with WRRF."""
         inc_counter("retrieval_requests_total")
         with Timer("retrieval_duration_seconds"):
             stages = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                future_graph = executor.submit(run_graph_retriever, query, analysis, 50)
+                future_graph = executor.submit(run_graph_retriever, query, analysis, 50, anchor_entities=anchor_entities)
                 future_vector = executor.submit(run_vector_retriever, query, 20)
                 future_lexical = executor.submit(run_lexical_retriever, query, 20)
                 future_gnn = executor.submit(run_gnn_retriever, query, 10)

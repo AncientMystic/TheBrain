@@ -924,16 +924,39 @@ def main():
                     if memory_text:
                         context = memory_text + "\n\n" + context
 
-                    # Conversation-aware retrieval: augment query with active topic terms
+                    # Conversation-aware retrieval: augment query with active topic terms and coreference entities
                     active_terms = topic_state.get_active_terms() if hasattr(topic_state, "get_active_terms") else []
-                    if active_terms:
-                        augmented_query = query + " " + " ".join(active_terms)
+                    active_entities = []
+                    if getattr(config, "USE_COREFERENCE_RETRIEVAL", True):
+                        from chat.entity_tracker import load_active_entities, is_anaphoric
+                        active_entities = load_active_entities(session_id)
+                        # Detect if continuation
+                        try:
+                            from core.embeddings import get_embedding
+                            from core.hyperbolic import exp_map
+                            q_emb = get_embedding(query)
+                            q_h = exp_map(q_emb) if q_emb else None
+                            centroid = None
+                            conn = db.db_connect("memories")
+                            cur = conn.cursor()
+                            cur.execute("SELECT topic_centroid FROM memory_sessions WHERE session_id=?", (session_id,))
+                            row = cur.fetchone()
+                            conn.close()
+                            if row and row["topic_centroid"]:
+                                centroid = np.frombuffer(row["topic_centroid"], dtype=np.float32)
+                            continuation = is_anaphoric(query, active_entities, centroid, q_h)
+                        except Exception:
+                            continuation = False
+                        if continuation and active_entities:
+                            augmented_query = query + " " + " ".join(active_entities)
+                        else:
+                            augmented_query = query
                     else:
                         augmented_query = query
 
                     if getattr(config, "USE_VERIFIED_CHAT", True):
                         from chat.give_chat import generate_answer_verified
-                        answer = generate_answer_verified(augmented_query, conversation_history=conversation_history)
+                        answer = generate_answer_verified(augmented_query, conversation_history=conversation_history, active_entities=active_entities)
                     else:
                         analysis = analyze_query(augmented_query)
                         # fallback to normal retrieval with augmented query
@@ -952,6 +975,10 @@ def main():
                             chunks = fallback_to_chunks(augmented_query, top_k=chunk_top_k)
                             context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
                         answer = generate_answer(augmented_query, context)
+                    if getattr(config, "USE_COREFERENCE_RETRIEVAL", True):
+                        from chat.entity_tracker import extract_active_entities, save_active_entities
+                        active_entities_from_answer = extract_active_entities(answer)
+                        save_active_entities(session_id, active_entities_from_answer)
                     topic_state.update(query, answer)
 
                 if getattr(config, "USE_HYPERBOLIC_MEMORY", True):

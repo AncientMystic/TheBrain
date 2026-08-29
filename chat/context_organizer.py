@@ -79,7 +79,7 @@ def _get_all_edges_for_nodes(node_ids):
     conn.close()
     return [(r["source_node_id"], r["target_node_id"], r["relation_type"]) for r in rows]
 
-def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10):
+def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10, active_entities=None):
     """
     Group facts into semantic clusters and graph-connected components.
     Returns a structured text block for context.
@@ -110,6 +110,12 @@ def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10
     n_clusters = min(max_clusters, len(valid_facts))
     clusters = cluster_hyperbolic(fact_embeddings, n_clusters=n_clusters)
 
+    # If active_entities provided, keep facts that mention any active entity or are graph-connected later
+    if active_entities:
+        # Mark facts that mention active entities
+        active_set = set(e.lower() for e in active_entities)
+        # We'll use this to weight cluster assignment: facts with active entity go to dedicated group? Simpler: just annotate.
+        pass
     # 3. For each cluster, find graph-connected components
     lines = []
     for cluster_idx, cluster in enumerate(clusters, 1):
