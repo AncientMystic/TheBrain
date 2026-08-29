@@ -57,6 +57,10 @@ def get_recent_messages(session_id, max_turns=10):
     return [{"role": row["role"], "content": row["content"]} for row in rows]
 
 def get_conversation_context(session_id, max_turns=None):
+    if getattr(config, "USE_HYPERBOLIC_CONVERSATION_SUMMARY", True):
+        from chat.conversation_summarizer import get_hyperbolic_conversation_context
+        return get_hyperbolic_conversation_context(session_id, max_recent=5, max_clusters=3)
+
     """Build a context string from recent conversation, optionally summarizing older."""
     if max_turns is None:
         max_turns = config.CONVERSATION_MAX_TURNS

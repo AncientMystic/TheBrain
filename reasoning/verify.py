@@ -223,7 +223,17 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
                             for pe in prior_embs:
                                 if pe:
                                     pv = np.array(pe, dtype=np.float32)
-                                    sim = float(np.dot(claim_vec, pv) / (np.linalg.norm(claim_vec) * np.linalg.norm(pv) + 1e-8))
+                                    if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", True):
+
+                                        from core.hyperbolic import exp_map, hyperbolic_distance
+
+                                        d = hyperbolic_distance(exp_map(claim_vec), exp_map(pv))
+
+                                        sim = 1.0 / (1.0 + d)
+
+                                    else:
+
+                                        sim = float(np.dot(claim_vec, pv) / (np.linalg.norm(claim_vec) * np.linalg.norm(pv) + 1e-8))
                                     max_sim = max(max_sim, sim)
                             score = max(0.0, min(1.0, max_sim * 0.8 + (0.5 if consistent else 0.0)))
                         else:
