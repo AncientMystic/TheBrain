@@ -6,6 +6,9 @@ import math
 from typing import List, Dict
 from core import db
 import config
+from core.hyperbolic import hyperbolic_distance
+from core.embeddings import get_embedding
+from core.hyperbolic import exp_map
 
 
 class ActiveLearner:
@@ -49,7 +52,25 @@ class ActiveLearner:
         else:
             return entity
 
+    def select_gap_hyperbolic(self, query_embedding=None):
+        """Select gap using hyperbolic uncertainty (max distance from query)."""
+        if query_embedding is None:
+            return self.select_gap()
+        distances = []
+        for gap in self.gaps:
+            entity = gap.get("entity", "")
+            emb = get_embedding(entity)
+            if emb is not None:
+                h = exp_map(emb)
+                d = hyperbolic_distance(query_embedding, h)
+            else:
+                d = float('inf')
+            distances.append(d)
+        best_idx = max(range(len(distances)), key=lambda i: distances[i])
+        return self.gaps[best_idx]
+
     def run_round(self, process_file_callback, tracker, max_rounds=3):
+
         """Run active learning rounds using Recoll."""
         from core.recoll_client import RecollClient
         from deep_research.recoll_guided_learning import _log_query, _mark_processed

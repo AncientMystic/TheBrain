@@ -1,4 +1,3 @@
-
 import numpy as np
 from core import db
 from core.embeddings import get_embedding
@@ -74,6 +73,4 @@ def get_hyperbolic_conversation_context(session_id, max_recent=5, max_clusters=3
         role = "User" if msg["role"] == "user" else "Assistant"
         parts.append(f"{role}: {msg['content']}")
 
-    return "
-
-".join(parts)
+    return "\n\n".join(parts)

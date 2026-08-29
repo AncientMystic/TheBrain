@@ -705,6 +705,7 @@ def main():
 
     validate_config()
     init_all()
+    print("Initialization complete. Preparing processing...")
 
     # Train GNN if requested
     if train_gnn_flag:
@@ -1031,7 +1032,19 @@ Return only JSON."""
             return
         input_path = Path(input_path)
         files = scan_files(input_path)
+        print(f"Found {len(files)} files to process.")
+        # Curriculum ordering
+        if getattr(config, "USE_HYPERBOLIC_CURRICULUM", True):
+            print("Ordering files by hyperbolic curriculum...")
+            try:
+                from learning.curriculum import order_files_by_curriculum
+                files = order_files_by_curriculum(files)
+                print(f"  (Ordered {len(files)} files by hyperbolic curriculum)")
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Curriculum ordering error: {e})")
         total = len(files)
+        print("Starting document processing...")
         tracker = ProgressTracker()
         tracker.total_files = total
         tracker.processed_count = 0

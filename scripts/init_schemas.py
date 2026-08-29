@@ -515,6 +515,19 @@ def init_all():
     init_reasoning_db()
     init_recoll_log_db()
     init_verification_standards_db()
+    # Distilled extractor training data table
+    conn = db.db_connect("key_facts")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS distilled_training_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_text TEXT,
+            target_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
     # Add embedding_space to memory_entries
     conn = db.db_connect("memories")
     cur = conn.cursor()

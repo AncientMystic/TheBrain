@@ -420,6 +420,14 @@ USE_HYPERBOLIC_MEMORY = os.environ.get('USE_HYPERBOLIC_MEMORY', 'true').lower() 
 USE_HYPERBOLIC_CONVERSATION_SUMMARY = os.environ.get('USE_HYPERBOLIC_CONVERSATION_SUMMARY', 'true').lower() == 'true'
 MEMORY_CONSOLIDATION_THRESHOLD = float(os.environ.get('MEMORY_CONSOLIDATION_THRESHOLD', '0.5'))
 USE_HYPERBOLIC_CLUSTERING = os.environ.get('USE_HYPERBOLIC_CLUSTERING', 'false').lower() == 'true'
+USE_DISTILLED_EXTRACTOR = os.environ.get('USE_DISTILLED_EXTRACTOR', 'true').lower() == 'true'
+DISTILLED_MODEL_NAME = os.environ.get('DISTILLED_MODEL_NAME', 't5-small')
+DISTILLED_MODEL_DIR = str(BASE_DIR / 'models' / 'distilled_extractor')
+DISTILLED_CONFIDENCE_THRESHOLD = float(os.environ.get('DISTILLED_CONFIDENCE_THRESHOLD', '0.5'))
+COLLECT_DISTILLED_TRAINING_DATA = os.environ.get('COLLECT_DISTILLED_TRAINING_DATA', 'true').lower() == 'true'
+USE_HYPERBOLIC_CURRICULUM = os.environ.get('USE_HYPERBOLIC_CURRICULUM', 'true').lower() == 'true'
+USE_HYPERBOLIC_CONTRASTIVE = os.environ.get('USE_HYPERBOLIC_CONTRASTIVE', 'false').lower() == 'true'
+USE_HYPERBOLIC_ACTIVE_LEARNING = os.environ.get('USE_HYPERBOLIC_ACTIVE_LEARNING', 'true').lower() == 'true'
 HYPERBOLIC_MEMORY_TOP_K = int(os.environ.get('HYPERBOLIC_MEMORY_TOP_K', '5'))
 HYPERBOLIC_TOPIC_CENTROID_DECAY = float(os.environ.get('HYPERBOLIC_TOPIC_CENTROID_DECAY', '0.7'))
 CHAT_MIN_FACTS = int(os.environ.get('CHAT_MIN_FACTS', '10'))

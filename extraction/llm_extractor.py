@@ -406,13 +406,13 @@ def _normalize_chunk_data(data):
 def _extract_category_batch(category, chunks, model, logic_context="", endpoint=None):
     if category == "facts_entities_relationships":
         prompt_template = FACTS_ENTITIES_PROMPT_BATCH
-        max_tokens = 8192
+        max_tokens = 65536
     elif category == "people_locations_dates":
         prompt_template = PEOPLE_LOCATIONS_DATES_PROMPT_BATCH
-        max_tokens = 4096
+        max_tokens = 32768
     elif category == "events_discoveries_gems":
         prompt_template = EVENTS_DISCOVERIES_GEMS_PROMPT_BATCH
-        max_tokens = 4096
+        max_tokens = 32768
     else:
         raise ValueError("Unknown category")
 
@@ -529,10 +529,17 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
                 else:
                     resp = {}
 
+            # Ensure resp is a dict; if not, create empty dict
+            if not isinstance(resp, dict):
+                resp = {}
+
             for idx, original_idx in enumerate(uncached_indices):
                 key = f"chunk_{idx}"
                 chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
                 chunk_data = _normalize_chunk_data(chunk_data)
+                # If key missing or empty, set empty dict to avoid skipping chunk
+                if not chunk_data:
+                    chunk_data = {}
                 # Cache this chunk's result
                 chunk_hash = _hash_text(batch_chunks[original_idx])
                 _set_cached(chunk_hash, category, actual_model, 8192 if category=="facts_entities_relationships" else 4096, chunk_data, prompt_template)
@@ -663,6 +670,15 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
     # Gate integration (only if enabled and trained)
     gate = None
     gate_features_cache = {}
+
+    # Distilled extractor integration
+    distilled_extractor = None
+    if getattr(config, "USE_DISTILLED_EXTRACTOR", True):
+        try:
+            from extraction.distilled_extractor import generate_extraction
+            distilled_extractor = generate_extraction
+        except ImportError:
+            distilled_extractor = None
     if getattr(config, "USE_PRIME_EVEN_GATE", False):
         try:
             from extraction.gate import PrimeEvenGate
@@ -680,33 +696,67 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             gate = None
 
     selected_items = []
+
+    # Distilled extractor integration
+    distilled_extractor = None
+    if getattr(config, "USE_DISTILLED_EXTRACTOR", True):
+        try:
+            from extraction.distilled_extractor import generate_extraction
+            distilled_extractor = generate_extraction
+        except ImportError:
+            distilled_extractor = None
+
+    # Build local embedding matrix for spectral features (used by gate)
+    if chunk_embeddings is not None and len(chunks) > 0:
+        chunk_emb_matrix = np.array([np.array(emb, dtype=np.float32) for emb in chunk_embeddings if emb is not None])
+    else:
+        chunk_emb_matrix = None
+
     for i in range(len(chunks)):
         if not flags[i]:
             continue
+
         pre = fast_pre_results[i] if fast_pre_results else None
 
+        # 1. Try distilled extractor first
+        if distilled_extractor is not None:
+            try:
+                distilled_result = distilled_extractor(chunks[i])
+                if distilled_result is not None:
+                    all_results[i]["facts"] = distilled_result.get("facts", [])
+                    all_results[i]["entities"] = distilled_result.get("entities", [])
+                    all_results[i]["people"] = distilled_result.get("people", [])
+                    all_results[i]["locations"] = distilled_result.get("locations", [])
+                    all_results[i]["dates"] = distilled_result.get("dates", [])
+                    all_results[i]["events"] = distilled_result.get("events", [])
+                    all_results[i]["discoveries"] = distilled_result.get("discoveries", [])
+                    all_results[i]["gems"] = distilled_result.get("gems", [])
+                    continue
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Distilled extractor error: {e})")
+
+        # 2. Gate decision
         use_full_llm = True
         if gate is not None and chunk_embeddings is not None and chunk_embeddings[i] is not None:
-            # Compute spectral features using all chunk embeddings (cache with fixed key)
             if 'all' not in gate_features_cache:
                 from core.spectral import compute_spectral_features
-                emb_matrix = np.array([np.array(e, dtype=np.float32) for e in chunk_embeddings if e is not None])
-                feat = compute_spectral_features(emb_matrix, top_k=22)
+                feat = compute_spectral_features(chunk_emb_matrix, top_k=22)
                 gate_features_cache['all'] = feat
             feat = gate_features_cache['all']
             w = gate.forward(feat)
             if w < 0.5:
                 use_full_llm = False
 
+        # 3. Select for LLM or use fast-only
         if use_full_llm:
             selected_items.append((i, chunks[i], pre))
         else:
-            # Use fast extractor results only, mark as gate_skipped (no LLM)
             all_results[i]["entities"] = pre.get("entities", []) if pre else []
             all_results[i]["people"] = pre.get("people", []) if pre else []
             all_results[i]["locations"] = pre.get("locations", []) if pre else []
             all_results[i]["dates"] = pre.get("dates", []) if pre else []
-            # No facts/relationships from LLM
+            # No facts/relationships from LLM for this chunk
 
     skipped_count = len(chunks) - len(selected_items)
     if skipped_count > 0:
@@ -803,6 +853,39 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
 
     if pbar:
         pbar.close()
+
+    # Collect distilled training data from LLM-used chunks
+    if getattr(config, "COLLECT_DISTILLED_TRAINING_DATA", True):
+        try:
+            import json as json_mod
+            from core import db as db_mod
+            conn = db_mod.db_connect("key_facts")
+            cur = conn.cursor()
+            for batch_idx in sorted(results.keys()):
+                batch_indices = [idx for idx, _, _ in batches[batch_idx]]
+                for orig_idx, chunk_data in zip(batch_indices, results[batch_idx]):
+                    # Only collect if LLM produced facts/entities
+                    if chunk_data.get("facts") or chunk_data.get("entities"):
+                        target = {
+                            "facts": chunk_data.get("facts", []),
+                            "entities": chunk_data.get("entities", []),
+                            "people": chunk_data.get("people", []),
+                            "locations": chunk_data.get("locations", []),
+                            "dates": chunk_data.get("dates", []),
+                            "events": chunk_data.get("events", []),
+                            "discoveries": chunk_data.get("discoveries", []),
+                            "gems": chunk_data.get("gems", []),
+                        }
+                        chunk_text = chunks[orig_idx]
+                        cur.execute(
+                            "INSERT INTO distilled_training_data (chunk_text, target_json) VALUES (?,?)",
+                            (chunk_text, json_mod.dumps(target))
+                        )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Distilled training data collection error: {e})")
 
     for batch_idx in sorted(results.keys()):
         batch_indices = [idx for idx, _, _ in batches[batch_idx]]
