@@ -8,14 +8,18 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 _model = None
 _tokenizer = None
 _model_dir = None
+_missing_reported = False
 
 def load_model():
     global _model, _tokenizer, _model_dir
     if _model is not None:
         return True
+    global _missing_reported
     model_dir = Path(config.DISTILLED_MODEL_DIR)
     if not model_dir.exists():
-        print("  (Distilled extractor model directory not found; will fallback to LLM)")
+        if not _missing_reported:
+            print("  (Distilled extractor model directory not found; will fallback to LLM)")
+            _missing_reported = True
         return False
     try:
         _tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
