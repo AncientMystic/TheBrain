@@ -167,8 +167,8 @@ async def health():
                 "backend": ep.get("backend", "lmstudio"),
                 "ok": ok,
             })
-        except Exception:
-            statuses.append({"url": ep.get("url", ""), "ok": False})
+        except Exception as e:
+            statuses.append({"url": ep.get("url", ""), "ok": False, "error": str(e)})
     return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}
 
 @app.get("/metrics")

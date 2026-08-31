@@ -133,8 +133,14 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_fetch_batch_with_endpoint, ep, batch) for ep, batch in batch_tasks]
         for future in as_completed(futures):
-            for text, emb in future.result():
-                retrieved[text] = emb
+            try:
+                batch_result = future.result()
+                for text, emb in batch_result:
+                    retrieved[text] = emb
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Embedding batch failed: {e})")
+                # Continue with other batches; missing embeddings will be None
 
     # Store in persistent cache and fill result
     conn = db.db_connect("embeddings")

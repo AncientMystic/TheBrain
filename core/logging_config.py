@@ -35,6 +35,19 @@ def setup_logging(level=logging.INFO, json_logging=False):
     else:
         handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     root.addHandler(handler)
+
+    # Add file handler for persistence (especially in headless mode)
+    if json_logging:
+        try:
+            from pathlib import Path as PathLib
+            log_dir = PathLib(__file__).resolve().parent.parent / "logs"
+            log_dir.mkdir(exist_ok=True)
+            file_handler = logging.FileHandler(log_dir / "thebrain.log", encoding="utf-8")
+            file_handler.setFormatter(JsonFormatter())
+            root.addHandler(file_handler)
+        except Exception:
+            pass
+
     root.setLevel(level)
 
 

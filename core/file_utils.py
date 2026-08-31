@@ -8,6 +8,9 @@ import config
 
 def get_file_hash(filepath: str | Path) -> str:
     """Return SHA1 hash of file content (same as Vision Organizer Deep)."""
+    filepath = Path(filepath)
+    if not filepath.is_file():
+        raise FileNotFoundError(f"File not found: {filepath}")
     hasher = hashlib.sha1()
     with open(filepath, "rb") as f:
         while True:

@@ -15,7 +15,8 @@ def with_retry(func):
             try:
                 return func(*args, **kwargs)
             except sqlite3.OperationalError as e:
-                if "locked" in str(e) and attempt < max_retries - 1:
+                if (getattr(e, 'sqlite_errorcode', None) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                    and attempt < max_retries - 1):
                     time.sleep(delay * (2 ** attempt))
                     continue
                 raise
@@ -74,14 +75,17 @@ def _make_connection(db_type: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=60000")
+    conn.execute("PRAGMA busy_timeout=120000")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
     return conn
 
 
 @with_retry
 def db_connect(db_type: str = "index") -> sqlite3.Connection:
+    """Return a pooled SQLite connection for the requested database type."""
+
     if db_type not in DB_FILES:
         raise ValueError(f"Unknown database type: {db_type}")
     if not hasattr(_conn_local, "pool"):

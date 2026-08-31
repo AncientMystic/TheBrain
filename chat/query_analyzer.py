@@ -93,6 +93,9 @@ def extract_topic_terms(query: str) -> list:
         except Exception:
             pass
 
+    if not terms:
+        if config.DEBUG_VERBOSE:
+            print("    (Warning: extract_topic_terms returned empty list)")
     return terms[:10]
 
 

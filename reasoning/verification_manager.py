@@ -108,6 +108,32 @@ class VerificationManager:
         fact.update(triple)
 
         layers = [self._symstep(fact, accepted_facts)]
+        # Gated verification with identity default if untrained
+        if getattr(config, "USE_GATED_VERIFICATION", False):
+            try:
+                from pathlib import Path
+                from reasoning.verification_gate import VerificationGate
+                gate_path = Path(config.BASE_DIR) / "models" / "verification_gate.json"
+                if gate_path.exists():
+                    import numpy as np
+                    from reasoning.verification_gate import VerificationGate
+                    gate = VerificationGate()
+                    gate.load(gate_path)
+                    from core.spectral import compute_spectral_features
+                    fact_text = fact.get("fact_text", "")
+                    from core.embeddings import get_embedding
+                    emb = get_embedding(fact_text)
+                    if emb is not None:
+                        features = compute_spectral_features(np.array([emb], dtype=np.float32))
+                        weights = gate.forward(features)
+                        for v in layers:
+                            v["confidence"] *= weights.get(v["layer"], 1.0)
+                else:
+                    if config.DEBUG_VERBOSE:
+                        print("    (Verification gate not trained, using unscaled confidences)")
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Gated verification error: {e})")
 
         conf = sum(v["confidence"] for v in layers if v["verified"]) / max(1, len(layers))
         if conf < getattr(config, "VERIFICATION_ESCALATION_THRESHOLD", 0.7):

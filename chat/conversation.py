@@ -58,6 +58,8 @@ def get_recent_messages(session_id, max_turns=10):
     return [{"role": row["role"], "content": row["content"]} for row in rows]
 
 def get_conversation_context(session_id, max_turns=None):
+    """Build a context string from recent conversation messages."""
+
     if getattr(config, "USE_HYPERBOLIC_CONVERSATION_SUMMARY", True):
         from chat.conversation_summarizer import get_hyperbolic_conversation_context
         return get_hyperbolic_conversation_context(session_id, max_recent=5, max_clusters=3)
@@ -146,7 +148,9 @@ def _process_message_for_context(text, max_tokens=300):
             summary = summarize_chunk(text_without_code)
             if summary:
                 text_without_code = summary
-        except Exception:
+        except Exception as e:
+            if config.DEBUG_VERBOSE:
+                print(f"    (Conversation truncation error: {e})")
             text_without_code = text_without_code[:max_tokens*4] + "..."
     else:
         text_without_code = text_without_code.strip()

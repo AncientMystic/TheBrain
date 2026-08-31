@@ -61,7 +61,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -127,6 +127,16 @@ if not LLM_ENDPOINTS:
     raise RuntimeError("No LLM endpoints configured. Check LM_STUDIO_URL and MODEL_NAME.")
 if not EMBEDDING_ENDPOINTS:
     raise RuntimeError("No embedding endpoints configured. Check LM_STUDIO_URL and EMBEDDING_MODEL.")
+
+# Deduplicate endpoints by (url, model, backend)
+_seen = set()
+_unique_llm = []
+for _ep in LLM_ENDPOINTS:
+    _key = (_ep.get("url", ""), _ep.get("model", ""), _ep.get("backend", "lmstudio"))
+    if _key not in _seen:
+        _seen.add(_key)
+        _unique_llm.append(_ep)
+LLM_ENDPOINTS = _unique_llm
 
 # Derive capacities from endpoint definitions (after all endpoints merged)
 LLM_ENDPOINT_CAPACITIES = []

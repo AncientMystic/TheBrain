@@ -346,9 +346,29 @@ def process_file(filepath, tracker, logic_context=""):
         for fact, inserted_row in zip(all_extracted["facts"], inserted):
             fact_id = inserted_row["fact_id"]
             span = fact.get("source_span","")
-            cur_index.execute("SELECT chunk_id FROM document_chunks WHERE doc_hash=? AND chunk_text LIKE ? LIMIT 1", (file_hash, f"%{span}%"))
-            row = cur_index.fetchone()
-            chunk_id = row[0] if row else None
+            # Robust source span matching: fetch candidates, then case-insensitive containment
+
+            cur_index.execute("SELECT chunk_id, chunk_text FROM document_chunks WHERE doc_hash=? LIMIT 5", (file_hash,))
+
+            candidates = cur_index.fetchall()
+
+            chunk_id = None
+
+            if candidates:
+
+                # Normalize span for comparison (lowercase, collapse spaces)
+
+                span_norm = " ".join(span.lower().split())
+
+                for cid, ctext in candidates:
+
+                    ctext_norm = " ".join(ctext.lower().split())
+
+                    if span_norm and span_norm in ctext_norm:
+
+                        chunk_id = cid
+
+                        break
             if chunk_id:
                 source_rows.append((fact_id, file_hash, chunk_id, span, span))
             if fact.get("canonical_value"):
@@ -503,7 +523,7 @@ def review_contradictions():
 
     print(f"Found {len(rows)} contradictions in review queue:")
     for row in rows:
-        details = row["details"] or row["resolved_by"] or ""
+        details = row["details"] or row["resolved_by"] or "No details available"
         print(f"  ID {row['id']}: {details}")
     print("\nUse --audit to run a new audit or manually review the database.")
 
@@ -638,14 +658,16 @@ def update_status(message):
 
 
 
-def direct_document_lookup(query, top_k=10):
+
+
+def direct_document_lookup(query, top_k=1000):
     """Retrieve documents based on direct references in query (episode numbers, list requests)."""
     import re
     from core import db
 
     doc_hashes = []
     ep_match = re.search(r'(?:episode|ep|#)\s*(\d{2,3})', query, re.IGNORECASE)
-    list_match = re.search(r'(?:what episodes|list episodes|which episodes).*?(?:for|of|about)?\s*(.+)', query, re.IGNORECASE)
+    list_match = re.search(r'(?:list|what|which).*?episodes', query, re.IGNORECASE)
 
     if ep_match:
         num = ep_match.group(1)
@@ -657,7 +679,16 @@ def direct_document_lookup(query, top_k=10):
         conn.close()
         doc_hashes.extend([r['file_hash'] for r in rows])
     elif list_match:
-        search_term = list_match.group(1).strip().lower().rstrip('?!.')
+        # Extract a broader search term (default to "why files" if none)
+        search_term = ''
+        m = re.search(r'(?:for|of|about)\s*(.+?)\s*$', query, re.IGNORECASE)
+        if m:
+            search_term = m.group(1).strip().lower().rstrip('?!.')
+        if not search_term:
+            search_term = "why files"
+        # Normalize: remove leading "the " if present
+        if search_term.startswith("the "):
+            search_term = search_term[4:]
         conn = db.db_connect("index")
         cur = conn.cursor()
         cur.execute("SELECT file_hash, filename, title FROM documents WHERE filename LIKE ? OR title LIKE ? ORDER BY filename",
@@ -666,6 +697,7 @@ def direct_document_lookup(query, top_k=10):
         conn.close()
         doc_hashes.extend([r['file_hash'] for r in rows])
     else:
+        # Fallback numeric
         num_match = re.search(r'\b(\d{2,3})\b', query)
         if num_match:
             num = num_match.group(1)
@@ -684,6 +716,29 @@ def direct_document_lookup(query, top_k=10):
     chunks = []
     seen_facts = set()
     seen_chunks = set()
+
+    # If list request, produce synthetic facts listing all documents
+    if list_match:
+        for dh in doc_hashes:
+            conn = db.db_connect("index")
+            cur = conn.cursor()
+            cur.execute("SELECT title, filename FROM documents WHERE file_hash=?", (dh,))
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                display = row['title'] or row['filename']
+                facts.append({
+                    'fact_id': f"doc_{dh}",
+                    'doc_hash': dh,
+                    'doc_name': display,
+                    'fact_text': f"Available episode/document: {display}",
+                    'canonical_value': display,
+                    'source_span': '',
+                    'confidence': 1.0,
+                })
+        return facts, chunks
+
+    # Otherwise fetch facts/chunks for matched documents
     for dh in doc_hashes:
         conn = db.db_connect("key_facts")
         cur = conn.cursor()
@@ -735,6 +790,11 @@ def main():
     train_gnn_flag = "--train-gnn" in sys.argv
     maintenance_mode = "--maintenance" in sys.argv
     interactive = "--interactive" in sys.argv
+    session_id = None
+    if "--session" in sys.argv:
+        idx = sys.argv.index("--session") + 1
+        if idx < len(sys.argv):
+            session_id = sys.argv[idx]
     input_path = None
     if "--input" in sys.argv:
         idx = sys.argv.index("--input") + 1
@@ -753,6 +813,7 @@ def main():
                 i += 1
 
     recoll_query = None
+    # removed duplicate assignment below
     if "--recoll-query" in sys.argv:
         idx = sys.argv.index("--recoll-query") + 1
         if idx < len(sys.argv):
@@ -923,7 +984,10 @@ def main():
         from deep_research.coordinator import DeepResearchCoordinator
 
         print("Chat mode. Type 'exit' to quit. Add --deep-research to enable autonomous research.")
-        session_id = f"cli_{int(time.time())}"
+        if session_id is None:
+            session_id = f"cli_{int(time.time())}"
+        else:
+            print(f"Resuming session: {session_id}")
         while True:
             try:
                 query = input("You: ")

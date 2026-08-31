@@ -239,6 +239,10 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             VALUES (?, ?, ?, 'mentions')
         """, (doc_hash, gid, 1.0))
 
+    # Normalize relation_type values to strings
+    for rel in extracted_data.get("relationships", []):
+        if isinstance(rel, dict):
+            rel["relation_type"] = _safe_str(rel.get("relation_type", "related"))
     # Handle relationships (endpoints as generic nodes)
     for rel in extracted_data.get("relationships", []):
         src_name = rel.get("source_node")
