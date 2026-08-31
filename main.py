@@ -636,6 +636,85 @@ def update_status(message):
     print(f"\r{message}", end="", flush=True)
 
 
+
+
+def direct_document_lookup(query, top_k=10):
+    """Retrieve documents based on direct references in query (episode numbers, list requests)."""
+    import re
+    from core import db
+
+    doc_hashes = []
+    ep_match = re.search(r'(?:episode|ep|#)\s*(\d{2,3})', query, re.IGNORECASE)
+    list_match = re.search(r'(?:what episodes|list episodes|which episodes).*?(?:for|of|about)?\s*(.+)', query, re.IGNORECASE)
+
+    if ep_match:
+        num = ep_match.group(1)
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT file_hash, filename, title FROM documents WHERE filename LIKE ? OR title LIKE ?",
+                    (f'%{num}%', f'%{num}%'))
+        rows = cur.fetchall()
+        conn.close()
+        doc_hashes.extend([r['file_hash'] for r in rows])
+    elif list_match:
+        search_term = list_match.group(1).strip().lower().rstrip('?!.')
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT file_hash, filename, title FROM documents WHERE filename LIKE ? OR title LIKE ? ORDER BY filename",
+                    (f'%{search_term}%', f'%{search_term}%'))
+        rows = cur.fetchall()
+        conn.close()
+        doc_hashes.extend([r['file_hash'] for r in rows])
+    else:
+        num_match = re.search(r'\b(\d{2,3})\b', query)
+        if num_match:
+            num = num_match.group(1)
+            conn = db.db_connect("index")
+            cur = conn.cursor()
+            cur.execute("SELECT file_hash, filename, title FROM documents WHERE filename LIKE ? OR title LIKE ?",
+                        (f'%{num}%', f'%{num}%'))
+            rows = cur.fetchall()
+            conn.close()
+            doc_hashes.extend([r['file_hash'] for r in rows])
+
+    if not doc_hashes:
+        return [], []
+
+    facts = []
+    chunks = []
+    seen_facts = set()
+    seen_chunks = set()
+    for dh in doc_hashes:
+        conn = db.db_connect("key_facts")
+        cur = conn.cursor()
+        cur.execute("SELECT fact_id, doc_hash, doc_name, fact_text, canonical_value, source_span, confidence FROM key_facts WHERE doc_hash=? ORDER BY confidence DESC LIMIT 200", (dh,))
+        frows = cur.fetchall()
+        conn.close()
+        for f in frows:
+            fid = f['fact_id']
+            if fid not in seen_facts:
+                seen_facts.add(fid)
+                facts.append({
+                    'fact_id': fid,
+                    'doc_hash': f['doc_hash'],
+                    'doc_name': f['doc_name'],
+                    'fact_text': f['fact_text'],
+                    'canonical_value': f['canonical_value'],
+                    'source_span': f['source_span'],
+                    'confidence': f['confidence'],
+                })
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE doc_hash=? ORDER BY chunk_index LIMIT 30", (dh,))
+        crows = cur.fetchall()
+        conn.close()
+        for c in crows:
+            cid = c['chunk_id']
+            if cid not in seen_chunks:
+                seen_chunks.add(cid)
+                chunks.append((0, cid, c['doc_hash'], c['chunk_text']))
+    return facts, chunks
+
 def main():
     if "--debug" in sys.argv:
         config.DEBUG_VERBOSE = True
@@ -840,13 +919,11 @@ def main():
 
     if chat_mode or deep_research:
         from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
-        from chat.conversation import add_message, get_conversation_context
-        from chat.conversation_state import ConversationTopicState
+        from chat.conversation import add_message, get_conversation_context, get_hyperbolic_conversation_history
         from deep_research.coordinator import DeepResearchCoordinator
 
         print("Chat mode. Type 'exit' to quit. Add --deep-research to enable autonomous research.")
         session_id = f"cli_{int(time.time())}"
-        topic_state = ConversationTopicState()
         while True:
             try:
                 query = input("You: ")
@@ -859,7 +936,7 @@ def main():
                     continue
 
                 add_message(session_id, "user", query)
-                conversation_history = get_conversation_context(session_id)
+                conversation_history = get_hyperbolic_conversation_history(session_id, query)
 
                 if deep_research:
                     coordinator = DeepResearchCoordinator(session_id)
@@ -877,136 +954,42 @@ def main():
                             cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (lid,))
                             row = cur.fetchone()
                             if row:
-                                logic_context += f"[Logic: {row[0]} ({row[1]})]\n{row[2]}\n{row[3]}\n\n"
+                                logic_context += f"[Logic: {row[0]} ({row[1]})\n{row[2]}\n{row[3]}\n\n"
                         conn.close()
 
                     memories = retrieve_memories(query, top_k=5, session_id=session_id)
                     memory_text = "\n".join([f"[Memory] {m[2]}" for m in memories])
 
                     analysis = analyze_query(query)
-                    if debug_retrieval:
-                        print("\n[DEBUG-RETRIEVAL] Query:", query)
 
-                    detail_mode = analysis.get("intent") == "detail"
-                    chunk_top_k = max(getattr(config, "CHAT_TOP_K_CHUNKS", 10), 15) if detail_mode else getattr(config, "CHAT_TOP_K_CHUNKS", 10)
-                    extra_terms = topic_state.get_active_terms()
+                    # Direct document lookup for episode/numeric references
+                    direct_facts, direct_chunks = direct_document_lookup(query)
 
-                    if getattr(config, 'USE_MULTI_STAGE_RETRIEVAL', True):
-                        from retrieval.orchestrator import RetrievalOrchestrator
-                        orchestrator = RetrievalOrchestrator()
-                        datapoints = orchestrator.retrieve(query, analysis, top_k=60)
-                        facts = [dp for dp in datapoints if dp.get('type') == 'fact']
-                        chunks = []
-                        for dp in datapoints:
-                            if dp.get('type') == 'chunk_ref':
-                                chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
-                        context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
-                    else:
-                        try:
-                            from retrieval.datapoint_retriever import retrieve_datapoints, get_chunks_for_datapoints
+                    facts = retrieve_from_graph(analysis, top_k=150, max_depth=2)
+                    chunks = fallback_to_chunks(query, top_k=12)
 
-                            datapoints = retrieve_datapoints(query, extra_terms=extra_terms)
-                            if datapoints:
-                                selected_dps = datapoints[:getattr(config, "MAX_SELECTED_NODES", 15)]
+                    # Merge direct facts
+                    existing_fact_ids = {f.get('fact_id') for f in facts if f.get('fact_id')}
+                    for df in direct_facts:
+                        if df.get('fact_id') not in existing_fact_ids:
+                            facts.append(df)
+                            existing_fact_ids.add(df.get('fact_id'))
 
-                                # Always pull document/summary datapoints, even if they rank below top-15
-                                doc_dps = [dp for dp in datapoints if dp.get("type") in ("document", "summary")][:10]
-                                for dp in doc_dps:
-                                    if dp not in selected_dps:
-                                        selected_dps.insert(0, dp)
+                    # Merge direct chunks
+                    existing_chunk_ids = {c[0] for c in chunks if c[0]}
+                    for dc in direct_chunks:
+                        if dc[0] not in existing_chunk_ids:
+                            chunks.append(dc)
+                            existing_chunk_ids.add(dc[0])
 
-                                chunks = get_chunks_for_datapoints(selected_dps)
-                                facts = [dp for dp in selected_dps if dp.get("type") == "fact"]
-
-                                doc_lines = []
-                                for dp in doc_dps:
-                                    if dp.get("type") == "document":
-                                        doc_lines.append(f"[Document] {dp.get('text')}")
-                                    elif dp.get("type") == "summary":
-                                        doc_lines.append(f"[Summary] {dp.get('text')}")
-                                doc_context = "\n".join(doc_lines) if doc_lines else ""
-
-                                base_context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=True)
-                                context = (doc_context + "\n\n" + base_context) if doc_context else base_context
-                            else:
-                                facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
-                                chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
-                                context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
-                        except Exception as e:
-                            if debug_retrieval:
-                                print(f"    (Map retrieval error: {e})")
-                            facts = retrieve_from_graph(analysis, top_k=50, max_depth=2, debug=debug_retrieval)
-                            chunks = fallback_to_chunks(query, top_k=chunk_top_k, debug=debug_retrieval)
-                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history, detail_mode=detail_mode)
-
+                    context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
                     if logic_context:
                         context = logic_context + "\n\n" + context
                     if memory_text:
                         context = memory_text + "\n\n" + context
 
-                    # Conversation-aware retrieval: augment query with active topic terms and coreference entities
-                    active_terms = topic_state.get_active_terms() if hasattr(topic_state, "get_active_terms") else []
-                    active_entities = []
-                    if getattr(config, "USE_COREFERENCE_RETRIEVAL", True):
-                        from chat.entity_tracker import load_active_entities, is_anaphoric
-                        active_entities = load_active_entities(session_id)
-                        # Detect if continuation
-                        try:
-                            from core.embeddings import get_embedding
-                            from core.hyperbolic import exp_map
-                            q_emb = get_embedding(query)
-                            q_h = exp_map(q_emb) if q_emb else None
-                            centroid = None
-                            conn = db.db_connect("memories")
-                            cur = conn.cursor()
-                            cur.execute("SELECT topic_centroid FROM memory_sessions WHERE session_id=?", (session_id,))
-                            row = cur.fetchone()
-                            conn.close()
-                            if row and row["topic_centroid"]:
-                                centroid = np.frombuffer(row["topic_centroid"], dtype=np.float32)
-                            continuation = is_anaphoric(query, active_entities, centroid, q_h)
-                        except Exception:
-                            continuation = False
-                        if continuation and active_entities:
-                            augmented_query = query + " " + " ".join(active_entities)
-                        else:
-                            augmented_query = query
-                    else:
-                        augmented_query = query
+                    answer = generate_answer(query, context)
 
-                    if getattr(config, "USE_VERIFIED_CHAT", True):
-                        from chat.give_chat import generate_answer_verified
-                        answer = generate_answer_verified(augmented_query, conversation_history=conversation_history, active_entities=active_entities)
-                        # Clean citations if needed
-                        doc_names = [dp.get('doc_name','') for dp in datapoints if dp.get('doc_name')]
-                        answer = clean_answer_citations(answer, doc_names)
-                    else:
-                        analysis = analyze_query(augmented_query)
-                        # fallback to normal retrieval with augmented query
-                        if getattr(config, 'USE_MULTI_STAGE_RETRIEVAL', True):
-                            from retrieval.orchestrator import RetrievalOrchestrator
-                            orchestrator = RetrievalOrchestrator()
-                            datapoints = orchestrator.retrieve(augmented_query, analysis)
-                            facts = [dp for dp in datapoints if dp.get('type') == 'fact']
-                            chunks = []
-                            for dp in datapoints:
-                                if dp.get('type') == 'chunk_ref':
-                                    chunks.append((0, dp.get('chunk_id'), dp.get('doc_hash'), dp.get('text', '')))
-                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
-                        else:
-                            facts = retrieve_from_graph(analysis, top_k=50)
-                            chunks = fallback_to_chunks(augmented_query, top_k=chunk_top_k)
-                            context = build_context(facts, chunks=chunks, conversation_history=conversation_history)
-                        answer = generate_answer(augmented_query, context)
-                    if getattr(config, "USE_COREFERENCE_RETRIEVAL", True):
-                        from chat.entity_tracker import extract_active_entities, save_active_entities
-                        active_entities_from_answer = extract_active_entities(answer)
-                        save_active_entities(session_id, active_entities_from_answer)
-                    topic_state.update(query, answer)
-
-                if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
-                    from memory.hyperbolic_memory import update_session_centroid
-                    update_session_centroid(session_id, query, answer)
                 add_message(session_id, "assistant", answer)
                 print(f"Assistant:\n{answer}\n---")
             except KeyboardInterrupt:

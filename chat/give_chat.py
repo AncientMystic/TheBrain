@@ -1,3 +1,4 @@
+
 """
 GIVE-pattern verified chat.
 Observe -> Reflect -> Speak
@@ -11,6 +12,7 @@ from chat.query_analyzer import analyze_query
 from chat.context_builder import build_context
 from core.model_router import get_chat_endpoint
 from core.metrics import inc_counter, Timer
+from chat.responder import clean_answer
 
 
 def generate_answer_verified(query: str, conversation_history: str = "", active_entities=None) -> str:
@@ -51,7 +53,8 @@ Context:
 {context}
 
 Answer:"""
-        return call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+        raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+        return clean_answer(raw_answer)
 
     # Filter chunks: keep only those whose doc_hash appears in verified_facts
     verified_doc_hashes = {f.get("doc_hash") for f in verified_facts if f.get("doc_hash")}
@@ -88,4 +91,5 @@ Context:
 {context}
 
 Answer:"""
-    return call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+    return clean_answer(raw_answer)

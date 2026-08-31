@@ -20,6 +20,7 @@ from fast_extractor.hybrid_extractor import FastExtractor
 from extraction.cleaners import *
 from core.schema_validation import validate_and_coerce
 
+
 # ============================================================
 #  FEW-SHOT EXAMPLES
 # ============================================================
@@ -539,7 +540,7 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
 
     return results
 
-# Only one _get_dynamic_capacities, with config flag check
+# Single _get_dynamic_capacities (with config flag)
 _endpoint_capacities_cache = None
 
 def _get_dynamic_capacities():
@@ -549,9 +550,9 @@ def _get_dynamic_capacities():
     if not getattr(config, "USE_DYNAMIC_ENDPOINT_BALANCING", False):
         return None
     capacities = []
+    import time as _time
     for ep in config.LLM_ENDPOINTS:
         try:
-            import time as _time
             start = _time.time()
             from core.llm import call_model
             resp = call_model("ping", max_tokens=2, endpoint=ep)

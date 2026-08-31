@@ -65,6 +65,10 @@ def ocr_pdf_pages(pdf_path, max_pages=None, dpi=None, title_pages=None, title_dp
     return combined
 
 
+def extract_pdf_with_timeout(filepath: Path, timeout=60) -> dict:
+    """Extract PDF without multiprocessing (Windows compatible)."""
+    return extract_pdf(filepath)
+
 def extract_pdf(filepath: Path) -> dict:
     """
     Extract text from PDF. Try PyMuPDF text extraction first.

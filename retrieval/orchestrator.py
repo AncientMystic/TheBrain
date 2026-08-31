@@ -139,6 +139,7 @@ class RetrievalOrchestrator:
                 'gnn': 0.0,
                 'topic_index': 0.2,
                 'hierarchical': 0.1,
+                'direct': 0.5,
             }
         if 'topic_index' not in self.stage_weights:
             self.stage_weights['topic_index'] = getattr(config, 'TOPIC_INDEX_STAGE_WEIGHT', 0.2)
@@ -213,6 +214,9 @@ class RetrievalOrchestrator:
         inc_counter("retrieval_requests_total")
         with Timer("retrieval_duration_seconds"):
             stages = {}
+            direct_dps = run_direct_document_retriever(query)
+            if direct_dps:
+                stages['direct'] = direct_dps
             with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
                 future_graph = executor.submit(run_graph_retriever, query, analysis, None, anchor_entities=anchor_entities)
                 future_vector = executor.submit(run_vector_retriever, query, 200)
@@ -249,3 +253,65 @@ class RetrievalOrchestrator:
             if len(candidates) > 500:
                 candidates = candidates[:500]
             return candidates
+
+
+def run_direct_document_retriever(query, top_k=5):
+    """Retrieve documents whose filename/title matches a direct numeric/episode reference."""
+    import re
+    from core import db
+
+    patterns = [
+        r'episode\s*(\d+)',
+        r'\b(\d{2,3})\b',
+    ]
+    doc_matches = []
+    for pat in patterns:
+        m = re.search(pat, query, re.IGNORECASE)
+        if m:
+            num = m.group(1)
+            conn = db.db_connect("index")
+            cur = conn.cursor()
+            cur.execute("SELECT file_hash, filename, title FROM documents WHERE filename LIKE ? OR title LIKE ? LIMIT ?",
+                        (f'%{num}%', f'%{num}%', top_k))
+            rows = cur.fetchall()
+            conn.close()
+            doc_matches.extend(rows)
+            break
+
+    datapoints = []
+    seen_hashes = set()
+    for d in doc_matches:
+        doc_hash = d['file_hash']
+        if doc_hash in seen_hashes:
+            continue
+        seen_hashes.add(doc_hash)
+        conn = db.db_connect("key_facts")
+        cur = conn.cursor()
+        cur.execute("SELECT fact_id, doc_hash, doc_name, fact_text, canonical_value, source_span, confidence FROM key_facts WHERE doc_hash=? ORDER BY confidence DESC LIMIT 200", (doc_hash,))
+        facts = cur.fetchall()
+        conn.close()
+        for f in facts:
+            datapoints.append({
+                'id': f"direct_fact:{f['fact_id']}",
+                'type': 'fact',
+                'text': f['fact_text'],
+                'doc_hash': f['doc_hash'],
+                'doc_name': f['doc_name'],
+                'confidence': f['confidence'],
+                'source_span': f['source_span'],
+            })
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE doc_hash=? ORDER BY chunk_index LIMIT 20", (doc_hash,))
+        chunks = cur.fetchall()
+        conn.close()
+        for c in chunks:
+            datapoints.append({
+                'id': f"direct_chunk:{c['chunk_id']}",
+                'type': 'chunk_ref',
+                'text': c['chunk_text'][:500],
+                'doc_hash': c['doc_hash'],
+                'chunk_id': c['chunk_id'],
+                'confidence': 0.8,
+            })
+    return datapoints
