@@ -48,6 +48,10 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
   - [Training Gate Models](#training-gate-models)
   - [Active Learning Review](#active-learning-review)
   - [Memory Consolidation](#memory-consolidation)
+  - [Data Audit & Extraction Coverage](#data-audit--extraction-coverage)
+  - [Reprocess Deficient Documents](#reprocess-deficient-documents)
+  - [Hyperbolic Embedding Migration](#hyperbolic-embedding-migration)
+- [Training Models](#training-models)
 - [Directory Structure](#directory-structure)
 - [Database Schemas](#database-schemas)
 - [How It Works](#how-it-works)
@@ -732,6 +736,108 @@ python scripts/consolidate_memories.py
 
 This uses `MEMORY_CONSOLIDATION_THRESHOLD` (similarity) to decide which memories to merge. The resulting consolidated memories have hyperbolic centroid embeddings.
 
+### Data Audit & Extraction Coverage
+
+Audit extracted knowledge against document chunks to find gaps and malformed entries:
+
+```bash
+python scripts/audit_extraction_coverage.py --min-items-per-chunk 0.5 --show-samples
+```
+
+Flags:
+- `--min-items-per-chunk` – minimum total extracted items per chunk to consider adequate.
+- `--show-samples` – display examples of invalid source spans.
+
+### Reprocess Deficient Documents
+
+Re‑extract documents with low fact density using full LLM extraction:
+
+```bash
+python scripts/reprocess_deficient.py --min-facts-per-chunk 0.2 --limit 50
+```
+
+Flags:
+- `--min-facts-per-chunk` – threshold for fact density.
+- `--limit` – maximum number of documents to reprocess.
+- `--dry-run` – list deficient documents without processing.
+
+### Hyperbolic Embedding Migration
+
+Migrate existing embeddings to hyperbolic space and backfill missing fact embeddings:
+
+```bash
+python scripts/migrate_hyperbolic.py
+```
+
+---
+
+## Training Models
+
+TheBrain includes several trainable models. Each can be trained after appropriate data has been collected.
+
+### Graph Neural Network (GNN)
+
+Trains GraphSAGE on the external knowledge graph using hyperbolic‑derived node features.
+
+```bash
+python scripts/train_gnn.py
+```
+
+Outputs:
+- `models/gnn/gnn_sage.pt` – trained model weights.
+- `models/gnn/node_embeddings.npy` – hyperbolic node embeddings.
+- `models/gnn/node_ids.npy` – mapping of node IDs.
+
+Requires PyTorch. The trained model is used when `USE_GNN = True` in `config.py`.
+
+### Prime‑Even Gate
+
+Trains the gate that determines which chunks need full LLM extraction.
+
+1. Enable `USE_PRIME_EVEN_GATE=true` in config.
+2. Process documents to collect training data.
+3. Run:
+
+```bash
+python scripts/train_gate.py
+```
+
+The gate is saved to `models/gate.json`.
+
+### Verification Gate
+
+Trains the per‑verifier confidence scaling gate.
+
+1. Enable `USE_GATED_VERIFICATION=true`.
+2. Process documents.
+3. Run:
+
+```bash
+python scripts/train_verification_gate.py
+```
+
+The gate is saved to `models/verification_gate.json`.
+
+### Distilled Extractor
+
+Trains a smaller seq2seq model for faster extraction. Requires the distilled training data collected during processing.
+
+```bash
+python scripts/train_distilled_extractor.py
+```
+
+The model is saved to `models/distilled_extractor/`. Set `USE_DISTILLED_EXTRACTOR=true` in config to use it.
+
+### Topic Shift LSTM
+
+Trains the conversational topic shift detector.
+
+```bash
+python scripts/train_topic_shift.py
+```
+
+The model is saved to `models/topic_shift/topic_shift_lstm.pt`.
+
 ---
 
 ## Directory Structure
@@ -899,7 +1005,6 @@ All schemas are created automatically on first run.
 - Socratic/PSYOP scoring quality depends on the selected LLM.
 - Backend-specific behavior, especially embedding formats, may vary between providers.
 - GNN training requires PyTorch and may be resource-intensive for very large graphs.
-- Hyperbolic embeddings require re-processing documents to generate them; existing Euclidean embeddings remain until backfilled.
 
 ---
 
