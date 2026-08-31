@@ -5,23 +5,39 @@ from core import db
 from core.embeddings import get_embedding
 from core.hyperbolic import exp_map, hyperbolic_distance
 
-def filter_by_hyperbolic_radius(facts, query_emb, radius):
-    """Keep only facts whose hyperbolic distance to the query is below radius."""
+def filter_by_hyperbolic_radius(facts, query_emb, radius=None):
+    """Keep facts within a dynamic hyperbolic radius. If radius is None, compute it."""
     if not facts or query_emb is None:
         return facts
-    filtered = []
+    candidate_embs = []
+    fact_embs_pairs = []
     for fact in facts:
         text = fact.get("fact_text", "")
         if not text:
+            fact_embs_pairs.append((fact, None))
+            candidate_embs.append(None)
             continue
         emb = get_embedding(text)
         if emb is None:
-            # If embedding fails, keep fact but mark? For safety, keep.
-            filtered.append(fact)
+            fact_embs_pairs.append((fact, None))
+            candidate_embs.append(None)
             continue
         h_emb = exp_map(np.array(emb, dtype=np.float32))
-        d = hyperbolic_distance(query_emb, h_emb)
-        if d <= radius:
+        candidate_embs.append(h_emb)
+        fact_embs_pairs.append((fact, h_emb))
+    valid_embs = [e for e in candidate_embs if e is not None]
+    if radius is None:
+        from core.dynamic_hyperbolic import dynamic_radius
+        radius = dynamic_radius(query_emb, valid_embs,
+                                k=getattr(config, "DYNAMIC_RADIUS_K", 10),
+                                scale=getattr(config, "DYNAMIC_RADIUS_SCALE", 1.2))
+    filtered = []
+    for fact, h_emb in fact_embs_pairs:
+        if h_emb is not None:
+            d = hyperbolic_distance(query_emb, h_emb)
+            if d <= radius:
+                filtered.append(fact)
+        else:
             filtered.append(fact)
     return filtered
 
@@ -131,7 +147,7 @@ def prepare_reasoning_context(query, facts, active_entities=None):
 
     # Filter by radius
     radius = getattr(config, "HYPERBOLIC_FILTER_RADIUS", 1.0)
-    filtered = filter_by_hyperbolic_radius(facts, q_h, radius)
+    filtered = filter_by_hyperbolic_radius(facts, q_h, radius=None)
     if not filtered:
         return ""
 

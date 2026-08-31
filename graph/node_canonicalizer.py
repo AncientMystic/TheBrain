@@ -10,20 +10,15 @@ def normalize_name(name: str) -> str:
     return name
 
 
-def cosine_similarity(a, b):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-8
-    return float(np.dot(a, b) / denom)
+
 
 
 def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict],
                               threshold: float = 0.85, name_embedding=None,
                               existing_emb_matrix=None, existing_emb_ids=None) -> int | None:
-    """
-    Find matching global node using exact name, fuzzy matching, and embedding similarity.
-    If existing_emb_matrix and existing_emb_ids are provided, uses vectorized cosine similarity.
-    """
+    """Find matching global node using exact name, fuzzy matching, and hyperbolic embedding similarity."""
+    from core.hyperbolic import hyperbolic_distance
+
     norm_name = normalize_name(name)
     best_id = None
     best_score = 0.0
@@ -41,27 +36,31 @@ def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict
                 best_score = score
                 best_id = node["global_node_id"]
 
-    if best_score >= threshold:
+    # Dynamic threshold based on embedding similarities if available
+    dynamic_threshold = threshold
+    if name_embedding is not None and len(global_nodes) > 0:
+        all_sims = []
+        for node in global_nodes:
+            if node["node_type"] == node_type and node.get("embedding") is not None:
+                emb = np.frombuffer(node["embedding"], dtype=np.float32)
+                dist = hyperbolic_distance(name_embedding, emb)
+                sim = 1.0 / (1.0 + dist)
+                all_sims.append(sim)
+        if all_sims:
+            median_sim = float(np.median(all_sims))
+            dynamic_threshold = max(0.7, min(threshold, median_sim))
+    if best_score >= dynamic_threshold:
         return best_id
 
-    # 3. Embedding similarity (if provided)
+    # 3. Hyperbolic embedding similarity
     if name_embedding is not None:
         best_sim = 0.0
         best_id_emb = None
         for node in global_nodes:
             if node["node_type"] == node_type and node.get("embedding") is not None:
                 emb = np.frombuffer(node["embedding"], dtype=np.float32)
-                if node.get("embedding_space") == "hyperbolic":
-
-                    from core.hyperbolic import hyperbolic_distance
-
-                    dist = hyperbolic_distance(name_embedding, emb)
-
-                    sim = 1.0 / (1.0 + dist)
-
-                else:
-
-                    sim = cosine_similarity(name_embedding, emb)
+                dist = hyperbolic_distance(name_embedding, emb)
+                sim = 1.0 / (1.0 + dist)
                 if sim > best_sim:
                     best_sim = sim
                     best_id_emb = node["global_node_id"]

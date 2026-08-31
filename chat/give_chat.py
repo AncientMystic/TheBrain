@@ -53,6 +53,10 @@ Context:
 Answer:"""
         return call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
 
+    # Filter chunks: keep only those whose doc_hash appears in verified_facts
+    verified_doc_hashes = {f.get("doc_hash") for f in verified_facts if f.get("doc_hash")}
+    if verified_doc_hashes:
+        chunks = [c for c in chunks if c[2] in verified_doc_hashes]
     # Speak: use verified facts and chunks, with graph context organization if enabled
     if getattr(config, "USE_CONTEXT_ORGANIZER", True):
         try:

@@ -21,6 +21,7 @@ from graph.node_canonicalizer import find_matching_global_node, normalize_name
 
 
 _graph_cache = {
+    'lock': None,
     "existing_nodes": None,
     "exact_match_map": None,
     "existing_emb_matrix": None,
@@ -59,20 +60,23 @@ def _get_graph_state(conn, cur):
     )
 
 def _add_node_to_cache(node):
-    """Incrementally update the cache when a new node is added."""
-    if _graph_cache["existing_nodes"] is None:
-        return  # Cache not yet built; will be built on next access
-    _graph_cache["existing_nodes"].append(node)
-    norm_name = normalize_name(node["canonical_name"])
-    key = (node["node_type"], norm_name)
-    _graph_cache["exact_match_map"][key] = node["global_node_id"]
-    if _graph_cache["existing_emb_matrix"] is not None and node.get("embedding") is not None:
-        emb = np.frombuffer(node["embedding"], dtype=np.float32).reshape(1, -1)
-        if _graph_cache["existing_emb_matrix"].shape[0] == 0:
-            _graph_cache["existing_emb_matrix"] = emb
-        else:
-            _graph_cache["existing_emb_matrix"] = np.vstack([_graph_cache["existing_emb_matrix"], emb])
-        _graph_cache["existing_emb_ids"].append(node["global_node_id"])
+    import threading
+    if _graph_cache.get("lock") is None:
+        _graph_cache["lock"] = threading.Lock()
+    with _graph_cache["lock"]:
+        if _graph_cache["existing_nodes"] is None:
+            return
+        _graph_cache["existing_nodes"].append(node)
+        norm_name = normalize_name(node["canonical_name"])
+        key = (node["node_type"], norm_name)
+        _graph_cache["exact_match_map"][key] = node["global_node_id"]
+        if _graph_cache["existing_emb_matrix"] is not None and node.get("embedding") is not None:
+            emb = np.frombuffer(node["embedding"], dtype=np.float32).reshape(1, -1)
+            if _graph_cache["existing_emb_matrix"].shape[0] == 0:
+                _graph_cache["existing_emb_matrix"] = emb
+            else:
+                _graph_cache["existing_emb_matrix"] = np.vstack([_graph_cache["existing_emb_matrix"], emb])
+            _graph_cache["existing_emb_ids"].append(node["global_node_id"])
 
 
 def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
@@ -142,7 +146,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
     unique_names = list(dict.fromkeys(all_names))
 
     print(f"  (Batching embeddings for {len(unique_names)} unique names...)")
-    embeddings = get_embeddings_batch(unique_names, batch_size=config.EMBEDDING_BATCH_SIZE)
+    embeddings = get_embeddings_batch(unique_names, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
     name_to_embedding = {name: emb for name, emb in zip(unique_names, embeddings) if emb is not None}
 
     # Precompute embedding matrix for existing global nodes for fast fuzzy matching
@@ -209,8 +213,8 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             emb_blob = sqlite3.Binary(np.array(name_emb, dtype=np.float32).tobytes())
         attrs_json = json.dumps(attributes or {})
         cur.execute("""
-            INSERT INTO global_nodes (canonical_name, node_type, aliases_json, attributes_json, embedding)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO global_nodes (canonical_name, node_type, aliases_json, attributes_json, embedding, embedding_space)
+            VALUES (?, ?, ?, ?, ?, 'hyperbolic')
         """, (_safe_str(name), _safe_str(node_type), json.dumps([_safe_str(name)]), attrs_json, emb_blob))
         new_id = cur.lastrowid
         # Incrementally update cache
@@ -220,6 +224,7 @@ def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -
             "node_type": _safe_str(node_type),
             "aliases_json": json.dumps([_safe_str(name)]),
             "embedding": emb_blob,
+            "embedding_space": "hyperbolic",
         }
         _add_node_to_cache(node_dict)
         cache_dirty = True

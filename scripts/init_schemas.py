@@ -23,7 +23,12 @@ def init_index_db():
         FOREIGN KEY(doc_hash) REFERENCES documents(file_hash))""")
     cur.execute("""CREATE TABLE IF NOT EXISTS processing_progress (
         file_hash TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'processed',
-        stage TEXT, updated_at TEXT)""")
+        stage TEXT, updated_at TEXT, retry_count INTEGER DEFAULT 0)""")
+    # Add retry_count column if table exists but column missing
+    cur.execute("PRAGMA table_info(processing_progress)")
+    cols = [row[1] for row in cur.fetchall()]
+    if "retry_count" not in cols:
+        cur.execute("ALTER TABLE processing_progress ADD COLUMN retry_count INTEGER DEFAULT 0")
     cur.execute("""CREATE TABLE IF NOT EXISTS document_text_cache (
         file_hash TEXT PRIMARY KEY,
         text TEXT,
@@ -515,6 +520,27 @@ def init_all():
     init_reasoning_db()
     init_recoll_log_db()
     init_verification_standards_db()
+    # Hyperbolic topic index tables
+    conn = db.db_connect("embeddings")
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topic_index_centroids (
+            cluster_id INTEGER PRIMARY KEY,
+            centroid BLOB,
+            member_count INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topic_index_members (
+            cluster_id INTEGER,
+            chunk_id INTEGER,
+            doc_hash TEXT,
+            PRIMARY KEY (cluster_id, chunk_id)
+        )
+    """)
+    conn.commit()
+    conn.close()
     # Distilled extractor training data table
     conn = db.db_connect("key_facts")
     cur = conn.cursor()

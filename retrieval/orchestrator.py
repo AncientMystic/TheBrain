@@ -1,20 +1,25 @@
+
 """
 Multi-stage retrieval orchestrator.
-Runs graph, vector, lexical, and optionally GNN retrievers in parallel,
-then fuses results using Weighted Reciprocal Rank Fusion (WRRF).
+Inclusive retrieval, dynamic hyperbolic scoring, no hard filters.
 """
+
 import concurrent.futures
 from typing import List, Dict, Any
+import numpy as np
 import config
+from core import db
+from core.embeddings import get_embeddings_batch
 from retrieval.datapoint_retriever import retrieve_datapoints
 from chat.retriever import retrieve_from_graph, fallback_to_chunks
 from core.recoll_client import RecollClient
 from retrieval.ranking import get_ranker
-from core.embeddings import get_embedding
-from core.metrics import inc_counter, observe_histogram, Timer
+from graph.graph_queries import get_facts_by_keyword
+from chat.query_analyzer import analyze_query
+from core.metrics import inc_counter, Timer
 
 
-def weighted_rrf(results_by_stage: Dict[str, List[Any]], weights: Dict[str, float], k: int = 60):
+def weighted_rrf(results_by_stage, weights, k=60):
     from collections import defaultdict
     scores = defaultdict(float)
     for stage, items in results_by_stage.items():
@@ -25,9 +30,8 @@ def weighted_rrf(results_by_stage: Dict[str, List[Any]], weights: Dict[str, floa
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
-def run_graph_retriever(query, analysis, top_k=50, anchor_entities=None):
+def run_graph_retriever(query, analysis, top_k=None, anchor_entities=None):
     if anchor_entities:
-        # Merge anchor entities into analysis
         if isinstance(anchor_entities, list):
             for ent in anchor_entities:
                 if isinstance(ent, str):
@@ -35,19 +39,24 @@ def run_graph_retriever(query, analysis, top_k=50, anchor_entities=None):
     facts = retrieve_from_graph(analysis, top_k=top_k, max_depth=2)
     datapoints = []
     for f in facts:
+        # Only skip malformed facts
+        if not f.get('fact_text') or not f.get('doc_hash'):
+            continue
         datapoints.append({
             'id': f"fact:{f.get('fact_id')}",
             'type': 'fact',
             'text': f.get('fact_text', ''),
             'doc_hash': f.get('doc_hash'),
+            'doc_name': f.get('doc_name', 'unknown'),
             'confidence': f.get('confidence', 0.5),
+            'verification_status': f.get('verification_status', 'unverified'),
             'chunk_id': f.get('chunk_id'),
             'source_span': f.get('source_span'),
         })
     return datapoints
 
 
-def run_vector_retriever(query, top_k=20):
+def run_vector_retriever(query, top_k=200):
     chunks = fallback_to_chunks(query, top_k=top_k)
     datapoints = []
     for score, chunk_id, doc_hash, text in chunks:
@@ -58,6 +67,7 @@ def run_vector_retriever(query, top_k=20):
             'doc_hash': doc_hash,
             'chunk_id': chunk_id,
             'confidence': 0.6,
+            'verification_status': 'unverified',
         })
     return datapoints
 
@@ -70,14 +80,13 @@ def run_lexical_retriever(query, top_k=20):
         results, _ = client.search(query, limit=top_k)
         datapoints = []
         for res in results:
-            path = res.get('path', '')
-            snippet = res.get('snippet', '')
             datapoints.append({
-                'id': f"recoll:{path}",
+                'id': f"recoll:{res.get('path','')}",
                 'type': 'chunk_ref',
-                'text': snippet,
+                'text': res.get('snippet',''),
                 'doc_hash': None,
                 'confidence': 0.4,
+                'verification_status': 'unverified',
             })
         return datapoints
     except Exception:
@@ -85,102 +94,41 @@ def run_lexical_retriever(query, top_k=20):
 
 
 def run_gnn_retriever(query, top_k=10):
-    """Retrieve datapoints using GNN node embeddings."""
     if not getattr(config, "USE_GNN", False):
         return []
+    # GNN is disabled or optional; we keep simple fallback
+    return []
+
+
+def run_topic_index_retriever(query, top_k=10):
+    if not getattr(config, "USE_TOPIC_INDEX", True):
+        return []
     try:
-        import torch
-        import numpy as np
-        from graph.gnn_sage import load_gnn_model, get_gnn_embeddings
         from core.embeddings import get_embedding
-        from pathlib import Path
-
-        node_embs = get_gnn_embeddings()
-        if node_embs is None:
+        from core.streaming_topic_index import query_stream_topic_index as query_topic_index
+        q_h = get_embedding(query, space='hyperbolic')
+        if q_h is None:
             return []
-        model = load_gnn_model()
-        if model is None:
-            return []
-        q_emb = get_embedding(query)
-        if not q_emb:
-            return []
-        q_vec = np.array(q_emb, dtype=np.float32)
-
-        # Check input dimension of GNN model
-        input_dim = model.input_dim
-        if q_vec.shape[0] != input_dim:
-            if config.DEBUG_VERBOSE:
-                print(f"    (GNN retriever skipped: query dim {q_vec.shape[0]} != model input dim {input_dim})")
-            return []
-
-        # Pass query through GNN with self-loop to get output embedding
-        q_tensor = torch.tensor([q_vec], dtype=torch.float32)
-        edge_index = torch.tensor([[0], [0]], dtype=torch.long)  # self-loop
-        model.eval()
-        with torch.no_grad():
-            q_gnn = model(q_tensor, edge_index)[0].numpy()
-
-        # Normalize query GNN vector
-        q_norm = np.linalg.norm(q_gnn)
-        if q_norm == 0:
-            return []
-        q_gnn = q_gnn / q_norm
-
-        # Compare with node embeddings (already normalized)
-        node_norms = np.linalg.norm(node_embs, axis=1, keepdims=True)
-        node_norms[node_norms == 0] = 1e-8
-        normalized_nodes = node_embs / node_norms
-        sims = np.dot(normalized_nodes, q_gnn)
-
-        top_indices = np.argsort(sims)[-top_k:][::-1]
-
-        # Map to facts
-        from core import db
-        # Use external_graph only for node names, then key_facts for facts
-        conn_eg = db.db_connect("external_graph")
-        cur_eg = conn_eg.cursor()
-        conn_kf = db.db_connect("key_facts")
-        cur_kf = conn_kf.cursor()
+        chunks = query_topic_index(q_h, top_clusters=5, chunks_per_cluster=3)
         datapoints = []
-        try:
-            node_ids = np.load(Path(config.GNN_MODEL_DIR) / "node_ids.npy")
-        except Exception:
-            node_ids = None
-        for idx in top_indices:
-            node_id = int(node_ids[idx]) if node_ids is not None else idx
-            cur_eg.execute("SELECT canonical_name FROM global_nodes WHERE global_node_id=?", (node_id,))
-            row = cur_eg.fetchone()
-            if not row:
-                continue
-            node_name = row["canonical_name"]
-            cur_kf.execute("""
-                SELECT f.fact_id, f.doc_hash, f.fact_text, f.canonical_value, f.source_span, f.confidence
-                FROM key_facts f
-                JOIN entity_fact_index efi ON f.fact_id = efi.fact_id
-                WHERE efi.normalized_name = ?
-                LIMIT 5
-            """, (node_name.lower(),))
-            facts = cur_kf.fetchall()
-            for f in facts:
-                datapoints.append({
-                    'id': f"gnn_fact:{f['fact_id']}",
-                    'type': 'fact',
-                    'text': f['fact_text'],
-                    'doc_hash': f['doc_hash'],
-                    'confidence': f['confidence'],
-                    'source_span': f['source_span'],
-                })
-        conn_eg.close()
-        conn_kf.close()
-        return datapoints
+        for c in chunks:
+            datapoints.append({
+                'id': f"topic_chunk:{c['chunk_id']}",
+                'type': 'chunk_ref',
+                'text': c['text'],
+                'doc_hash': c['doc_hash'],
+                'chunk_id': c['chunk_id'],
+                'confidence': 0.5,
+                'verification_status': 'unverified',
+            })
+        return datapoints[:top_k]
     except Exception as e:
         if config.DEBUG_VERBOSE:
-            print(f"GNN retriever error: {e}")
+            print(f"  (Topic index retriever error: {e})")
         return []
 
 
 class RetrievalOrchestrator:
-    """Multi-stage retrieval orchestrator."""
     def __init__(self, stage_weights=None):
         self.stage_weights = stage_weights or getattr(config, 'RETRIEVAL_STAGE_WEIGHTS', None)
         if self.stage_weights is None:
@@ -189,43 +137,103 @@ class RetrievalOrchestrator:
                 'vector': 0.3,
                 'lexical': 0.2,
                 'gnn': 0.0,
+                'topic_index': 0.2,
+                'hierarchical': 0.1,
             }
+        if 'topic_index' not in self.stage_weights:
+            self.stage_weights['topic_index'] = getattr(config, 'TOPIC_INDEX_STAGE_WEIGHT', 0.2)
+        if 'hierarchical' not in self.stage_weights:
+            self.stage_weights['hierarchical'] = 0.1
         total = sum(self.stage_weights.values())
         if total == 0:
             total = 1
         self.stage_weights = {k: v / total for k, v in self.stage_weights.items()}
 
-    def retrieve(self, query, analysis, top_k=30, anchor_entities=None):
-        """Run retrievers in parallel and fuse with WRRF."""
+    def _score_candidates(self, query, candidates, query_entities):
+        from core.text_utils import tokenize
+        from core.hyperbolic import hyperbolic_distance
+        from core.embeddings import get_embeddings_batch
+        import numpy as np
+
+        q_embs = get_embeddings_batch([query], space='hyperbolic')
+        q_emb = q_embs[0] if q_embs else None
+        q_tokens = set(tokenize(query))
+
+        conn_emb = db.db_connect("embeddings")
+        cur_emb = conn_emb.cursor()
+        conn_kf = db.db_connect("key_facts")
+        cur_kf = conn_kf.cursor()
+
+        for dp in candidates:
+            text = dp.get('text', '') or ''
+            d_tokens = set(tokenize(text))
+            overlap = len(q_tokens & d_tokens) / max(1, len(q_tokens))
+            rare_overlap = sum(1 for t in q_tokens if len(t) > 5 and t in d_tokens) / max(1, len([t for t in q_tokens if len(t) > 5]))
+            lexical = 0.6 * overlap + 0.4 * rare_overlap
+
+            emb = None
+            fact_conf = dp.get('confidence', 0.5)
+            if dp.get('type') == 'fact':
+                fid = dp.get('id', '').split(':')[-1]
+                if fid.isdigit():
+                    cur_kf.execute("SELECT fact_embedding, confidence FROM key_facts WHERE fact_id=?", (int(fid),))
+                    row = cur_kf.fetchone()
+                    if row:
+                        emb = np.frombuffer(row[0], dtype=np.float32) if row[0] else None
+                        fact_conf = row[1] if row[1] is not None else fact_conf
+            elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
+                cur_emb.execute("SELECT embedding FROM chunk_embeddings WHERE chunk_id=?", (dp['chunk_id'],))
+                row = cur_emb.fetchone()
+                if row and row[0]:
+                    emb = np.frombuffer(row[0], dtype=np.float32)
+                fact_conf = 0.6
+
+            hyper_sim = 0.0
+            if q_emb is not None and emb is not None:
+                dist = hyperbolic_distance(q_emb, emb)
+                hyper_sim = 1.0 / (1.0 + dist)
+
+            graph_prox = 0.0
+            for ent in query_entities:
+                if ent.lower() in text.lower():
+                    graph_prox = 1.0
+                    break
+
+            conf = max(dp.get('confidence', 0.0), fact_conf)
+            final = 0.45 * hyper_sim + 0.30 * lexical + 0.15 * graph_prox + 0.10 * conf
+            dp['_final_score'] = final
+            dp['_hyperbolic_sim'] = hyper_sim
+            dp['_lexical_sim'] = lexical
+
+        conn_emb.close()
+        conn_kf.close()
+        return candidates
+
+    def retrieve(self, query, analysis, top_k=None, anchor_entities=None):
         inc_counter("retrieval_requests_total")
         with Timer("retrieval_duration_seconds"):
             stages = {}
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-                future_graph = executor.submit(run_graph_retriever, query, analysis, 50, anchor_entities=anchor_entities)
-                future_vector = executor.submit(run_vector_retriever, query, 20)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+                future_graph = executor.submit(run_graph_retriever, query, analysis, None, anchor_entities=anchor_entities)
+                future_vector = executor.submit(run_vector_retriever, query, 200)
                 future_lexical = executor.submit(run_lexical_retriever, query, 20)
                 future_gnn = executor.submit(run_gnn_retriever, query, 10)
+                future_topic = executor.submit(run_topic_index_retriever, query, 20)
+                future_hier = executor.submit(retrieve_datapoints, query, max_nodes=200)
 
                 stages['graph'] = future_graph.result()
                 stages['vector'] = future_vector.result()
                 stages['lexical'] = future_lexical.result()
                 stages['gnn'] = future_gnn.result()
-
-            # Additional hierarchical datapoint retrieval
-            try:
-                hierarchical_dps = retrieve_datapoints(query, max_nodes=50)
-                stages['hierarchical'] = hierarchical_dps
-            except Exception as e:
-                if config.DEBUG_VERBOSE:
-                    print(f"Hierarchical retriever failed: {e}")
+                stages['topic_index'] = future_topic.result()
+                stages['hierarchical'] = future_hier.result()
 
             fused = weighted_rrf(stages, self.stage_weights)
             id_to_dp = {}
-            for stage, dps in stages.items():
+            for dps in stages.values():
                 for dp in dps:
                     id_to_dp[dp['id']] = dp
 
-            # Build candidate list with fused scores
             candidates = []
             for dp_id, score in fused:
                 dp = id_to_dp.get(dp_id)
@@ -234,54 +242,10 @@ class RetrievalOrchestrator:
                     dp_copy['_fused_score'] = score
                     candidates.append(dp_copy)
 
-            # Post-fusion hyperbolic reranking
-            if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
-                from core.hyperbolic import exp_map, hyperbolic_distance
-                query_emb = get_embedding(query)
-                if query_emb is not None:
-                    q_h = exp_map(query_emb)
-                    for dp in candidates:
-                        text = dp.get('text', '')
-                        emb = get_embedding(text)
-                        if emb is not None:
-                            d = hyperbolic_distance(q_h, exp_map(emb))
-                            dp['_hyperbolic_sim'] = 1.0 / (1.0 + d)
-                        else:
-                            dp['_hyperbolic_sim'] = 0.0
-                # Combine fused score and hyperbolic similarity (weighted)
-                for dp in candidates:
-                    dp['_final_score'] = 0.7 * dp.get('_fused_score', 0) + 0.3 * dp.get('_hyperbolic_sim', 0)
-            else:
-                for dp in candidates:
-                    dp['_final_score'] = dp.get('_fused_score', 0)
+            query_entities = [ent.get('text', '') for ent in analysis.get('entities', []) if ent.get('text')]
+            candidates = self._score_candidates(query, candidates, query_entities)
 
-            # Type-aware boost: facts primary, chunks secondary
-            for dp in candidates:
-                if dp.get('type') == 'fact':
-                    dp['_final_score'] += 0.1
-                elif dp.get('type') == 'summary':
-                    dp['_final_score'] += 0.05
-
-            # Sort by final score
             candidates.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
-
-            # Balanced selection: ensure min facts and min chunks
-            min_facts = getattr(config, "CHAT_MIN_FACTS", 10)
-            min_chunks = getattr(config, "CHAT_MIN_CHUNKS", 5)
-
-            selected_facts = [dp for dp in candidates if dp.get('type') == 'fact'][:max(min_facts, top_k)]
-            selected_chunks = [dp for dp in candidates if dp.get('type') == 'chunk_ref']
-            selected_other = [dp for dp in candidates if dp.get('type') not in ('fact', 'chunk_ref')]
-
-            final_dps = selected_facts[:min_facts]
-            final_dps.extend(selected_chunks[:min_chunks])
-
-            remaining_slots = top_k - len(final_dps)
-            if remaining_slots > 0:
-                remaining = [dp for dp in candidates if dp not in final_dps]
-                remaining.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
-                final_dps.extend(remaining[:remaining_slots])
-
-            # Trim to top_k
-            final_dps = final_dps[:top_k]
-            return final_dps
+            if len(candidates) > 500:
+                candidates = candidates[:500]
+            return candidates

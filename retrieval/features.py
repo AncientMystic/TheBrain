@@ -50,20 +50,14 @@ def rare_term_boost(query, text):
 
 
 def semantic_similarity(query, text):
-    """Similarity between query and text embeddings. Uses hyperbolic distance if enabled."""
-    q_emb = get_embedding(query)
-    d_emb = get_embedding(text)
-    if not q_emb or not d_emb:
+    """Hyperbolic similarity between query and text embeddings."""
+    q_emb = get_embedding(query, space='hyperbolic')
+    d_emb = get_embedding(text, space='hyperbolic')
+    if q_emb is None or d_emb is None:
         return 0.0
-    import numpy as np
-    q = np.array(q_emb, dtype=np.float32)
-    d = np.array(d_emb, dtype=np.float32)
-    if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
-        from core.hyperbolic import exp_map, hyperbolic_distance
-        dist = hyperbolic_distance(exp_map(q), exp_map(d))
-        return float(1.0 / (1.0 + dist))
-    return float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
-
+    from core.hyperbolic import hyperbolic_distance
+    dist = hyperbolic_distance(q_emb, d_emb)
+    return 1.0 / (1.0 + dist)
 
 def graph_proximity(datapoint, query_entities, max_depth=2):
     """Inverse distance from query entities in external graph."""

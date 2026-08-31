@@ -95,7 +95,7 @@ def frechet_mean(vectors, steps=100, lr=0.1):
         # Gradient of squared distance is -2 log_mu(v)
         # So to minimise, move in positive direction of mean log_mu
         grad = np.mean([log_mu(mu, v) for v in vectors], axis=0)
-        mu = exp_mu(mu, lr * grad)   # correct sign: move toward data
+        mu = exp_mu(mu, 2.0 * lr * grad)   # correct sign: move toward data
         # Clip to stay inside ball
         norm = np.linalg.norm(mu)
         if norm >= 1.0:

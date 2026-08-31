@@ -1,11 +1,23 @@
+
 """
-Ranking model for retrieval datapoints.
-Uses a linear combination of features with learned weights.
-For now, weights are set manually but can be replaced with a trained model.
+Ranking model for retrieval datapoints using stored hyperbolic embeddings.
 """
+
+import numpy as np
 import config
-from retrieval.features import compute_features
-from typing import List, Dict
+from retrieval.features import (
+    query_overlap,
+    rare_term_boost,
+    semantic_similarity,
+    graph_proximity,
+    entity_salience,
+    doc_relevance,
+    datapoint_type_weight,
+    confidence_feature,
+)
+from core import db
+from core.embeddings import get_embeddings_batch
+from core.hyperbolic import hyperbolic_distance
 
 
 class LinearRanker:
@@ -29,7 +41,7 @@ class LinearRanker:
         self.weights = {k: v / total for k, v in self.weights.items()}
 
     def score(self, query, datapoint, query_entities, reranker=None):
-        features = compute_features(query, datapoint, query_entities, reranker)
+        features = self._compute_features(query, datapoint, query_entities, reranker)
         keys = list(self.weights.keys())
         score = 0.0
         for i, key in enumerate(keys):
@@ -38,52 +50,56 @@ class LinearRanker:
         return score
 
     def batch_score(self, query, datapoints, query_entities, reranker=None):
-        """
-        Score multiple datapoints efficiently by batching embeddings.
-        Returns list of scores aligned with datapoints.
-        """
+        """Score multiple datapoints efficiently using stored hyperbolic embeddings."""
         from core.embeddings import get_embeddings_batch
         import numpy as np
-        from retrieval.features import query_overlap, rare_term_boost, graph_proximity, \
-            entity_salience, doc_relevance, datapoint_type_weight, confidence_feature
 
-        # Collect all texts to embed: query + each datapoint text
-        texts = [query] + [dp.get('text', '') or '' for dp in datapoints]
-        embeddings = get_embeddings_batch(texts, batch_size=config.EMBEDDING_BATCH_SIZE)
-        q_emb = embeddings[0] if embeddings else None
-        dp_embs = embeddings[1:] if len(embeddings) > 1 else [None] * len(datapoints)
+        # Embed query only once (batched)
+        query_embs = get_embeddings_batch([query], space='hyperbolic')
+        q_emb = query_embs[0] if query_embs else None
+
+        conn_emb = db.db_connect("embeddings")
+        cur_emb = conn_emb.cursor()
+        conn_kf = db.db_connect("key_facts")
+        cur_kf = conn_kf.cursor()
 
         scores = []
-        for dp, dp_emb in zip(datapoints, dp_embs):
+        for dp in datapoints:
             text = dp.get('text', '') or ''
             features = []
+
             # 1. query_overlap
             features.append(query_overlap(query, text))
             # 2. rare_term_boost
             features.append(rare_term_boost(query, text))
-            # 3. semantic_similarity (use precomputed embeddings)
-            if q_emb is not None and dp_emb is not None:
-                q = np.array(q_emb, dtype=np.float32)
-                d = np.array(dp_emb, dtype=np.float32)
-                if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", False):
-                    from core.hyperbolic import exp_map, hyperbolic_distance
-                    q_h = exp_map(q)
-                    d_h = exp_map(d)
-                    dist = hyperbolic_distance(q_h, d_h)
-                    # Convert distance to similarity (inverse, bounded)
-                    sim = float(1.0 / (1.0 + dist))
-                else:
-                    sim = float(np.dot(q, d) / (np.linalg.norm(q) * np.linalg.norm(d) + 1e-8))
-                features.append(sim)
+            # 3. semantic_similarity from stored embedding
+            emb = None
+            if dp.get('type') == 'fact':
+                fid = dp.get('id', '').split(':')[-1]
+                if fid.isdigit():
+                    cur_kf.execute("SELECT fact_embedding FROM key_facts WHERE fact_id=?", (int(fid),))
+                    row = cur_kf.fetchone()
+                    if row and row[0]:
+                        emb = np.frombuffer(row[0], dtype=np.float32)
+            elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
+                cur_emb.execute("SELECT embedding FROM chunk_embeddings WHERE chunk_id=?", (dp['chunk_id'],))
+                row = cur_emb.fetchone()
+                if row and row[0]:
+                    emb = np.frombuffer(row[0], dtype=np.float32)
+
+            if q_emb is not None and emb is not None:
+                dist = hyperbolic_distance(q_emb, emb)
+                sim = 1.0 / (1.0 + dist)
             else:
-                features.append(0.0)
+                sim = 0.0
+            features.append(sim)
             # 4. graph_proximity
             features.append(graph_proximity(dp, query_entities))
             # 5. entity_salience
             features.append(entity_salience(dp))
             # 6. doc_relevance
             features.append(doc_relevance(dp, reranker))
-            # 7. type_weight
+            # 7. datapoint_type_weight
             features.append(datapoint_type_weight(dp.get('type')))
             # 8. confidence
             features.append(confidence_feature(dp))
@@ -94,11 +110,18 @@ class LinearRanker:
                 if i < len(features):
                     score += self.weights[key] * features[i]
             scores.append(score)
+
+        conn_emb.close()
+        conn_kf.close()
         return scores
+
+    def _compute_features(self, query, datapoint, query_entities, reranker):
+        # Wrapper for single scoring using batch_score
+        return self.batch_score(query, [datapoint], query_entities, reranker)[0]
 
 
 class FallbackRanker:
-    """Heuristic fallback similar to original but slightly improved."""
+    """Heuristic fallback ranker."""
     def score(self, query, datapoint, query_entities, reranker=None):
         from core.text_utils import tokenize
         q_tokens = set(tokenize(query))
@@ -115,9 +138,5 @@ _ranker = None
 def get_ranker():
     global _ranker
     if _ranker is None:
-        if getattr(config, 'USE_LEARNED_RANKER', False):
-            # Placeholder for loading a trained model
-            _ranker = LinearRanker()
-        else:
-            _ranker = LinearRanker()
+        _ranker = LinearRanker()
     return _ranker

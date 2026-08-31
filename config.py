@@ -147,7 +147,7 @@ USE_JSON_MODE = False
 LLM_EXTRACTION_CACHE = True
 LLM_CACHE_DB = "index"
 
-LLM_BATCH_CHUNKS = 4
+LLM_BATCH_CHUNKS = 8
 CHUNK_EXTRACTION_WORKERS = 5
 
 NOVELTY_ENABLED = True
@@ -237,16 +237,16 @@ EMBEDDING_BATCH_SIZE = 128             # increase for better throughput
 
 
 # --- Optional model roles (leave empty to use default endpoints) ---
-SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "http://localhost:1234/v1")
-SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "lfm2-350m-heretic-i1")
+SMALL_MODEL_URL = os.environ.get("SMALL_MODEL_URL", "")
+SMALL_MODEL_NAME = os.environ.get("SMALL_MODEL_NAME", "")
 SMALL_MODEL_URL_2 = os.environ.get("SMALL_MODEL_URL_2", "")
-SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "lfm2-350m-heretic-i1")
+SMALL_MODEL_NAME_2 = os.environ.get("SMALL_MODEL_NAME_2", "")
 
 SMALL_MODEL_ENDPOINT = None  # filled dynamically
 
 
-CHAT_MODEL_URL = os.environ.get("CHAT_MODEL_URL", "http://10.0.0.33:1234/v1")
-CHAT_MODEL_NAME = os.environ.get("CHAT_MODEL_NAME", "lfm2-350m-heretic-i1")
+CHAT_MODEL_URL = os.environ.get("CHAT_MODEL_URL", "")
+CHAT_MODEL_NAME = os.environ.get("CHAT_MODEL_NAME", "")
 USE_CHAT_MODEL = os.environ.get("USE_CHAT_MODEL", "true").lower() == "true"
 LARGE_MODEL_URL = os.environ.get("LARGE_MODEL_URL", "")
 LARGE_MODEL_NAME = os.environ.get("LARGE_MODEL_NAME", "")
@@ -416,6 +416,8 @@ USE_PRIME_EVEN_GATE = True
 
 USE_HYPERBOLIC_RETRIEVAL = True
 USE_GATED_VERIFICATION = True
+EXHAUSTIVE_EXTRACTION = True
+
 USE_HYPERBOLIC_MEMORY = os.environ.get('USE_HYPERBOLIC_MEMORY', 'true').lower() == 'true'
 USE_HYPERBOLIC_CONVERSATION_SUMMARY = os.environ.get('USE_HYPERBOLIC_CONVERSATION_SUMMARY', 'true').lower() == 'true'
 MEMORY_CONSOLIDATION_THRESHOLD = float(os.environ.get('MEMORY_CONSOLIDATION_THRESHOLD', '0.5'))
@@ -426,10 +428,21 @@ USE_COREFERENCE_RETRIEVAL = os.environ.get('USE_COREFERENCE_RETRIEVAL', 'true').
 HYPERBOLIC_FILTER_RADIUS = float(os.environ.get('HYPERBOLIC_FILTER_RADIUS', '1.0'))
 MIN_PATH_CONFIDENCE = float(os.environ.get('MIN_PATH_CONFIDENCE', '0.6'))
 MIN_PATH_DEPTH = int(os.environ.get('MIN_PATH_DEPTH', '3'))
+DYNAMIC_RADIUS_K = int(os.environ.get('DYNAMIC_RADIUS_K', '10'))
+DYNAMIC_RADIUS_SCALE = float(os.environ.get('DYNAMIC_RADIUS_SCALE', '1.2'))
+MIN_CROSS_DOC_FACTS = int(os.environ.get('MIN_CROSS_DOC_FACTS', '5'))
+USE_TOPIC_INDEX = os.environ.get('USE_TOPIC_INDEX', 'true').lower() == 'true'
+TOPIC_INDEX_CLUSTERS = int(os.environ.get('TOPIC_INDEX_CLUSTERS', '20'))
+TOPIC_INDEX_CHUNKS_PER_CLUSTER = int(os.environ.get('TOPIC_INDEX_CHUNKS_PER_CLUSTER', '3'))
+TOPIC_INDEX_STAGE_WEIGHT = float(os.environ.get('TOPIC_INDEX_STAGE_WEIGHT', '0.2'))
+CROSS_DOC_FALLBACK = os.environ.get('CROSS_DOC_FALLBACK', 'true').lower() == 'true'
 USE_DISTILLED_EXTRACTOR = os.environ.get('USE_DISTILLED_EXTRACTOR', 'true').lower() == 'true'
 DISTILLED_MODEL_NAME = os.environ.get('DISTILLED_MODEL_NAME', 't5-small')
 DISTILLED_MODEL_DIR = str(BASE_DIR / 'models' / 'distilled_extractor')
 DISTILLED_CONFIDENCE_THRESHOLD = float(os.environ.get('DISTILLED_CONFIDENCE_THRESHOLD', '0.5'))
+DISTILLED_BATCH_SIZE = int(os.environ.get('DISTILLED_BATCH_SIZE', '2'))
+DISTILLED_MAX_LENGTH = int(os.environ.get('DISTILLED_MAX_LENGTH', '512'))
+DISTILLED_NUM_BEAMS = int(os.environ.get('DISTILLED_NUM_BEAMS', '2'))
 COLLECT_DISTILLED_TRAINING_DATA = os.environ.get('COLLECT_DISTILLED_TRAINING_DATA', 'true').lower() == 'true'
 USE_HYPERBOLIC_CURRICULUM = os.environ.get('USE_HYPERBOLIC_CURRICULUM', 'true').lower() == 'true'
 USE_HYPERBOLIC_CONTRASTIVE = os.environ.get('USE_HYPERBOLIC_CONTRASTIVE', 'false').lower() == 'true'
@@ -493,3 +506,4 @@ ACTIVE_LEARNING_ROUNDS = 3
 # --- Phase 5 Settings ---
 ENABLE_JSON_LOGGING = True
 METRICS_ENABLED = True
+MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '3'))

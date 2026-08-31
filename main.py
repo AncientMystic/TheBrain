@@ -38,9 +38,15 @@ from scripts.init_schemas import init_all
 from memory import retrieve_memories, store_memory
 from logic import retrieve_logic_modules, decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
-from recoll_fast import process_recoll_fast, collect_seed_keywords
-from deep_research.recoll_guided_learning import run_recoll_guided_learning
-
+def clean_answer_citations(answer, reference_names):
+    """Replace any [doc:n] with [n] and ensure a References section exists."""
+    import re
+    answer = re.sub(r'\[doc\s*:\s*(\d+)\]', r'[\1]', answer)
+    if "References" not in answer and reference_names:
+        answer += "\n\n### References\n"
+        for i, name in enumerate(reference_names, 1):
+            answer += f"{i}. {name}\n"
+    return answer
 
 def normalize_key(text):
     if not isinstance(text, str):
@@ -127,7 +133,7 @@ def process_file(filepath, tracker, logic_context=""):
         conn.close()
 
         print("  Generating embeddings...")
-        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
+        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
         # Compute document embedding as hyperbolic Frechet mean of chunk embeddings
         if chunk_embs:
             valid_embs = [np.array(emb, dtype=np.float32) for emb in chunk_embs if emb is not None]
@@ -324,10 +330,13 @@ def process_file(filepath, tracker, logic_context=""):
                 """, (file_hash, span, fact.get("canonical_value", ""), fact.get("confidence", 0.0)))
 
         if fact_rows:
-            cur_facts.executemany(
+            enqueue_many(
+                "key_facts",
                 "INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified, symstep_contradiction, formal_representation, rcot_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                fact_rows,
+                fact_rows
             )
+            # Flush immediately so fact IDs are available for subsequent mapping
+            flush_writes()
 
         # Retrieve last inserted IDs
         cur_facts.execute("SELECT fact_id, source_span, canonical_value FROM key_facts WHERE doc_hash=? ORDER BY fact_id DESC LIMIT ?",
@@ -375,6 +384,8 @@ def process_file(filepath, tracker, logic_context=""):
             _store_discovery(conn_facts, file_hash, filepath.name, discovery)
         for gem in all_extracted.get("gems", []):
             _store_gem(conn_facts, file_hash, filepath.name, gem)
+        # Flush any remaining queued writes
+        flush_writes()
         conn_facts.commit(); conn_facts.close(); conn_index.close()
 
         # Statistical keyword extraction (if enabled)
@@ -427,50 +438,48 @@ def process_file(filepath, tracker, logic_context=""):
 
 # Helper functions for storing extracted categories (moved here to avoid circular import)
 def _store_entity(conn, doc_hash, file_name, entity):
-    conn.execute("""INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(entity.get("entity_type", "OTHER")), _safe_str_for_db(entity.get("entity_name", "")),
-                  _safe_str_for_db(entity.get("normalized_name", "")), _safe_str_for_db(entity.get("source_span", "")), entity.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(entity.get("entity_type", "OTHER")), _safe_str_for_db(entity.get("entity_name", "")),
+                   _safe_str_for_db(entity.get("normalized_name", "")), _safe_str_for_db(entity.get("source_span", "")), entity.get("confidence", 0.0)))
 
 def _store_person(conn, doc_hash, file_name, person):
-    conn.execute("""INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(person.get("person_name", "")), _safe_str_for_db(person.get("normalized_name", "")),
-                  _safe_str_for_db(person.get("role", "")), _safe_str_for_db(person.get("source_span", "")), person.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(person.get("person_name", "")), _safe_str_for_db(person.get("normalized_name", "")),
+                   _safe_str_for_db(person.get("role", "")), _safe_str_for_db(person.get("source_span", "")), person.get("confidence", 0.0)))
 
 def _store_location(conn, doc_hash, file_name, location):
-    conn.execute("""INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(location.get("location_name", "")), _safe_str_for_db(location.get("normalized_place", "")),
-                  _safe_str_for_db(location.get("location_type", "")), _safe_str_for_db(location.get("source_span", "")), location.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(location.get("location_name", "")), _safe_str_for_db(location.get("normalized_place", "")),
+                   _safe_str_for_db(location.get("location_type", "")), _safe_str_for_db(location.get("source_span", "")), location.get("confidence", 0.0)))
 
 def _store_date(conn, doc_hash, file_name, date):
-    conn.execute("""INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(date.get("date_text", "")), _safe_str_for_db(date.get("normalized_date", "")),
-                  _safe_str_for_db(date.get("date_type", "")), _safe_str_for_db(date.get("source_span", "")), date.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(date.get("date_text", "")), _safe_str_for_db(date.get("normalized_date", "")),
+                   _safe_str_for_db(date.get("date_type", "")), _safe_str_for_db(date.get("source_span", "")), date.get("confidence", 0.0)))
 
 def _store_event(conn, doc_hash, file_name, event):
-    conn.execute("""INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type,
-                                        description, significance, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(event.get("event_name", "")), _safe_str_for_db(event.get("normalized_name", "")),
-                  _safe_str_for_db(event.get("event_date", "")), _safe_str_for_db(event.get("event_type", "")), _safe_str_for_db(event.get("description", "")),
-                  _safe_str_for_db(event.get("significance", "")), _safe_str_for_db(event.get("source_span", "")), event.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type, description, significance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(event.get("event_name", "")), _safe_str_for_db(event.get("normalized_name", "")),
+                   _safe_str_for_db(event.get("event_date", "")), _safe_str_for_db(event.get("event_type", "")), _safe_str_for_db(event.get("description", "")),
+                   _safe_str_for_db(event.get("significance", "")), _safe_str_for_db(event.get("source_span", "")), event.get("confidence", 0.0)))
 
 def _store_discovery(conn, doc_hash, file_name, discovery):
-    conn.execute("""INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description,
-                                             date, significance, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(discovery.get("discovery_name", "")), _safe_str_for_db(discovery.get("normalized_name", "")),
-                  _safe_str_for_db(discovery.get("description", "")), _safe_str_for_db(discovery.get("date", "")), _safe_str_for_db(discovery.get("significance", "")),
-                  _safe_str_for_db(discovery.get("source_span", "")), discovery.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description, date, significance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(discovery.get("discovery_name", "")), _safe_str_for_db(discovery.get("normalized_name", "")),
+                   _safe_str_for_db(discovery.get("description", "")), _safe_str_for_db(discovery.get("date", "")), _safe_str_for_db(discovery.get("significance", "")),
+                   _safe_str_for_db(discovery.get("source_span", "")), discovery.get("confidence", 0.0)))
 
 def _store_gem(conn, doc_hash, file_name, gem):
-    conn.execute("""INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                 (doc_hash, _safe_str_for_db(gem.get("gem_text", "")), _safe_str_for_db(gem.get("category", "")),
-                  gem.get("importance", 0.0), _safe_str_for_db(gem.get("source_span", "")), gem.get("confidence", 0.0)))
+    enqueue_write("key_facts",
+                  "INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+                  (doc_hash, _safe_str_for_db(gem.get("gem_text", "")), _safe_str_for_db(gem.get("category", "")),
+                   gem.get("importance", 0.0), _safe_str_for_db(gem.get("source_span", "")), gem.get("confidence", 0.0)))
 
 
 def review_contradictions():
@@ -642,6 +651,7 @@ def main():
     deep_research = "--deep-research" in sys.argv
     recoll_mode = "--recoll" in sys.argv
     recoll_fast = "--recoll-fast" in sys.argv
+    retry_failed = "--retry-failed" in sys.argv
     build_recoll_index = "--build-recoll-index" in sys.argv
     train_gnn_flag = "--train-gnn" in sys.argv
     maintenance_mode = "--maintenance" in sys.argv
@@ -794,13 +804,23 @@ def main():
                     interval = int(sys.argv[idx])
                 except ValueError:
                     pass
-        start_background_maintenance(interval_seconds=interval)
-        print(f"Maintenance mode started (interval {interval}s). Press Ctrl+C to stop.")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("Exiting maintenance mode.")
+
+        train_gates = "--train-gates" in sys.argv
+        train_distilled = "--train-distilled" in sys.argv
+        once = "--once" in sys.argv
+
+        if once:
+            print("Running maintenance once...")
+            run_maintenance_once(train_gates=train_gates, train_distilled=train_distilled)
+            print("Maintenance finished.")
+        else:
+            start_background_maintenance(interval_seconds=interval, train_gates=train_gates, train_distilled=train_distilled)
+            print(f"Maintenance mode started (interval {interval}s). Press Ctrl+C to stop.")
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("Exiting maintenance mode.")
         return
 
     if server_mode:
@@ -874,7 +894,7 @@ def main():
                     if getattr(config, 'USE_MULTI_STAGE_RETRIEVAL', True):
                         from retrieval.orchestrator import RetrievalOrchestrator
                         orchestrator = RetrievalOrchestrator()
-                        datapoints = orchestrator.retrieve(query, analysis)
+                        datapoints = orchestrator.retrieve(query, analysis, top_k=60)
                         facts = [dp for dp in datapoints if dp.get('type') == 'fact']
                         chunks = []
                         for dp in datapoints:
@@ -957,6 +977,9 @@ def main():
                     if getattr(config, "USE_VERIFIED_CHAT", True):
                         from chat.give_chat import generate_answer_verified
                         answer = generate_answer_verified(augmented_query, conversation_history=conversation_history, active_entities=active_entities)
+                        # Clean citations if needed
+                        doc_names = [dp.get('doc_name','') for dp in datapoints if dp.get('doc_name')]
+                        answer = clean_answer_citations(answer, doc_names)
                     else:
                         analysis = analyze_query(augmented_query)
                         # fallback to normal retrieval with augmented query
@@ -1013,6 +1036,29 @@ def main():
                 _recoll_max_rounds = int(sys.argv[_idx])
         run_recoll_guided_learning(process_file, tracker, max_rounds=_recoll_max_rounds,
                                    interactive=interactive)
+        return
+
+    if retry_failed:
+        from core.progress import get_pending_retry_files
+        pending = get_pending_retry_files()
+        if not pending:
+            print("No pending retry files.")
+            return
+        print(f"Found {len(pending)} files to retry.")
+        tracker = ProgressTracker()
+        for file_path in pending:
+            path = Path(file_path)
+            if not path.exists():
+                print(f"File missing: {path}")
+                continue
+            print(f"Retrying: {path}")
+            # Reset status to pending so is_processed returns False
+            file_hash = get_file_hash(path)
+            tracker.mark_processed(file_hash, status="pending", stage="retry")
+            success = process_file(path, tracker)
+            if success:
+                tracker.mark_processed(file_hash)
+        print("Retry complete.")
         return
 
     if guided:
