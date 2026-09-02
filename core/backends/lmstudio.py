@@ -3,10 +3,12 @@ LM Studio provider (OpenAI-compatible).
 """
 import requests
 from core.backends.base import BackendProvider
+import logging
+logger = logging.getLogger(__name__)
 
 
 class Provider(BackendProvider):
-    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, _system=None):
         url = f"{self.url}/chat/completions"
         payload = {
             "model": model or self.model,
@@ -41,4 +43,5 @@ class Provider(BackendProvider):
             resp = requests.get(f"{self.url}/models", headers=self._headers(), timeout=5)
             return resp.status_code == 200
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return False

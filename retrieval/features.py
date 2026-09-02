@@ -59,7 +59,7 @@ def semantic_similarity(query, text):
     dist = hyperbolic_distance(q_emb, d_emb)
     return 1.0 / (1.0 + dist)
 
-def graph_proximity(datapoint, query_entities, max_depth=2):
+def graph_proximity(datapoint, query_entities, _max_depth=2):
     """Inverse distance from query entities in external graph."""
     from graph.graph_queries import get_global_node_edges
     from core import db
@@ -73,12 +73,12 @@ def graph_proximity(datapoint, query_entities, max_depth=2):
     return min(1.0, overlap / len(query_entities))
 
 
-def entity_salience(datapoint):
+def entity_salience(_datapoint):
     """Importance of entities mentioned in datapoint, based on node degree."""
     return 0.5
 
 
-def doc_relevance(datapoint, reranker):
+def doc_relevance(datapoint, _reranker):
     """Use reranker score of the parent document/summary if available."""
     return datapoint.get('_doc_relevance', 0.0)
 

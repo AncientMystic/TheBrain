@@ -5,6 +5,8 @@ Loads model from config.FAST_EXTRACTOR_MODEL_DIR.
 import numpy as np
 import config
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import onnxruntime as ort
@@ -63,6 +65,7 @@ class OnnxNERExtractor:
             except Exception as e:
                 if config.DEBUG_VERBOSE:
                     print(f"Failed to create ONNX session with {providers}: {e}")
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 continue
 
         if self.session is None:
@@ -84,6 +87,7 @@ class OnnxNERExtractor:
                     if id2label_raw:
                         self.id2label = {int(k): v for k, v in id2label_raw.items()}
                 except Exception:
+                    logger.warning("Unexpected exception occurred", exc_info=True)
                     pass
             if not self.id2label:
                 self.id2label = {0: "O", 1: "B-PER", 2: "I-PER", 3: "B-ORG", 4: "I-ORG",
@@ -134,4 +138,5 @@ class OnnxNERExtractor:
             return entities
         except Exception as e:
             print(f"ONNX inference error: {e}")
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return []

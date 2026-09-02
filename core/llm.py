@@ -170,6 +170,7 @@ def extract_first_json(raw: str):
                 obj, _ = decoder.raw_decode(raw[i:])
                 return obj
             except json.JSONDecodeError:
+                logger.warning(f"Handled exception: {e}", exc_info=True)
                 continue
     return None
 
@@ -198,6 +199,7 @@ def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
                 return None
             return parsed
         except json.JSONDecodeError:
+            logger.warning(f"Handled exception: {e}", exc_info=True)
             pass
 
         return None

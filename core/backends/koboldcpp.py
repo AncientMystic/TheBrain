@@ -4,6 +4,8 @@ Embeddings may fallback to configured embeddings_url or raise.
 """
 import requests
 from core.backends.base import BackendProvider
+import logging
+logger = logging.getLogger(__name__)
 
 
 class Provider(BackendProvider):
@@ -12,7 +14,7 @@ class Provider(BackendProvider):
         self.chat_url = config.get("chat_url", self.url.rstrip("/") + "/v1")
         self.embeddings_url = config.get("embeddings_url", self.url.rstrip("/") + "/v1")
 
-    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, _system=None):
         url = f"{self.chat_url}/chat/completions"
         payload = {
             "model": model or self.model,
@@ -47,4 +49,5 @@ class Provider(BackendProvider):
             resp = requests.get(f"{self.chat_url}/models", headers=self._headers(), timeout=5)
             return resp.status_code == 200
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return False

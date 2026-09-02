@@ -1,6 +1,8 @@
 import config
 import re
 from collections import Counter
+import logging
+logger = logging.getLogger(__name__)
 
 # Minimal stopwords set; can be expanded by gazetteer later.
 STOPWORDS = {
@@ -46,7 +48,15 @@ STOPWORDS = {
 
 
 def normalise_text(text: str) -> str:
-    """Collapse whitespace and strip leading/trailing spaces."""
+    """Collapse whitespace and strip leading/trailing spaces. Handles None/dict/list."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
+            return ""
     return re.sub(r'\s+', ' ', text).strip()
 
 

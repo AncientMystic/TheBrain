@@ -17,6 +17,8 @@ from retrieval.ranking import get_ranker
 from graph.graph_queries import get_facts_by_keyword
 from chat.query_analyzer import analyze_query
 from core.metrics import inc_counter, Timer
+import logging
+logger = logging.getLogger(__name__)
 
 
 def weighted_rrf(results_by_stage, weights, k=60):
@@ -30,7 +32,7 @@ def weighted_rrf(results_by_stage, weights, k=60):
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
-def run_graph_retriever(query, analysis, top_k=None, anchor_entities=None):
+def run_graph_retriever(_query, analysis, top_k=None, anchor_entities=None):
     if anchor_entities:
         if isinstance(anchor_entities, list):
             for ent in anchor_entities:
@@ -90,10 +92,11 @@ def run_lexical_retriever(query, top_k=20):
             })
         return datapoints
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return []
 
 
-def run_gnn_retriever(query, top_k=10):
+def run_gnn_retriever(_query, _top_k=10):
     if not getattr(config, "USE_GNN", False):
         return []
     # GNN is disabled or optional; we keep simple fallback
@@ -125,6 +128,7 @@ def run_topic_index_retriever(query, top_k=10):
     except Exception as e:
         if config.DEBUG_VERBOSE:
             print(f"  (Topic index retriever error: {e})")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return []
 
 
@@ -210,7 +214,7 @@ class RetrievalOrchestrator:
         conn_kf.close()
         return candidates
 
-    def retrieve(self, query, analysis, top_k=None, anchor_entities=None):
+    def retrieve(self, query, analysis, _top_k=None, anchor_entities=None):
         inc_counter("retrieval_requests_total")
         with Timer("retrieval_duration_seconds"):
             stages = {}

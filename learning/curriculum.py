@@ -4,6 +4,8 @@ import numpy as np
 from core import db
 from core.embeddings import get_embeddings_batch
 from core.hyperbolic import exp_map, hyperbolic_distance, frechet_mean
+import logging
+logger = logging.getLogger(__name__)
 
 def get_knowledge_centroid():
     """Compute hyperbolic centroid of all processed chunk embeddings."""
@@ -66,6 +68,7 @@ def score_file_by_distance(file_path, centroid):
     except Exception as e:
         if getattr(config, "DEBUG_VERBOSE", False):
             print(f"    (score_file_by_distance error: {e})")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return float('inf')
 def _extract_sample_text(file_path, max_pages=5, fallback_pages=20, min_chars=200):
     """
@@ -93,6 +96,7 @@ def _extract_sample_text(file_path, max_pages=5, fallback_pages=20, min_chars=20
             doc.close()
             return sample.strip()
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return ""
     else:
         try:
@@ -100,6 +104,7 @@ def _extract_sample_text(file_path, max_pages=5, fallback_pages=20, min_chars=20
             result = extract_text_from_file(file_path)
             return result.get("text", "")[:2000].strip()
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return ""
 
 

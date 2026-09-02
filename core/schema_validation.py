@@ -1,5 +1,7 @@
 
 import re
+import logging
+logger = logging.getLogger(__name__)
 
 def _safe_str(value, max_len=200):
     if value is None:
@@ -8,6 +10,7 @@ def _safe_str(value, max_len=200):
         try:
             value = str(value)
         except Exception as e:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return ""
     return value[:max_len]
 
@@ -17,6 +20,7 @@ def _coerce_float(value, default=0.0):
     try:
         return float(value)
     except Exception as e:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return default
 
 def validate_fact(item):

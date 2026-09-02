@@ -9,12 +9,14 @@ def _cached_get_facts(key, ttl=60):
         return _keyword_cache[key]
     return None
 
-def _cache_facts(key, facts, ttl=60):
+def _cache_facts(key, facts, _ttl=60):
     _keyword_cache[key] = facts
     _keyword_cache_ttl[key] = time.time()
 from core import db
 import config
 from fuzzywuzzy import fuzz
+import logging
+logger = logging.getLogger(__name__)
 
 def get_related_keywords(keyword, min_weight=0.5):
     conn = db.db_connect("external_graph")
@@ -76,6 +78,7 @@ def get_facts_by_keyword(keyword, limit=50):
                     d = dict(row)
                     collected[d["fact_id"]] = d
             except Exception:
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 pass
         conn.close()
 

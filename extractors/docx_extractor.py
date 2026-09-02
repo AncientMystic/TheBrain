@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import docx
@@ -27,6 +29,7 @@ def extract_docx(filepath: Path) -> dict:
         if core_props.author:
             metadata["author"] = core_props.author
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         pass
 
     return {

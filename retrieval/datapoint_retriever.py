@@ -12,6 +12,8 @@ from core.embeddings import get_embedding
 import config
 from core.reranker import get_reranker
 from core.local_embedder import get_local_embedder
+import logging
+logger = logging.getLogger(__name__)
 
 AD_MARKERS = [
     "spotify for podcasters",
@@ -162,6 +164,7 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
             if row:
                 summary_text = row["summary"] or ""
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
         combined_text = f"{doc_name} {summary_text}"[:1000]
         if reranker.available:
@@ -293,7 +296,7 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
     return datapoints[:max_nodes]
 
 
-def _direct_chunk_fallback(query, root_terms, query_tokens, max_nodes):
+def _direct_chunk_fallback(query, root_terms, _query_tokens, max_nodes):
     """Fallback when no documents match: direct chunk search, but include doc info."""
     datapoints = []
     seen_ids = set()
@@ -358,6 +361,7 @@ def _direct_chunk_fallback(query, root_terms, query_tokens, max_nodes):
                                     "_root_distance": 0,
                                 })
                     except Exception:
+                        logger.warning("Unexpected exception occurred", exc_info=True)
                         pass
 
                 dp_id = f"chunk_ref:{cid}"

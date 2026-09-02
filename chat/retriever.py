@@ -26,7 +26,7 @@ def _get_vector_store(model):
     return store
 
 
-def retrieve_from_graph(query_analysis, top_k=None, max_depth=2, debug=False):
+def retrieve_from_graph(query_analysis, top_k=None, _max_depth=2, _debug=False):
     keywords = query_analysis.get("keywords", [])
     entities = query_analysis.get("entities", [])
     facts = []

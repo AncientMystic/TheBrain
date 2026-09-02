@@ -11,6 +11,8 @@ import config
 from core import cache
 from core.file_utils import get_file_hash
 from core.text_utils import normalise_text
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _ocr_page_module(args):
@@ -30,6 +32,7 @@ def _ocr_page(pix):
         return pytesseract.image_to_string(img, config=f'--psm 6 -l {config.OCR_LANG}')
     except Exception as e:
         print(f"      (OCR page error: {e})")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 
 
@@ -77,7 +80,7 @@ def ocr_pdf_pages(pdf_path, max_pages=None, dpi=None, title_pages=None, title_dp
     return combined
 
 
-def extract_pdf_with_timeout(filepath: Path, timeout=60) -> dict:
+def extract_pdf_with_timeout(filepath: Path, _timeout=60) -> dict:
     """Extract PDF without multiprocessing (Windows compatible)."""
     return extract_pdf(filepath)
 
@@ -136,6 +139,7 @@ def extract_pdf(filepath: Path) -> dict:
                     metadata["year"] = match.group(0)
         doc.close()
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         pass
 
     return {

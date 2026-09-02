@@ -22,13 +22,15 @@ _fast_extractor_instance = None
 
 from extraction.cleaners import *
 from core.schema_validation import validate_and_coerce
+import logging
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
 #  FEW-SHOT EXAMPLES
 # ============================================================
 
-def _get_extraction_endpoint_type(category):
+def _get_extraction_endpoint_type(_category):
     if config.SMALL_MODEL_ENDPOINT:
         return "small"
     return None
@@ -254,6 +256,7 @@ def _get_cached(chunk_hash, category, model, max_tokens, prompt_template):
         try:
             return json.loads(row[0])
         except Exception as e:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return None
     return None
 
@@ -393,6 +396,7 @@ def _validate_onnx_batch(batch_chunks, batch_pre, endpoint, model):
                     num = int(token.split()[1])
                     invalid.add(num)
                 except Exception:
+                    logger.warning("Unexpected exception occurred", exc_info=True)
                     pass
         return {"invalid": invalid}
     return {}
@@ -595,7 +599,7 @@ def _get_dynamic_capacities():
     _endpoint_capacities_cache = capacities
     return capacities
 
-def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context="", doc_type=None):
+def extract_from_chunks(chunks, _model=None, max_workers=None, chunk_embeddings=None, logic_context="", _doc_type=None):
     if max_workers is None:
         max_workers = config.CHUNK_EXTRACTION_WORKERS
     _init_cache()

@@ -1,5 +1,7 @@
 import re
 from datetime import datetime
+import logging
+logger = logging.getLogger(__name__)
 
 
 def normalize_person_name(name: str) -> str:
@@ -11,7 +13,7 @@ def normalize_person_name(name: str) -> str:
     return name.title()
 
 
-def normalize_location(location: str, gazetteers=None) -> str:
+def normalize_location(location: str, _gazetteers=None) -> str:
     """Basic normalization: strip punctuation, title case."""
     loc = re.sub(r'[^\w\s]', '', location).strip()
     return loc.title()
@@ -41,6 +43,7 @@ def normalize_date(date_text: str) -> str:
         try:
             return f"{year}-{month_num:02d}-{int(day):02d}"
         except (ValueError, TypeError):
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
 
     # Pattern 2: "15 March 2023" or "15 Mar 2023"
@@ -51,6 +54,7 @@ def normalize_date(date_text: str) -> str:
         try:
             return f"{year}-{month_num:02d}-{int(day):02d}"
         except (ValueError, TypeError):
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
 
     # Pattern 3: Just a year

@@ -3,6 +3,8 @@ import config
 from core.text_utils import tokenize
 from extraction.rule_annotator import pre_annotate
 from chat.query_intent import detect_intent
+import logging
+logger = logging.getLogger(__name__)
 
 
 # Lazy-loaded ONNX FastExtractor for topic extraction
@@ -39,6 +41,7 @@ def extract_topic_terms(query: str) -> list:
                     seen.add(text.lower())
                     terms.append(text)
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         pass
 
     # 2. ONNX NER if enabled
@@ -53,6 +56,7 @@ def extract_topic_terms(query: str) -> list:
                         seen.add(text.lower())
                         terms.append(text)
             except Exception:
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 pass
 
     # 3. Long tokens and bigrams as fallback
@@ -91,6 +95,7 @@ def extract_topic_terms(query: str) -> list:
                 combined.extend(terms)
                 terms = combined
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
 
     if not terms:
@@ -99,7 +104,15 @@ def extract_topic_terms(query: str) -> list:
     return terms[:10]
 
 
+MAX_QUERY_LENGTH = 4096  # characters
+
 def analyze_query(query: str) -> dict:
+    """Extract topics, entities, and intent from a user query.
+       Truncates query to MAX_QUERY_LENGTH to prevent resource exhaustion."""
+    if not isinstance(query, str):
+        query = ""
+    query = query.strip()[:MAX_QUERY_LENGTH]
+
     """
     Extract topic-focused keywords, entities, dates, locations from user query.
     Returns dict with lists of tokens and annotated entities.

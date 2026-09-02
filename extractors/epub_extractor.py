@@ -1,5 +1,7 @@
 from pathlib import Path
 from bs4 import BeautifulSoup
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import ebooklib
@@ -26,6 +28,7 @@ def extract_epub(filepath: Path) -> dict:
         if book.get_metadata('DC', 'creator'):
             author = book.get_metadata('DC', 'creator')[0][0]
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         pass
 
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
@@ -38,6 +41,7 @@ def extract_epub(filepath: Path) -> dict:
             if text:
                 text_parts.append(text)
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             continue
 
     full_text = "\n\n".join(text_parts)

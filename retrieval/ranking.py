@@ -40,7 +40,7 @@ class LinearRanker:
             total = 1
         self.weights = {k: v / total for k, v in self.weights.items()}
 
-    def score(self, query, datapoint, query_entities, reranker=None):
+    def score(self, query, datapoint, _query_entities, _reranker=None):
         features = self._compute_features(query, datapoint, query_entities, reranker)
         keys = list(self.weights.keys())
         score = 0.0

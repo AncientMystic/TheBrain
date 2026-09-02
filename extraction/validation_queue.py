@@ -13,6 +13,8 @@ from typing import List
 
 import config
 from core.llm import call_model_json
+import logging
+logger = logging.getLogger(__name__)
 
 
 class ValidationQueue:
@@ -28,7 +30,7 @@ class ValidationQueue:
         self.processed_count = 0
         self.seen_ids = set()
 
-    def put(self, item, timeout=1.0):
+    def put(self, item, _timeout=1.0):
         """Add an item to the validation list."""
         if item is None:
             return
@@ -66,6 +68,7 @@ class ValidationQueue:
                     if row:
                         item_copy['_source_excerpt'] = row['chunk_text'][:500]
                 except Exception:
+                    logger.warning("Unexpected exception occurred", exc_info=True)
                     pass
             items_with_excerpt.append(item_copy)
 

@@ -119,7 +119,7 @@ class ExactVectorStore:
         # Return (id, similarity) where similarity = 1/(1+distance)
         return [(id_, 1.0/(1.0+dist)) for id_, dist in results]
 
-    def add(self, id, embedding):
+    def add(self, _id, _embedding):
         # For simplicity, ignore incremental adds; rebuild from scratch after ingestion
         pass
 

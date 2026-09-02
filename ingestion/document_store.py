@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import config
 from core import db
 from core.file_utils import get_file_hash
+import logging
+logger = logging.getLogger(__name__)
 
 
 def store_document(conn, file_hash: str, file_path: str, filename: str,

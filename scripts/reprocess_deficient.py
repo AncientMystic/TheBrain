@@ -35,6 +35,8 @@ from extraction.summarizer import summarize_document
 from graph.hypergraph_builder import build_hypergraph
 from graph.external_graph_builder import build_external_graph
 import extraction.cleaners as cleaners_mod
+import logging
+logger = logging.getLogger(__name__)
 
 
 def find_deficient_documents(min_facts_per_chunk=0.2, limit=None):
@@ -89,7 +91,7 @@ def delete_old_data(doc_hash):
     conn.close()
 
 
-def reprocess_document(doc_hash, filename, tracker):
+def reprocess_document(doc_hash, filename, _tracker):
     # Find file path
     conn = db.db_connect("index")
     cur = conn.cursor()
@@ -260,31 +262,31 @@ def reprocess_document(doc_hash, filename, tracker):
 
 
 # Helper insert functions
-def _insert_entity(conn, doc_hash, filename, ent):
+def _insert_entity(conn, doc_hash, _filename, ent):
     conn.execute("""INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence)
                     VALUES (?,?,?,?,?,?)""",
                  (doc_hash, ent.get("entity_type","OTHER"), ent.get("entity_name",""),
                   ent.get("normalized_name",""), ent.get("source_span",""), ent.get("confidence",0.0)))
 
-def _insert_person(conn, doc_hash, filename, person):
+def _insert_person(conn, doc_hash, _filename, person):
     conn.execute("""INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence)
                     VALUES (?,?,?,?,?,?)""",
                  (doc_hash, person.get("person_name",""), person.get("normalized_name",""),
                   person.get("role",""), person.get("source_span",""), person.get("confidence",0.0)))
 
-def _insert_location(conn, doc_hash, filename, loc):
+def _insert_location(conn, doc_hash, _filename, loc):
     conn.execute("""INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence)
                     VALUES (?,?,?,?,?,?)""",
                  (doc_hash, loc.get("location_name",""), loc.get("normalized_place",""),
                   loc.get("location_type",""), loc.get("source_span",""), loc.get("confidence",0.0)))
 
-def _insert_date(conn, doc_hash, filename, date):
+def _insert_date(conn, doc_hash, _filename, date):
     conn.execute("""INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence)
                     VALUES (?,?,?,?,?,?)""",
                  (doc_hash, date.get("date_text",""), date.get("normalized_date",""),
                   date.get("date_type",""), date.get("source_span",""), date.get("confidence",0.0)))
 
-def _insert_event(conn, doc_hash, filename, event):
+def _insert_event(conn, doc_hash, _filename, event):
     conn.execute("""INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type,
                                         description, significance, source_span, confidence)
                     VALUES (?,?,?,?,?,?,?,?,?)""",
@@ -292,7 +294,7 @@ def _insert_event(conn, doc_hash, filename, event):
                   event.get("event_date",""), event.get("event_type",""), event.get("description",""),
                   event.get("significance",""), event.get("source_span",""), event.get("confidence",0.0)))
 
-def _insert_discovery(conn, doc_hash, filename, disc):
+def _insert_discovery(conn, doc_hash, _filename, disc):
     conn.execute("""INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description,
                                              date, significance, source_span, confidence)
                     VALUES (?,?,?,?,?,?,?,?)""",
@@ -300,7 +302,7 @@ def _insert_discovery(conn, doc_hash, filename, disc):
                   disc.get("description",""), disc.get("date",""), disc.get("significance",""),
                   disc.get("source_span",""), disc.get("confidence",0.0)))
 
-def _insert_gem(conn, doc_hash, filename, gem):
+def _insert_gem(conn, doc_hash, _filename, gem):
     conn.execute("""INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence)
                     VALUES (?,?,?,?,?,?)""",
                  (doc_hash, gem.get("gem_text",""), gem.get("category",""),

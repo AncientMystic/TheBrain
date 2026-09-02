@@ -15,6 +15,8 @@ from deep_research import gap_analyzer
 
 from urllib.parse import urlparse, unquote
 import re
+import logging
+logger = logging.getLogger(__name__)
 
 def _url_to_path(url):
     """Convert a file:// URL to a local filesystem path."""
@@ -32,6 +34,7 @@ def _url_to_path(url):
             # Not a file URL; maybe already a path
             return url
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return None
 
 QUERY_GENERATION_PROMPT = """
@@ -125,6 +128,7 @@ def run_recoll_guided_learning(process_file_callback, tracker, max_rounds=None, 
         recoll_client = RecollClient()
     except ImportError as e:
         print(f"Recoll not available: {e}")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return
 
     print(f"Starting Recoll-guided autonomous learning (max {max_rounds} rounds).")

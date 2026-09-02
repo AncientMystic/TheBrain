@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from core import db
 from core.text_utils import tokenize
+import logging
+logger = logging.getLogger(__name__)
 
 # Categories and their table/column mapping
 CATEGORIES = {

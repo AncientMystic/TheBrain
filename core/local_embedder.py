@@ -6,6 +6,8 @@ Handles dynamic input shapes and provides clear error messages.
 import numpy as np
 import config
 from pathlib import Path
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import onnxruntime as ort
@@ -97,6 +99,7 @@ class LocalEmbedder:
         except Exception as e:
             if config.DEBUG_VERBOSE:
                 print(f"ONNX embedder encode error: {e}")
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return []
 
 _local_embedder = None

@@ -5,6 +5,9 @@ from functools import wraps
 from pathlib import Path
 
 import config
+import logging
+MAX_POOL_SIZE = 20  # maximum connections per database type
+logger = logging.getLogger(__name__)
 
 def with_retry(func):
     @wraps(func)
@@ -42,6 +45,7 @@ class PooledConnection:
             try:
                 self._conn.rollback()
             except Exception:
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 pass
             _conn_local.pool[db_type] = self._conn
 
@@ -49,6 +53,7 @@ class PooledConnection:
         try:
             self._conn.close()
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
 
 DB_FILES = {
@@ -106,6 +111,7 @@ def close_all_connections():
             try:
                 conn.close()
             except Exception:
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 pass
         _conn_local.pool.clear()
 

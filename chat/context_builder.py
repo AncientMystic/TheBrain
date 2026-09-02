@@ -1,5 +1,6 @@
 from core import db
-from chat.conversation import get_conversation_context
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _get_doc_display_name(doc_hash):
@@ -13,6 +14,7 @@ def _get_doc_display_name(doc_hash):
         if row:
             return row["title"] or row["filename"] or doc_hash
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         pass
     return doc_hash
 

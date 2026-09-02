@@ -15,9 +15,12 @@ def _safe_str(value):
     try:
         return str(value)
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 from core.embeddings import get_embeddings_batch
 from graph.node_canonicalizer import find_matching_global_node, normalize_name
+import logging
+logger = logging.getLogger(__name__)
 
 
 _graph_cache = {
@@ -29,7 +32,7 @@ _graph_cache = {
 }
 
 
-def _get_graph_state(conn, cur):
+def _get_graph_state(_conn, cur):
     if _graph_cache["existing_nodes"] is None:
         cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
         nodes = [dict(row) for row in cur.fetchall()]
@@ -40,12 +43,26 @@ def _get_graph_state(conn, cur):
         else:
             existing_embeddings = []
             existing_emb_ids = []
+            type_embeddings = {}
             for node in nodes:
                 if node.get("embedding") is not None:
-                    existing_embeddings.append(np.frombuffer(node["embedding"], dtype=np.float32))
+                    emb = np.frombuffer(node["embedding"], dtype=np.float32)
+                    existing_embeddings.append(emb)
                     existing_emb_ids.append(node["global_node_id"])
+                    ntype = node["node_type"]
+                    if ntype not in type_embeddings:
+                        type_embeddings[ntype] = {"matrix": [], "ids": []}
+                    type_embeddings[ntype]["matrix"].append(emb)
+                    type_embeddings[ntype]["ids"].append(node["global_node_id"])
             _graph_cache["existing_emb_matrix"] = np.stack(existing_embeddings) if existing_embeddings else None
             _graph_cache["existing_emb_ids"] = existing_emb_ids
+            # Convert type lists to matrices
+            for ntype in type_embeddings:
+                if type_embeddings[ntype]["matrix"]:
+                    type_embeddings[ntype]["matrix"] = np.stack(type_embeddings[ntype]["matrix"])
+                else:
+                    type_embeddings[ntype]["matrix"] = None
+            _graph_cache["type_embeddings"] = type_embeddings
         _graph_cache["existing_nodes"] = nodes
         _graph_cache["exact_match_map"] = {}
         for node in _graph_cache["existing_nodes"]:
@@ -79,7 +96,7 @@ def _add_node_to_cache(node):
             _graph_cache["existing_emb_ids"].append(node["global_node_id"])
 
 
-def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
+def build_external_graph(doc_hash: str, extracted_data: dict, _chunk_map: dict) -> None:
     """
     Upsert global nodes and edges from a document's extracted data.
     Batches all embedding calls to reduce latency.
