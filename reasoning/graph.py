@@ -1,5 +1,7 @@
 import json
 from core import db
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(value):
@@ -11,6 +13,7 @@ def _safe_str(value):
     try:
         return str(value)
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 
 def create_reasoning_node(query_id, step_number, node_type, content, formal_repr=None, confidence=0.0):

@@ -30,7 +30,7 @@ class ValidationQueue:
         self.processed_count = 0
         self.seen_ids = set()
 
-    def put(self, item, _timeout=1.0):
+    def put(self, item, timeout=1.0):
         """Add an item to the validation list."""
         if item is None:
             return
@@ -48,8 +48,16 @@ class ValidationQueue:
         pass
 
     def _process_batch(self, batch):
-        """Send a batch to LLM for validation and store results."""
+        """Send a batch to LLM for validation and store results.
+           Splits large batches into smaller sub-batches to avoid empty responses."""
         if not batch:
+            return
+        max_per_call = 4
+        if len(batch) > max_per_call:
+            # Recursively process smaller chunks
+            for i in range(0, len(batch), max_per_call):
+                sub_batch = batch[i:i+max_per_call]
+                self._process_batch(sub_batch)
             return
         # Build prompt
         import json

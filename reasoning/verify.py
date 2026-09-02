@@ -4,6 +4,8 @@ from typing import List, Dict, Optional
 from core import db
 from reasoning.graph import query_kg_triples
 from core.llm import call_model_json
+import logging
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(value):
@@ -15,6 +17,7 @@ def _safe_str(value):
     try:
         return str(value)
     except Exception:
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 
 

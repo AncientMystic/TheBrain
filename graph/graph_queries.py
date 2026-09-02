@@ -9,7 +9,7 @@ def _cached_get_facts(key, ttl=60):
         return _keyword_cache[key]
     return None
 
-def _cache_facts(key, facts, _ttl=60):
+def _cache_facts(key, facts, ttl=60):
     _keyword_cache[key] = facts
     _keyword_cache_ttl[key] = time.time()
 from core import db

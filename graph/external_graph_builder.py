@@ -32,7 +32,7 @@ _graph_cache = {
 }
 
 
-def _get_graph_state(_conn, cur):
+def _get_graph_state(conn, cur):
     if _graph_cache["existing_nodes"] is None:
         cur.execute("SELECT global_node_id, canonical_name, node_type, aliases_json, embedding FROM global_nodes")
         nodes = [dict(row) for row in cur.fetchall()]
@@ -96,7 +96,7 @@ def _add_node_to_cache(node):
             _graph_cache["existing_emb_ids"].append(node["global_node_id"])
 
 
-def build_external_graph(doc_hash: str, extracted_data: dict, _chunk_map: dict) -> None:
+def build_external_graph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
     """
     Upsert global nodes and edges from a document's extracted data.
     Batches all embedding calls to reduce latency.

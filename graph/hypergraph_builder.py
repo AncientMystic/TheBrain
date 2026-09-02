@@ -17,7 +17,7 @@ def _safe_str(value):
         return ""
 
 
-def build_hypergraph(doc_hash: str, extracted_data: dict, _chunk_map: dict) -> None:
+def build_hypergraph(doc_hash: str, extracted_data: dict, chunk_map: dict) -> None:
     """
     Build intra-document graph nodes and edges from LLM extraction results.
     Includes relationship edges and co-occurrence edges (if chunk_map provided).

@@ -3,6 +3,8 @@ import json
 from core import db
 from chat.query_analyzer import analyze_query
 from core.text_utils import tokenize
+import logging
+logger = logging.getLogger(__name__)
 
 def extract_active_entities(answer_text, top_k=10):
     """Extract important entities from assistant answer as list of strings."""
@@ -47,6 +49,7 @@ def load_active_entities(session_id):
         try:
             return json.loads(row["active_entities_json"])
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             return []
     return []
 

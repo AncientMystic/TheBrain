@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class Provider(BackendProvider):
-    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, _system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
         url = f"{self.url}/chat/completions"
         payload = {
             "model": model or self.model,

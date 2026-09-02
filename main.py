@@ -539,45 +539,45 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
 
 
 # Helper functions for storing extracted categories (moved here to avoid circular import)
-def _store_entity(_conn, doc_hash, _file_name, entity):
+def _store_entity(conn, doc_hash, file_name, entity):
     enqueue_write("key_facts",
                   "INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(entity.get("entity_type", "OTHER")), _safe_str_for_db(entity.get("entity_name", "")),
                    _safe_str_for_db(entity.get("normalized_name", "")), _safe_str_for_db(entity.get("source_span", "")), entity.get("confidence", 0.0)))
 
-def _store_person(_conn, doc_hash, _file_name, person):
+def _store_person(conn, doc_hash, file_name, person):
     enqueue_write("key_facts",
                   "INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(person.get("person_name", "")), _safe_str_for_db(person.get("normalized_name", "")),
                    _safe_str_for_db(person.get("role", "")), _safe_str_for_db(person.get("source_span", "")), person.get("confidence", 0.0)))
 
-def _store_location(_conn, doc_hash, _file_name, location):
+def _store_location(conn, doc_hash, file_name, location):
     enqueue_write("key_facts",
                   "INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(location.get("location_name", "")), _safe_str_for_db(location.get("normalized_place", "")),
                    _safe_str_for_db(location.get("location_type", "")), _safe_str_for_db(location.get("source_span", "")), location.get("confidence", 0.0)))
 
-def _store_date(_conn, doc_hash, _file_name, date):
+def _store_date(conn, doc_hash, file_name, date):
     enqueue_write("key_facts",
                   "INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(date.get("date_text", "")), _safe_str_for_db(date.get("normalized_date", "")),
                    _safe_str_for_db(date.get("date_type", "")), _safe_str_for_db(date.get("source_span", "")), date.get("confidence", 0.0)))
 
-def _store_event(_conn, doc_hash, _file_name, event):
+def _store_event(conn, doc_hash, file_name, event):
     enqueue_write("key_facts",
                   "INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type, description, significance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(event.get("event_name", "")), _safe_str_for_db(event.get("normalized_name", "")),
                    _safe_str_for_db(event.get("event_date", "")), _safe_str_for_db(event.get("event_type", "")), _safe_str_for_db(event.get("description", "")),
                    _safe_str_for_db(event.get("significance", "")), _safe_str_for_db(event.get("source_span", "")), event.get("confidence", 0.0)))
 
-def _store_discovery(_conn, doc_hash, _file_name, discovery):
+def _store_discovery(conn, doc_hash, file_name, discovery):
     enqueue_write("key_facts",
                   "INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description, date, significance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(discovery.get("discovery_name", "")), _safe_str_for_db(discovery.get("normalized_name", "")),
                    _safe_str_for_db(discovery.get("description", "")), _safe_str_for_db(discovery.get("date", "")), _safe_str_for_db(discovery.get("significance", "")),
                    _safe_str_for_db(discovery.get("source_span", "")), discovery.get("confidence", 0.0)))
 
-def _store_gem(_conn, doc_hash, _file_name, gem):
+def _store_gem(conn, doc_hash, file_name, gem):
     enqueue_write("key_facts",
                   "INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence) VALUES (?, ?, ?, ?, ?, ?)",
                   (doc_hash, _safe_str_for_db(gem.get("gem_text", "")), _safe_str_for_db(gem.get("category", "")),
@@ -754,7 +754,7 @@ _LIST_PATTERN = _re.compile(r'(?:list|what|which).*?episodes', _re.IGNORECASE)
 _SEARCH_TERM_PATTERN = _re.compile(r'(?:for|of|about)\s*(.+?)\s*$', _re.IGNORECASE)
 _FALLBACK_NUM_PATTERN = _re.compile(r'\b(\d{2,3})\b')
 
-def direct_document_lookup(query, _top_k=1000):
+def direct_document_lookup(query, top_k=1000):
     """Retrieve documents based on direct references in query (episode numbers, list requests)."""
     import re
     from core import db

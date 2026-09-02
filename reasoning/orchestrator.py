@@ -10,6 +10,8 @@ from core.llm import call_model, call_model_json
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
 from graph.expansion import pre_select_candidates
 from core import db
+import logging
+logger = logging.getLogger(__name__)
 
 
 SUFFICIENCY_PROMPT = """
@@ -163,5 +165,6 @@ def orchestrate_reasoning(query, session_id=None):
             from logic.learn import learn_logic_from_reasoning_paths
             learn_logic_from_reasoning_paths(None, None)
         except Exception:
+            logger.warning("Unexpected exception occurred", exc_info=True)
             pass
     return answer, verified_facts

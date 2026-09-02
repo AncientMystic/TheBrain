@@ -28,7 +28,7 @@ def generate_answer(question, context, model=None, conversation_history=None):
     prompt = ANSWER_PROMPT.format(context=full_context, question=question)
     return call_model(prompt, model=model, max_tokens=32768)
 
-def generate_answer_with_reasoning(question, _model=None):
+def generate_answer_with_reasoning(question, model=None):
     """Use the verification-first reasoning orchestrator."""
     from reasoning.orchestrator import orchestrate_reasoning
     answer, _ = orchestrate_reasoning(question)

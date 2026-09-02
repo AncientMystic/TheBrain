@@ -13,7 +13,7 @@ def normalize_person_name(name: str) -> str:
     return name.title()
 
 
-def normalize_location(location: str, _gazetteers=None) -> str:
+def normalize_location(location: str, gazetteers=None) -> str:
     """Basic normalization: strip punctuation, title case."""
     loc = re.sub(r'[^\w\s]', '', location).strip()
     return loc.title()

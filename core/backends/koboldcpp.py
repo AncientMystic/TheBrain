@@ -14,7 +14,7 @@ class Provider(BackendProvider):
         self.chat_url = config.get("chat_url", self.url.rstrip("/") + "/v1")
         self.embeddings_url = config.get("embeddings_url", self.url.rstrip("/") + "/v1")
 
-    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, _system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
         url = f"{self.chat_url}/chat/completions"
         payload = {
             "model": model or self.model,

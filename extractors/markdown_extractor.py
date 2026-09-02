@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+import logging
+logger = logging.getLogger(__name__)
 
 
 def extract_markdown(filepath: Path) -> dict:

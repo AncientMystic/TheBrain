@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 #  FEW-SHOT EXAMPLES
 # ============================================================
 
-def _get_extraction_endpoint_type(_category):
+def _get_extraction_endpoint_type(category):
     if config.SMALL_MODEL_ENDPOINT:
         return "small"
     return None
@@ -599,7 +599,7 @@ def _get_dynamic_capacities():
     _endpoint_capacities_cache = capacities
     return capacities
 
-def extract_from_chunks(chunks, _model=None, max_workers=None, chunk_embeddings=None, logic_context="", _doc_type=None):
+def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context="", doc_type=None):
     if max_workers is None:
         max_workers = config.CHUNK_EXTRACTION_WORKERS
     _init_cache()
@@ -877,7 +877,7 @@ def extract_from_chunks(chunks, _model=None, max_workers=None, chunk_embeddings=
                     if isinstance(item, dict):
                         item_copy = item.copy()
                         item_copy["_chunk_idx"] = chunk_idx
-                        item_copy["_category"] = key
+                        item_copy["category"] = key
                         vq.put(item_copy)
         validated_results = vq.wait_and_get_results()
         clean_map = {
@@ -891,9 +891,9 @@ def extract_from_chunks(chunks, _model=None, max_workers=None, chunk_embeddings=
             'gems': _clean_gems,
         }
         for item in validated_results:
-            if isinstance(item, dict) and "_chunk_idx" in item and "_category" in item:
+            if isinstance(item, dict) and "_chunk_idx" in item and "category" in item:
                 idx = item.pop("_chunk_idx")
-                cat = item.pop("_category")
+                cat = item.pop("category")
                 if 0 <= idx < len(all_results):
                     cleaner = clean_map.get(cat)
                     if cleaner:

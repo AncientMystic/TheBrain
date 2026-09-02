@@ -4,6 +4,8 @@ from pathlib import Path
 import pymupdf as fitz  # PyMuPDF
 from extractors.registry import extract_text_from_file
 import config
+import logging
+logger = logging.getLogger(__name__)
 
 
 def extract_preview(filepath: str, keyword: str, page_hint: int = None, snippet: str = "") -> str:
@@ -25,6 +27,7 @@ def extract_preview(filepath: str, keyword: str, page_hint: int = None, snippet:
             return window_around_keyword(text, keyword, config.PREVIEW_CHAR_WINDOW)
     except Exception as e:
         print(f"Preview extraction error for {filepath}: {e}")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 
 
@@ -37,6 +40,7 @@ def extract_pdf_preview(pdf_path: Path, keyword: str, page_hint: int = None, win
         doc = fitz.open(pdf_path)
     except Exception as e:
         print(f"Error opening PDF {pdf_path}: {e}")
+        logger.warning("Unexpected exception occurred", exc_info=True)
         return ""
 
     page_count = doc.page_count

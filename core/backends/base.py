@@ -17,11 +17,11 @@ class BackendProvider:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def chat(self, _messages, _model=None, _max_tokens=1024, _temperature=0.0, _system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
         """Return assistant text reply."""
         raise NotImplementedError
 
-    def embeddings(self, _texts, _model=None):
+    def embeddings(self, texts, model=None):
         """Return list of embedding vectors."""
         raise NotImplementedError
 

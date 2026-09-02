@@ -1,11 +1,31 @@
 import re
 from pathlib import Path
 import config
+import logging
+logger = logging.getLogger(__name__)
 
 # Precompiled patterns for performance
 _YEAR_RE = re.compile(r'\b(17|18|19|20)\d{2}\b')
 _DATE_RE = re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b', re.IGNORECASE)
 _PERSON_RE = re.compile(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b')
+
+# Lazy-loaded Aho-Corasick automaton
+_automaton = None
+
+def _build_automaton():
+    global _automaton
+    if _automaton is not None:
+        return _automaton
+    import ahocorasick
+    A = ahocorasick.Automaton()
+    gaz = load_gazetteers()
+    for kind in ("countries", "us_states", "world_cities", "first_names", "last_names", "organization_suffixes"):
+        for term in gaz.get(kind, []):
+            term_lower = term.lower()
+            A.add_word(term_lower, (kind, term_lower))
+    A.make_automaton()
+    _automaton = A
+    return A
 
 # Load gazetteers lazily
 _gazetteers = None
@@ -75,13 +95,18 @@ def pre_annotate(text: str) -> dict:
     for m in _DATE_RE.finditer(text):
         annotations["dates"].append({"text": m.group(), "start": m.start(), "end": m.end()})
 
-    # Locations: match gazetteer entries (exact word boundary)
-    for loc in gaz["countries"] | gaz["us_states"] | gaz["world_cities"]:
-        if not loc:
-            continue
-        pattern = r'\b' + re.escape(loc) + r'\b'
-        for m in re.finditer(pattern, text, re.IGNORECASE):
-            annotations["locations"].append({"text": m.group(), "start": m.start(), "end": m.end()})
+    # Locations: use Aho-Corasick automaton for efficient exact word-boundary matching
+    A = _build_automaton()
+    for end_idx, (kind, term_lower) in A.iter(text.lower()):
+        if kind in ("countries", "us_states", "world_cities"):
+            start_idx = end_idx - len(term_lower) + 1
+            # Verify word boundaries (Aho-Corasick doesn't enforce by default)
+            if (start_idx == 0 or not text[start_idx-1].isalnum()) and                (end_idx == len(text)-1 or not text[end_idx+1].isalnum()):
+                annotations["locations"].append({
+                    "text": text[start_idx:end_idx+1],
+                    "start": start_idx,
+                    "end": end_idx+1
+                })
 
     # People: capital word + capital word (simple heuristic)
     person_pattern = r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b'

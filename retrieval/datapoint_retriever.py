@@ -296,7 +296,7 @@ def retrieve_datapoints(query, max_nodes=None, depth=None, extra_terms=None):
     return datapoints[:max_nodes]
 
 
-def _direct_chunk_fallback(query, root_terms, _query_tokens, max_nodes):
+def _direct_chunk_fallback(query, root_terms, query_tokens, max_nodes):
     """Fallback when no documents match: direct chunk search, but include doc info."""
     datapoints = []
     seen_ids = set()

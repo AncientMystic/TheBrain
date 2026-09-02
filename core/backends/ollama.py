@@ -17,7 +17,7 @@ class Provider(BackendProvider):
         else:
             self.base_url = self.url.rstrip("/") + "/v1"
 
-    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, _system=None):
+    def chat(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
         model = model or self.model
         if self.mode == "ollama":
             # native Ollama API

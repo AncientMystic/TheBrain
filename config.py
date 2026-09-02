@@ -502,7 +502,7 @@ VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or
 # Async validation queue (small models extract, large models validate)
 ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "2000"))
-VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "24"))
+VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "4"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "8"))
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "680"))
