@@ -42,7 +42,7 @@ def load_graph():
             import json
             try:
                 aliases = json.loads(aliases_json)
-            except:
+            except Exception as e:
                 aliases = []
         text = canonical + " " + " ".join(aliases)
         node_texts.append(text)

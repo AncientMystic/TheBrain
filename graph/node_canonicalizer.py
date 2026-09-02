@@ -16,7 +16,8 @@ def normalize_name(name: str) -> str:
 def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict],
                               threshold: float = 0.85, name_embedding=None,
                               existing_emb_matrix=None, existing_emb_ids=None) -> int | None:
-    """Find matching global node using exact name, fuzzy matching, and hyperbolic embedding similarity."""
+    """Find matching global node using exact name, fuzzy matching, and hyperbolic embedding similarity.
+       Skips nodes with mismatched embedding dimensions."""
     from core.hyperbolic import hyperbolic_distance
 
     norm_name = normalize_name(name)
@@ -43,7 +44,10 @@ def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict
         for node in global_nodes:
             if node["node_type"] == node_type and node.get("embedding") is not None:
                 emb = np.frombuffer(node["embedding"], dtype=np.float32)
-                dist = hyperbolic_distance(name_embedding, emb)
+                name_emb_arr = np.array(name_embedding, dtype=np.float32)
+                if name_emb_arr.shape != emb.shape:
+                    continue
+                dist = hyperbolic_distance(name_emb_arr, emb)
                 sim = 1.0 / (1.0 + dist)
                 all_sims.append(sim)
         if all_sims:
@@ -52,14 +56,17 @@ def find_matching_global_node(name: str, node_type: str, global_nodes: list[dict
     if best_score >= dynamic_threshold:
         return best_id
 
-    # 3. Hyperbolic embedding similarity
+    # 3. Hyperbolic embedding similarity with dimension guard
     if name_embedding is not None:
         best_sim = 0.0
         best_id_emb = None
         for node in global_nodes:
             if node["node_type"] == node_type and node.get("embedding") is not None:
                 emb = np.frombuffer(node["embedding"], dtype=np.float32)
-                dist = hyperbolic_distance(name_embedding, emb)
+                name_emb_arr = np.array(name_embedding, dtype=np.float32)
+                if name_emb_arr.shape != emb.shape:
+                    continue
+                dist = hyperbolic_distance(name_emb_arr, emb)
                 sim = 1.0 / (1.0 + dist)
                 if sim > best_sim:
                     best_sim = sim

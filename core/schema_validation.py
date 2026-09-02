@@ -7,7 +7,7 @@ def _safe_str(value, max_len=200):
     if not isinstance(value, str):
         try:
             value = str(value)
-        except:
+        except Exception as e:
             return ""
     return value[:max_len]
 
@@ -16,7 +16,7 @@ def _coerce_float(value, default=0.0):
         return float(value)
     try:
         return float(value)
-    except:
+    except Exception as e:
         return default
 
 def validate_fact(item):

@@ -25,6 +25,7 @@ from core import db
 from core.progress import ProgressTracker
 from core.file_utils import get_file_hash
 from core.embeddings import get_embeddings_batch
+from core.write_queue import enqueue_many, flush_writes
 from ingestion.scanner import scan_files
 from ingestion.document_store import store_document, store_chunks
 from ingestion.chunker import chunk_document
@@ -38,6 +39,7 @@ from scripts.init_schemas import init_all
 from memory import retrieve_memories, store_memory
 from logic import retrieve_logic_modules, decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
+import threading
 def clean_answer_citations(answer, reference_names):
     """Replace any [doc:n] with [n] and ensure a References section exists."""
     import re
@@ -81,7 +83,7 @@ def deduplicate_list(items, key_func):
     return list(seen.values())
 
 
-def process_file(filepath, tracker, logic_context=""):
+def process_file(filepath, tracker, logic_context="", preloaded=None):
     import numpy as np
     import json
     _t0 = time.time()
@@ -93,29 +95,39 @@ def process_file(filepath, tracker, logic_context=""):
     logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
     logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
     try:
-        # Check document text cache first
-        conn_cache = db.db_connect("index")
-        cur_cache = conn_cache.cursor()
-        cur_cache.execute("SELECT text, metadata_json FROM document_text_cache WHERE file_hash=?", (file_hash,))
-        cache_row = cur_cache.fetchone()
-        conn_cache.close()
-
-        if cache_row:
-            text = cache_row["text"]
-            metadata = json.loads(cache_row["metadata_json"])
-            result = {"text": text, "metadata": metadata, "format": Path(filepath).suffix.lstrip(".").lower()}
-            file_format = result["format"]
-            print("  (Using cached text)")
+        if preloaded is not None:
+            text = preloaded["text"]
+            metadata = preloaded["metadata"]
+            file_format = preloaded["format"]
+            ocr_used = preloaded.get("ocr_used", False)
+            chunks = preloaded["chunks"]
+            chunk_embs = preloaded["chunk_embs"]
+            print("  (Using prefetched data)")
         else:
-            result = extract_text_from_file(filepath)
-            text = result["text"]
-            metadata = result["metadata"]
-            file_format = result["format"]
-            # Save to cache
+            # Check document text cache first
             conn_cache = db.db_connect("index")
-            conn_cache.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
-                               (file_hash, text, json.dumps(metadata)))
-            conn_cache.commit(); conn_cache.close()
+            cur_cache = conn_cache.cursor()
+            cur_cache.execute("SELECT text, metadata_json FROM document_text_cache WHERE file_hash=?", (file_hash,))
+            cache_row = cur_cache.fetchone()
+            conn_cache.close()
+
+            if cache_row:
+                text = cache_row["text"]
+                metadata = json.loads(cache_row["metadata_json"])
+                result = {"text": text, "metadata": metadata, "format": Path(filepath).suffix.lstrip(".").lower()}
+                file_format = result["format"]
+                ocr_used = result.get("ocr_used", False)
+                print("  (Using cached text)")
+            else:
+                result = extract_text_from_file(filepath)
+                text = result["text"]
+                metadata = result["metadata"]
+                file_format = result["format"]
+                ocr_used = result.get("ocr_used", False)
+                conn_cache = db.db_connect("index")
+                conn_cache.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
+                                   (file_hash, text, json.dumps(metadata)))
+                conn_cache.commit(); conn_cache.close()
 
         if not text:
             print("  (No text extracted; skipping)")
@@ -126,14 +138,25 @@ def process_file(filepath, tracker, logic_context=""):
         store_document(conn, file_hash, str(filepath), filepath.name, file_format, text, metadata,
                        ocr_used=result.get("ocr_used", False), page_count=None)
         conn.commit()
-        chunks = chunk_document(text)
-        print(f"  Created {len(chunks)} chunks")
-        store_chunks(conn, file_hash, chunks)
-        conn.commit()
-        conn.close()
+        if preloaded is None:
+            # Check if chunks already exist for this document (cache)
+            conn_idx = db.db_connect("index")
+            cur_idx = conn_idx.cursor()
+            cur_idx.execute("SELECT chunk_text FROM document_chunks WHERE doc_hash=? ORDER BY chunk_index", (file_hash,))
+            cached_chunk_rows = cur_idx.fetchall()
+            conn_idx.close()
+            if cached_chunk_rows:
+                chunks = [r["chunk_text"] for r in cached_chunk_rows]
+                print("  (Reusing cached chunks)")
+            else:
+                chunks = chunk_document(text)
+            print(f"  Created {len(chunks)} chunks")
+            store_chunks(conn, file_hash, chunks)
+            conn.commit()
+            conn.close()
 
-        print("  Generating embeddings...")
-        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+            print("  Generating embeddings...")
+            chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
         # Compute document embedding as hyperbolic Frechet mean of chunk embeddings
         if chunk_embs:
             valid_embs = [np.array(emb, dtype=np.float32) for emb in chunk_embs if emb is not None]
@@ -146,7 +169,7 @@ def process_file(filepath, tracker, logic_context=""):
                 conn_emb.execute("INSERT OR REPLACE INTO document_embeddings (doc_hash, embedding, model, embedding_space) VALUES (?,?,?, 'hyperbolic')",
                                  (file_hash, blob, config.EMBEDDING_MODEL))
                 conn_emb.commit(); conn_emb.close()
-        print("  Extracting knowledge via LLM...")
+
         print("  Extracting knowledge via LLM...")
         from core.metrics import inc_counter, Timer
         inc_counter('files_processed_total')
@@ -154,10 +177,16 @@ def process_file(filepath, tracker, logic_context=""):
             chunk_results = extract_from_chunks(chunks, model=None, chunk_embeddings=chunk_embs, logic_context=logic_context)
         all_extracted = {"facts": [], "entities": [], "relationships": [], "people": [], "locations": [],
                          "dates": [], "events": [], "discoveries": [], "gems": []}
-        for chunk_data in chunk_results:
+        fact_chunk_map = {}  # key: (fact_text, source_span) -> chunk_id
+        for chunk_idx, chunk_data in enumerate(chunk_results):
             for key in all_extracted:
                 if key in chunk_data:
                     all_extracted[key].extend(chunk_data[key])
+            # Map facts to chunk_id
+            for fact in chunk_data.get("facts", []):
+                if isinstance(fact, dict) and fact.get("fact_text"):
+                    span = fact.get("source_span", "")
+                    fact_chunk_map[(fact["fact_text"], span)] = chunk_idx  # store chunk index; later convert to chunk_id
 
         print("  Validating and deduplicating...")
         validated_facts = [f for f in all_extracted["facts"] if isinstance(f, dict) and f.get("source_span") and f.get("confidence",0) >= 0.5]
@@ -248,6 +277,8 @@ def process_file(filepath, tracker, logic_context=""):
         fact_rows = []
         source_rows = []
         entity_index_rows = []
+        total_facts = len(all_extracted["facts"])
+        fact_progress_count = 0
         # Rerank extracted facts against document name before storage
         if getattr(config, "RERANKER_ENABLED", True):
             try:
@@ -313,6 +344,9 @@ def process_file(filepath, tracker, logic_context=""):
             fact_type = fact.get("fact_type")
             if not isinstance(fact_type, str):
                 fact_type = "other"
+            fact_progress_count += 1
+            if fact_progress_count % 10 == 0 or fact_progress_count == total_facts:
+                print(f"\r    Storing facts: {fact_progress_count}/{total_facts}", end="", flush=True)
             fact_row = (
                 file_hash, filepath.name, fact_type,
                 fact_text, _safe_str_for_db(fact.get("canonical_value")),
@@ -329,7 +363,12 @@ def process_file(filepath, tracker, logic_context=""):
                     VALUES (?, NULL, ?, ?, ?)
                 """, (file_hash, span, fact.get("canonical_value", ""), fact.get("confidence", 0.0)))
 
+        print()  # newline after fact storage progress
         if fact_rows:
+            # Disable FTS triggers for bulk insert
+            cur_facts.execute("DROP TRIGGER IF EXISTS key_facts_ai")
+            cur_facts.execute("DROP TRIGGER IF EXISTS key_facts_au")
+            cur_facts.execute("DROP TRIGGER IF EXISTS key_facts_ad")
             enqueue_many(
                 "key_facts",
                 "INSERT INTO key_facts (doc_hash, doc_name, fact_type, fact_text, canonical_value, source_span, confidence, verified, symstep_contradiction, formal_representation, rcot_verified) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -337,38 +376,49 @@ def process_file(filepath, tracker, logic_context=""):
             )
             # Flush immediately so fact IDs are available for subsequent mapping
             flush_writes()
+            # Rebuild FTS table
+            cur_facts.execute("""
+                INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+                SELECT fact_id, fact_text, canonical_value, source_span FROM key_facts
+                WHERE fact_id NOT IN (SELECT rowid FROM key_facts_fts)
+            """)
+            # Recreate triggers
+            cur_facts.execute("""
+                CREATE TRIGGER IF NOT EXISTS key_facts_ai AFTER INSERT ON key_facts BEGIN
+                    INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+                    VALUES (new.fact_id, new.fact_text, new.canonical_value, new.source_span);
+                END;
+            """)
+            cur_facts.execute("""
+                CREATE TRIGGER IF NOT EXISTS key_facts_ad AFTER DELETE ON key_facts BEGIN
+                    DELETE FROM key_facts_fts WHERE rowid = old.fact_id;
+                END;
+            """)
+            cur_facts.execute("""
+                CREATE TRIGGER IF NOT EXISTS key_facts_au AFTER UPDATE ON key_facts BEGIN
+                    DELETE FROM key_facts_fts WHERE rowid = old.fact_id;
+                    INSERT INTO key_facts_fts(rowid, fact_text, canonical_value, source_span)
+                    VALUES (new.fact_id, new.fact_text, new.canonical_value, new.source_span);
+                END;
+            """)
 
         # Retrieve last inserted IDs
         cur_facts.execute("SELECT fact_id, source_span, canonical_value FROM key_facts WHERE doc_hash=? ORDER BY fact_id DESC LIMIT ?",
                           (file_hash, len(fact_rows)))
         inserted = cur_facts.fetchall()[::-1]
 
+        # Pre-fetch chunk_id_by_index map for this document
+        chunk_id_by_index = {}
+        cur_index.execute("SELECT chunk_id, chunk_index FROM document_chunks WHERE doc_hash=?", (file_hash,))
+        for cid, cidx in cur_index.fetchall():
+            chunk_id_by_index[cidx] = cid
+
         for fact, inserted_row in zip(all_extracted["facts"], inserted):
             fact_id = inserted_row["fact_id"]
             span = fact.get("source_span","")
-            # Robust source span matching: fetch candidates, then case-insensitive containment
-
-            cur_index.execute("SELECT chunk_id, chunk_text FROM document_chunks WHERE doc_hash=? LIMIT 5", (file_hash,))
-
-            candidates = cur_index.fetchall()
-
-            chunk_id = None
-
-            if candidates:
-
-                # Normalize span for comparison (lowercase, collapse spaces)
-
-                span_norm = " ".join(span.lower().split())
-
-                for cid, ctext in candidates:
-
-                    ctext_norm = " ".join(ctext.lower().split())
-
-                    if span_norm and span_norm in ctext_norm:
-
-                        chunk_id = cid
-
-                        break
+            chunk_key = (fact.get("fact_text",""), span)
+            cidx = fact_chunk_map.get(chunk_key)
+            chunk_id = chunk_id_by_index.get(cidx) if cidx is not None else None
             if chunk_id:
                 source_rows.append((fact_id, file_hash, chunk_id, span, span))
             if fact.get("canonical_value"):
@@ -389,21 +439,41 @@ def process_file(filepath, tracker, logic_context=""):
                 "INSERT OR IGNORE INTO entity_fact_index (fact_id, entity_name, normalized_name) VALUES (?, ?, ?)",
                 entity_index_rows,
             )
-        # Store all categories
-        for entity in all_extracted.get("entities", []):
-            _store_entity(conn_facts, file_hash, filepath.name, entity)
-        for person in all_extracted.get("people", []):
-            _store_person(conn_facts, file_hash, filepath.name, person)
-        for location in all_extracted.get("locations", []):
-            _store_location(conn_facts, file_hash, filepath.name, location)
-        for date in all_extracted.get("dates", []):
-            _store_date(conn_facts, file_hash, filepath.name, date)
-        for event in all_extracted.get("events", []):
-            _store_event(conn_facts, file_hash, filepath.name, event)
-        for discovery in all_extracted.get("discoveries", []):
-            _store_discovery(conn_facts, file_hash, filepath.name, discovery)
-        for gem in all_extracted.get("gems", []):
-            _store_gem(conn_facts, file_hash, filepath.name, gem)
+        # Store all categories with executemany
+        entity_rows = [(_safe_str_for_db(e.get("entity_type", "OTHER")), _safe_str_for_db(e.get("entity_name", "")), _safe_str_for_db(e.get("normalized_name", "")), _safe_str_for_db(e.get("source_span", "")), e.get("confidence", 0.0)) for e in all_extracted.get("entities", [])]
+        if entity_rows:
+            conn_facts.executemany("INSERT INTO entities (doc_hash, entity_type, entity_name, normalized_name, source_span, confidence) VALUES (?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in entity_rows])
+
+        person_rows = [(_safe_str_for_db(p.get("person_name", "")), _safe_str_for_db(p.get("normalized_name", "")), _safe_str_for_db(p.get("role", "")), _safe_str_for_db(p.get("source_span", "")), p.get("confidence", 0.0)) for p in all_extracted.get("people", [])]
+        if person_rows:
+            conn_facts.executemany("INSERT INTO people (doc_hash, person_name, normalized_name, role, source_span, confidence) VALUES (?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in person_rows])
+
+        location_rows = [(_safe_str_for_db(l.get("location_name", "")), _safe_str_for_db(l.get("normalized_place", "")), _safe_str_for_db(l.get("location_type", "")), _safe_str_for_db(l.get("source_span", "")), l.get("confidence", 0.0)) for l in all_extracted.get("locations", [])]
+        if location_rows:
+            conn_facts.executemany("INSERT INTO locations (doc_hash, location_name, normalized_place, location_type, source_span, confidence) VALUES (?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in location_rows])
+
+        date_rows = [(_safe_str_for_db(d.get("date_text", "")), _safe_str_for_db(d.get("normalized_date", "")), _safe_str_for_db(d.get("date_type", "")), _safe_str_for_db(d.get("source_span", "")), d.get("confidence", 0.0)) for d in all_extracted.get("dates", [])]
+        if date_rows:
+            conn_facts.executemany("INSERT INTO dates (doc_hash, date_text, normalized_date, date_type, source_span, confidence) VALUES (?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in date_rows])
+
+        event_rows = [(_safe_str_for_db(ev.get("event_name", "")), _safe_str_for_db(ev.get("normalized_name", "")), _safe_str_for_db(ev.get("event_date", "")), _safe_str_for_db(ev.get("event_type", "")), _safe_str_for_db(ev.get("description", "")), _safe_str_for_db(ev.get("significance", "")), _safe_str_for_db(ev.get("source_span", "")), ev.get("confidence", 0.0)) for ev in all_extracted.get("events", [])]
+        if event_rows:
+            conn_facts.executemany("INSERT INTO events (doc_hash, event_name, normalized_name, event_date, event_type, description, significance, source_span, confidence) VALUES (?,?,?,?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in event_rows])
+
+        discovery_rows = [(_safe_str_for_db(d.get("discovery_name", "")), _safe_str_for_db(d.get("normalized_name", "")), _safe_str_for_db(d.get("description", "")), _safe_str_for_db(d.get("date", "")), _safe_str_for_db(d.get("significance", "")), _safe_str_for_db(d.get("source_span", "")), d.get("confidence", 0.0)) for d in all_extracted.get("discoveries", [])]
+        if discovery_rows:
+            conn_facts.executemany("INSERT INTO discoveries (doc_hash, discovery_name, normalized_name, description, date, significance, source_span, confidence) VALUES (?,?,?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in discovery_rows])
+
+        gem_rows = [(_safe_str_for_db(g.get("gem_text", "")), _safe_str_for_db(g.get("category", "")), g.get("importance", 0.0), _safe_str_for_db(g.get("source_span", "")), g.get("confidence", 0.0)) for g in all_extracted.get("gems", [])]
+        if gem_rows:
+            conn_facts.executemany("INSERT INTO gems (doc_hash, gem_text, category, importance, source_span, confidence) VALUES (?,?,?,?,?,?)",
+                                   [(file_hash, *row) for row in gem_rows])
         # Flush any remaining queued writes
         flush_writes()
         conn_facts.commit(); conn_facts.close(); conn_index.close()
@@ -442,6 +512,12 @@ def process_file(filepath, tracker, logic_context=""):
         tracker.mark_processed(file_hash)
         elapsed = time.time() - _t0
         print(f"  Done processing {filepath.name} in {elapsed:.2f}s")
+        # Release pooled connections to keep memory flat
+        try:
+            from core import db as db_module
+            db_module.close_all_connections()
+        except Exception:
+            pass
         return True
     except Exception as e:
         print(f"  ERROR processing {filepath}: {e}")
@@ -660,14 +736,23 @@ def update_status(message):
 
 
 
+
+
+# Precompiled regexes for direct_document_lookup
+import re as _re
+_EPISODE_PATTERN = _re.compile(r'(?:episode|ep|#)\s*(\d{2,3})', _re.IGNORECASE)
+_LIST_PATTERN = _re.compile(r'(?:list|what|which).*?episodes', _re.IGNORECASE)
+_SEARCH_TERM_PATTERN = _re.compile(r'(?:for|of|about)\s*(.+?)\s*$', _re.IGNORECASE)
+_FALLBACK_NUM_PATTERN = _re.compile(r'\b(\d{2,3})\b')
+
 def direct_document_lookup(query, top_k=1000):
     """Retrieve documents based on direct references in query (episode numbers, list requests)."""
     import re
     from core import db
 
     doc_hashes = []
-    ep_match = re.search(r'(?:episode|ep|#)\s*(\d{2,3})', query, re.IGNORECASE)
-    list_match = re.search(r'(?:list|what|which).*?episodes', query, re.IGNORECASE)
+    ep_match = _EPISODE_PATTERN.search(query)
+    list_match = _LIST_PATTERN.search(query)
 
     if ep_match:
         num = ep_match.group(1)
@@ -681,7 +766,7 @@ def direct_document_lookup(query, top_k=1000):
     elif list_match:
         # Extract a broader search term (default to "why files" if none)
         search_term = ''
-        m = re.search(r'(?:for|of|about)\s*(.+?)\s*$', query, re.IGNORECASE)
+        m = _SEARCH_TERM_PATTERN.search(query)
         if m:
             search_term = m.group(1).strip().lower().rstrip('?!.')
         if not search_term:
@@ -698,7 +783,7 @@ def direct_document_lookup(query, top_k=1000):
         doc_hashes.extend([r['file_hash'] for r in rows])
     else:
         # Fallback numeric
-        num_match = re.search(r'\b(\d{2,3})\b', query)
+        num_match = _FALLBACK_NUM_PATTERN.search(query)
         if num_match:
             num = num_match.group(1)
             conn = db.db_connect("index")
@@ -769,6 +854,108 @@ def direct_document_lookup(query, top_k=1000):
                 seen_chunks.add(cid)
                 chunks.append((0, cid, c['doc_hash'], c['chunk_text']))
     return facts, chunks
+
+
+
+def prepare_next_file(filepath):
+    """Extract text, chunk, and embed for a file (CPU/IO bound)."""
+    import time
+    _t0 = time.time()
+    file_hash = get_file_hash(filepath)
+    try:
+        # Check cache
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT text FROM document_text_cache WHERE file_hash=?", (file_hash,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            text = row["text"]
+        else:
+            result = extract_text_from_file(filepath)
+            text = result["text"]
+            conn = db.db_connect("index")
+            conn.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
+                         (file_hash, text, json.dumps(result.get("metadata", {}))))
+            conn.commit(); conn.close()
+        if not text:
+            return None
+        # Chunk
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT chunk_text FROM document_chunks WHERE doc_hash=?", (file_hash,))
+        cached_chunks = cur.fetchall()
+        conn.close()
+        if cached_chunks:
+            chunks = [r["chunk_text"] for r in cached_chunks]
+        else:
+            chunks = chunk_document(text)
+        # Embeddings
+        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+        return {
+            "file": filepath,
+            "file_hash": file_hash,
+            "text": text,
+            "chunks": chunks,
+            "chunk_embs": chunk_embs,
+            "metadata": result.get("metadata", {}) if 'result' in locals() else {},
+            "format": Path(filepath).suffix.lstrip(".").lower(),
+            "ocr_used": result.get("ocr_used", False) if 'result' in locals() else False,
+        }
+    except Exception as e:
+        print(f"    (Prefetch error for {filepath.name}: {e})")
+        return None
+
+
+
+def prepare_next_file(filepath):
+    """Extract text, chunk, and embed for a file (CPU/IO bound)."""
+    import time
+    _t0 = time.time()
+    file_hash = get_file_hash(filepath)
+    try:
+        # Check cache
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT text FROM document_text_cache WHERE file_hash=?", (file_hash,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            text = row["text"]
+        else:
+            result = extract_text_from_file(filepath)
+            text = result["text"]
+            conn = db.db_connect("index")
+            conn.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
+                         (file_hash, text, json.dumps(result.get("metadata", {}))))
+            conn.commit(); conn.close()
+        if not text:
+            return None
+        # Chunk
+        conn = db.db_connect("index")
+        cur = conn.cursor()
+        cur.execute("SELECT chunk_text FROM document_chunks WHERE doc_hash=?", (file_hash,))
+        cached_chunks = cur.fetchall()
+        conn.close()
+        if cached_chunks:
+            chunks = [r["chunk_text"] for r in cached_chunks]
+        else:
+            chunks = chunk_document(text)
+        # Embeddings
+        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+        return {
+            "file": filepath,
+            "file_hash": file_hash,
+            "text": text,
+            "chunks": chunks,
+            "chunk_embs": chunk_embs,
+            "metadata": result.get("metadata", {}) if 'result' in locals() else {},
+            "format": Path(filepath).suffix.lstrip(".").lower(),
+            "ocr_used": result.get("ocr_used", False) if 'result' in locals() else False,
+        }
+    except Exception as e:
+        print(f"    (Prefetch error for {filepath.name}: {e})")
+        return None
 
 def main():
     if "--debug" in sys.argv:
@@ -855,6 +1042,16 @@ def main():
 
     validate_config()
     init_all()
+    # Preload FastExtractor once before any processing (if guided and enabled)
+    if guided and config.FAST_EXTRACTOR_ENABLED:
+        try:
+            import extraction.llm_extractor as lle
+            from fast_extractor.hybrid_extractor import FastExtractor
+            lle._fast_extractor_instance = FastExtractor()
+            print("  (Preloaded ONNX FastExtractor)")
+        except Exception as e:
+            print(f"  (FastExtractor preload error: {e})")
+
     print("Initialization complete. Preparing processing...")
 
     # Train GNN if requested
@@ -1108,6 +1305,7 @@ def main():
         print("Retry complete.")
         return
 
+
     if guided:
         # Process admin claims first (if any)
         if admin_facts:
@@ -1187,6 +1385,16 @@ Return only JSON."""
                 if config.DEBUG_VERBOSE:
                     print(f"    (Curriculum ordering error: {e})")
         total = len(files)
+        # Preload FastExtractor once before document loop
+        if config.FAST_EXTRACTOR_ENABLED:
+            try:
+                import extraction.llm_extractor as lle
+                from fast_extractor.hybrid_extractor import FastExtractor
+                lle._fast_extractor_instance = FastExtractor()
+                print("  (Preloaded ONNX FastExtractor)")
+            except Exception as e:
+                print(f"  (FastExtractor preload error: {e})")
+
         print("Starting document processing...")
         tracker = ProgressTracker()
         tracker.total_files = total
@@ -1243,7 +1451,9 @@ Return only JSON."""
                         list(executor.map(process_one, files))
             else:
                 file_count = 0
-                for f in files:
+                prefetched_data = None
+                prefetch_lock = threading.Lock()
+                for idx, f in enumerate(files):
                     if limit_files is not None and file_count >= limit_files:
                         print(f"Reached limit of {limit_files} files, stopping.")
                         break
@@ -1276,7 +1486,23 @@ Return only JSON."""
                         gc.collect()
                         time.sleep(0.1)
                         continue
-                    success = process_file(f, tracker, logic_context=logic_context)
+                    # Use prefetched data if available
+                    preloaded = None
+                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and prefetched_data and prefetched_data["file"] == f:
+                        preloaded = prefetched_data
+                        prefetched_data = None
+                        print("  (Using prefetched data)")
+                    # Spawn prefetch for next file
+                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and idx + 1 < len(files):
+                        next_file = files[idx + 1]
+                        def do_prefetch():
+                            nonlocal prefetched_data
+                            with prefetch_lock:
+                                if prefetched_data is None:
+                                    prefetched_data = prepare_next_file(next_file)
+                        t = threading.Thread(target=do_prefetch, daemon=True)
+                        t.start()
+                    success = process_file(f, tracker, logic_context=logic_context, preloaded=preloaded)
                     tracker.processed_count += 1
                     if success and verified_flag:
                         file_hash = get_file_hash(f)

@@ -1,5 +1,6 @@
 
 import random
+from collections import OrderedDict
 import sqlite3
 import threading
 import time
@@ -14,9 +15,46 @@ logger = get_logger(__name__)
 from core import db
 from core.backends import create_backend
 
+# Local embedding queue and worker thread
+import threading as _threading
+import queue as _queue
+
+_local_embed_queue = None
+_local_embed_results = {}
+_local_embed_worker_started = False
+_local_embed_lock = _threading.Lock()
+
+def _start_local_embed_worker():
+    global _local_embed_queue, _local_embed_worker_started
+    if _local_embed_worker_started:
+        return
+    _local_embed_queue = _queue.Queue(maxsize=getattr(config, "LOCAL_EMBED_QUEUE_SIZE", 100))
+    def worker():
+        from core.local_embedder import get_local_embedder
+        local = get_local_embedder()
+        while True:
+            job = _local_embed_queue.get()
+            if job is None:
+                break
+            job_id, texts = job
+            try:
+                embs = local.encode(texts)
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"Local embed worker error: {e}")
+                embs = [None] * len(texts)
+            with _local_embed_lock:
+                _local_embed_results[job_id] = embs
+            _local_embed_queue.task_done()
+    t = _threading.Thread(target=worker, daemon=True)
+    t.start()
+    _local_embed_worker_started = True
+
+
 # In-memory cache for embeddings (short TTL)
-_embedding_cache = {}
+_embedding_cache = OrderedDict()
 _embedding_cache_ttl = 300  # seconds
+_embedding_cache_maxsize = 10000  # bounded LRU size
 
 def _cache_key(texts, model, space):
     return (tuple(texts), model, space)
@@ -40,6 +78,39 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
 
 
 def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic'):
+    # Use local embedder ONLY when no explicit model requested, or when model matches local repo
+    local_model_name = getattr(config, "LOCAL_EMBEDDER_MODEL_REPO", "smcleod/text-embedding-mxbai-embed-large-v1")
+    use_local = (
+        getattr(config, "USE_LOCAL_EMBEDDER", False)
+        and (model is None or model == local_model_name)
+    )
+    if use_local:
+        _start_local_embed_worker()
+        # Split texts into batches of 32 to avoid huge single job
+        batch_size = 32
+        job_ids = []
+        for i in range(0, len(texts), batch_size):
+            sub_texts = texts[i:i+batch_size]
+            job_id = f"local_{time.time()}_{i}"
+            _local_embed_queue.put((job_id, sub_texts))
+            job_ids.append((job_id, i, len(sub_texts)))
+        # Wait for all results
+        result = [None] * len(texts)
+        for job_id, start, length in job_ids:
+            while True:
+                with _local_embed_lock:
+                    if job_id in _local_embed_results:
+                        embs = _local_embed_results.pop(job_id)
+                        break
+                time.sleep(0.001)
+            for offset, emb in enumerate(embs):
+                idx = start + offset
+                if space == 'hyperbolic' and emb is not None:
+                    from core.hyperbolic import exp_map
+                    emb = exp_map(np.array(emb, dtype=np.float32)).tolist()
+                result[idx] = emb
+        return result
+
     """Return embeddings for a list of texts, preferably from cache.
        space: 'hyperbolic' or 'euclidean'. Default is hyperbolic.
        Uses in-memory cache and persistent SQLite cache.
@@ -115,6 +186,10 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     # If all cached, store in memory and return
     if not uncached_texts:
         _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
+        _embedding_cache.move_to_end(cache_key)
+        # Evict oldest if over maxsize
+        while len(_embedding_cache) > _embedding_cache_maxsize:
+            _embedding_cache.popitem(last=False)
         return result
 
     # --- Fetch uncached embeddings from backend ---
@@ -164,6 +239,11 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
 
     # Store in memory cache
     _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
+    # Move to end for LRU
+    _embedding_cache.move_to_end(cache_key)
+    # Evict oldest if over maxsize
+    while len(_embedding_cache) > _embedding_cache_maxsize:
+        _embedding_cache.popitem(last=False)
     return result
 
 

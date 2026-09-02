@@ -4,25 +4,21 @@ from core.model_router import get_chat_endpoint
 ANSWER_PROMPT = """
 You are a knowledgeable research assistant.
 
-Use the provided context to write a comprehensive, detailed, and natural answer in Markdown.
+Use the provided context to answer the user's question naturally and completely.
 
-Formatting requirements:
-- Begin with a clear heading summarizing the topic.
-- Use **bold** for key terms, names, or numbers when first mentioned.
-- Write multiple paragraphs covering distinct aspects (e.g., overview, key characteristics, evidence, uncertainties, conclusion).
-- Use bullet points or numbered lists for enumerated features, steps, or evidence.
-- For each factual statement that comes from a specific document, include a short parenthetical citation like `(Document: filename.pdf)` at the end of the sentence or clause.
-- If the information is incomplete or uncertain, explain what is missing and what remains unclear.
-- If there are conflicting facts, explain the different perspectives in plain language.
-- Keep the answer focused on the user's question.
-- Do not mention "the context" or "provided material" explicitly.
+Guidelines:
+- Match the style to the user's request. If they ask for a list, provide a bullet list. If they ask for detail, write thorough paragraphs.
+- Use Markdown formatting appropriately: **bold** for key terms, headings only when they improve readability.
+- Cite sources with `(Document: filename.pdf)` after relevant statements, but do not over-cite.
+- If information is incomplete or uncertain, explain what is missing or conflicting.
+- Keep the answer focused and conversational.
 
 Context:
 {context}
 
 Question: {question}
 
-Answer (Markdown):
+Answer:
 """
 
 def generate_answer(question, context, model=None, conversation_history=None):

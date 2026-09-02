@@ -38,6 +38,10 @@ def store_chunks(conn, doc_hash: str, chunks: list[str]):
     """
     Store document chunks in index.db.document_chunks.
     """
+    # Delete any existing chunks for this doc to avoid duplicates/old chunking
+    cur = conn.cursor()
+    cur.execute("DELETE FROM document_chunks WHERE doc_hash=?", (doc_hash,))
+
     rows = []
     for idx, chunk in enumerate(chunks):
         rows.append((doc_hash, idx, chunk, None, None))

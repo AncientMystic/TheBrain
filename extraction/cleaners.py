@@ -105,7 +105,7 @@ def _clean_facts(facts):
             f["fact_type"] = _safe_str(f.get("fact_type"), 80)
             try:
                 f["confidence"] = float(f.get("confidence", 0.0))
-            except:
+            except Exception as e:
                 f["confidence"] = 0.0
             cleaned.append(f)
             continue
@@ -124,7 +124,7 @@ def _clean_facts(facts):
         f["fact_type"] = _safe_str(f.get("fact_type"), 80)
         try:
             f["confidence"] = float(f.get("confidence", 0.0))
-        except:
+        except Exception as e:
             f["confidence"] = 0.0
         if fact_text.strip():
             cleaned.append(f)
@@ -149,7 +149,7 @@ def _clean_entities(entities):
         e["entity_type"] = _safe_str(e.get("entity_type"), 40)
         try:
             e["confidence"] = float(e.get("confidence", 0.0))
-        except:
+        except Exception as e:
             e["confidence"] = 0.0
         if entity_name.strip():
             cleaned.append(e)
@@ -174,7 +174,7 @@ def _clean_people(people):
         p["source_span"] = source_span
         try:
             p["confidence"] = float(p.get("confidence", 0.0))
-        except:
+        except Exception as e:
             p["confidence"] = 0.0
         if person_name.strip():
             cleaned.append(p)
@@ -199,7 +199,7 @@ def _clean_locations(locations):
         l["source_span"] = source_span
         try:
             l["confidence"] = float(l.get("confidence", 0.0))
-        except:
+        except Exception as e:
             l["confidence"] = 0.0
         if location_name.strip():
             cleaned.append(l)
@@ -224,7 +224,7 @@ def _clean_dates(dates):
         d["source_span"] = source_span
         try:
             d["confidence"] = float(d.get("confidence", 0.0))
-        except:
+        except Exception as e:
             d["confidence"] = 0.0
         if date_text.strip():
             cleaned.append(d)
@@ -252,7 +252,7 @@ def _clean_events(events):
         ev["source_span"] = source_span
         try:
             ev["confidence"] = float(ev.get("confidence", 0.0))
-        except:
+        except Exception as e:
             ev["confidence"] = 0.0
         if event_name.strip():
             cleaned.append(ev)
@@ -279,7 +279,7 @@ def _clean_discoveries(discoveries):
         disc["source_span"] = source_span
         try:
             disc["confidence"] = float(disc.get("confidence", 0.0))
-        except:
+        except Exception as e:
             disc["confidence"] = 0.0
         if discovery_name.strip():
             cleaned.append(disc)
@@ -302,11 +302,11 @@ def _clean_gems(gems):
         g["source_span"] = source_span
         try:
             g["importance"] = float(g.get("importance", 0.0))
-        except:
+        except Exception as e:
             g["importance"] = 0.0
         try:
             g["confidence"] = float(g.get("confidence", 0.0))
-        except:
+        except Exception as e:
             g["confidence"] = 0.0
         if gem_text.strip():
             cleaned.append(g)
@@ -329,7 +329,7 @@ def _clean_relationships(rels):
         r["evidence_span"] = evidence_span
         try:
             r["confidence"] = float(r.get("confidence", 0.0))
-        except:
+        except Exception as e:
             r["confidence"] = 0.0
         if source_node.strip() and target_node.strip():
             cleaned.append(r)

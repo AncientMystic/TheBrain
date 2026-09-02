@@ -17,7 +17,7 @@ def temporal_distance(emb1, t1, emb2, t2, time_weight=0.1):
         dt1 = datetime.fromisoformat(t1)
         dt2 = datetime.fromisoformat(t2)
         d_t = abs((dt1 - dt2).total_seconds())
-    except:
+    except Exception as e:
         d_t = 0
     return d_h + time_weight * d_t
 

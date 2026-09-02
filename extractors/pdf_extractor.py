@@ -13,6 +13,17 @@ from core.file_utils import get_file_hash
 from core.text_utils import normalise_text
 
 
+def _ocr_page_module(args):
+    """Module-level OCR helper for ProcessPoolExecutor."""
+    pix_bytes, config_str = args
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(pix_bytes))
+    import pytesseract
+    return pytesseract.image_to_string(img, config=config_str)
+
+
+
 def _ocr_page(pix):
     try:
         img = Image.open(io.BytesIO(pix))
@@ -54,9 +65,10 @@ def ocr_pdf_pages(pdf_path, max_pages=None, dpi=None, title_pages=None, title_dp
             else:
                 pix = page.get_pixmap(dpi=dpi)
             images.append(pix.tobytes("png"))
-        # OCR batch in parallel
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            batch_results = list(executor.map(_ocr_page, images))
+        # OCR batch in parallel using ProcessPoolExecutor for CPU-bound work
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            batch_results = list(executor.map(_ocr_page_module, [(img, f'--psm 6 -l {config.OCR_LANG}') for img in images]))
         full_text.extend(batch_results)
         print(f"    Processed pages {batch_start+1}-{batch_end}", flush=True)
     doc.close()

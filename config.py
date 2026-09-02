@@ -61,7 +61,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -172,7 +172,7 @@ TITLE_PAGE_COUNT = 3
 MIN_TEXT_CHARS_FOR_OCR_SKIP = 200
 OCR_BATCH_SIZE = int(os.environ.get("OCR_BATCH_SIZE", "64"))  # Pages per OCR batch
 
-CHUNK_SIZE = 2000
+CHUNK_SIZE = 2000   # ~500 tokens, fits within 4KB context for most models
 CHUNK_OVERLAP = 200
 MAX_CHUNKS_PER_LLM_CALL = LLM_BATCH_CHUNKS
 
@@ -266,6 +266,16 @@ AUDIT_MODEL_URL = os.environ.get("AUDIT_MODEL_URL", "")
 AUDIT_MODEL_NAME = os.environ.get("AUDIT_MODEL_NAME", "")
 AUDIT_MODEL_ENDPOINT = None
 
+
+# --- Performance optimizations ---
+PIPELINE_PARALLELISM = os.environ.get("PIPELINE_PARALLELISM", "true").lower() == "true"
+PIPELINE_MAX_IN_FLIGHT = int(os.environ.get("PIPELINE_MAX_IN_FLIGHT", "2"))
+PREFETCH_NEXT_DOCUMENT = os.environ.get("PREFETCH_NEXT_DOCUMENT", "true").lower() == "true"
+DYNAMIC_BATCH_SIZE = os.environ.get("DYNAMIC_BATCH_SIZE", "true").lower() == "true"
+USE_LOCAL_EMBEDDER = True
+LOCAL_EMBED_QUEUE_SIZE = int(os.environ.get('LOCAL_EMBED_QUEUE_SIZE', '100'))
+
+
 # --- Parallel processing ---
 PARALLEL_PROCESSING_ENABLED = False
 PARALLEL_WORKERS = 3
@@ -279,9 +289,9 @@ RERANKER_ENABLED = True
 RERANKER_MODEL_REPO = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANKER_MODEL_DIR = str(BASE_DIR / "models" / "reranker")
 
-LOCAL_EMBEDDER_ENABLED = True
-LOCAL_EMBEDDER_MODEL_REPO = "sentence-transformers/all-MiniLM-L6-v2"
-LOCAL_EMBEDDER_MODEL_DIR = str(BASE_DIR / "models" / "sentence_embedder")
+LOCAL_EMBEDDER_ENABLED = os.environ.get('USE_LOCAL_EMBEDDER', 'true').lower() == 'true'
+LOCAL_EMBEDDER_MODEL_REPO = "NostraEmpire/mirror-mxbai-embed-large-v1"
+LOCAL_EMBEDDER_MODEL_DIR = str(BASE_DIR / "models" / "mxbai_onnx_fastembed")
 
 INTENT_CLASSIFIER_ENABLED = True
 INTENT_CLASSIFIER_MODEL_REPO = "valhalla/distilbart-mnli-12-3"
@@ -400,7 +410,7 @@ FTS_ENABLED = os.environ.get('FTS_ENABLED', 'true').lower() == 'true'
 USE_ASYNC_LLM = False  # currently synchronous; async not implemented
 INCLUDE_HYPERGRAPH_IN_EXPANSION = True
 MEMORY_DECAY_ENABLED = True
-MEMORY_DECAY_FACTOR = 0.0001  # decay per second (approx half-life ~2h)
+MEMORY_DECAY_FACTOR = 0.0001   # ~7h half-life, empirically chosen for balanced recall  # decay per second (approx half-life ~2h)
 FTS_ENABLED = True
 USE_LLM_HTTP_SESSION = True
 PARALLEL_PROCESSING_ENABLED = False
@@ -491,9 +501,9 @@ CHAT_MODEL_ENDPOINT = None
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 # Async validation queue (small models extract, large models validate)
 ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
-VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "200"))
+VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "2000"))
 VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "24"))
-VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "5"))
+VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "8"))
 VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "680"))
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"

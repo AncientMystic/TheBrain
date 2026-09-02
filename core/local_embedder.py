@@ -1,74 +1,105 @@
+
 """
-Local sentence embedder using HuggingFace Transformers.
-Falls back to no-op if dependencies are unavailable.
+Robust local embedder using ONNX Runtime and transformers tokenizer.
+Handles dynamic input shapes and provides clear error messages.
 """
 import numpy as np
-import torch
 import config
 from pathlib import Path
 
 try:
-    from transformers import AutoTokenizer, AutoModel
+    import onnxruntime as ort
 except ImportError:
-    AutoTokenizer = None
-    AutoModel = None
-
+    ort = None
 
 class LocalEmbedder:
     def __init__(self):
-        self.model = None
+        self.session = None
         self.tokenizer = None
         self.available = False
-        if getattr(config, "LOCAL_EMBEDDER_ENABLED", True):
+        self.input_names = None
+        if ort:
             self._load_model()
 
     def _load_model(self):
         model_dir = Path(config.LOCAL_EMBEDDER_MODEL_DIR)
         if not model_dir.exists():
-            print("Local embedder model directory not found.")
+            print(f"Local embedder model directory not found: {model_dir}")
             return
+
+        onnx_path = model_dir / "model.onnx"
+        if not onnx_path.exists():
+            print(f"model.onnx not found in {model_dir}")
+            return
+
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
-            self.model = AutoModel.from_pretrained(str(model_dir))
-            self.model.eval()
-            if torch.cuda.is_available():
-                self.model.to("cuda")
+            # Load tokenizer
+            try:
+                from transformers import AutoTokenizer
+                self.tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+                print("Loaded tokenizer via transformers.")
+            except Exception:
+                from tokenizers import Tokenizer
+                tokenizer_path = model_dir / "tokenizer.json"
+                if tokenizer_path.exists():
+                    self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
+                    print("Loaded tokenizer via tokenizers.")
+                else:
+                    print("No tokenizer.json found; cannot tokenize.")
+                    return
+
+            # Create ONNX Runtime session
+            providers = ["DmlExecutionProvider", "CPUExecutionProvider"] if "DmlExecutionProvider" in ort.get_available_providers() else ["CPUExecutionProvider"]
+            self.session = ort.InferenceSession(str(onnx_path), providers=providers)
+            self.input_names = [inp.name for inp in self.session.get_inputs()]
             self.available = True
-            print("Local embedder loaded successfully.")
+            print(f"Local embedder loaded via ONNX Runtime with providers {providers}.")
         except Exception as e:
-            print(f"Failed to load local embedder: {e}")
+            print(f"Failed to load ONNX embedder: {e}")
 
     def encode(self, texts):
-        """Return list of embedding vectors."""
         if not self.available or not texts:
             return []
+
         try:
-            inputs = self.tokenizer(
+            # Tokenize with padding/truncation
+            encodings = self.tokenizer(
                 texts,
                 padding=True,
                 truncation=True,
-                max_length=256,
-                return_tensors="pt",
+                max_length=512,
+                return_tensors="np",
             )
-            if torch.cuda.is_available():
-                inputs = {k: v.to("cuda") for k, v in inputs.items()}
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-            hidden = outputs.last_hidden_state
-            mask = inputs["attention_mask"]
-            masked = hidden * mask.unsqueeze(-1)
-            summed = masked.sum(dim=1)
-            counts = mask.sum(dim=1, keepdims=True)
-            mean = summed / counts
-            return mean.cpu().numpy().tolist()
+            input_ids = encodings["input_ids"].astype(np.int64)
+            attention_mask = encodings["attention_mask"].astype(np.int64)
+
+            # Build inputs dict based on model input names
+            onnx_inputs = {}
+            if "input_ids" in self.input_names:
+                onnx_inputs["input_ids"] = input_ids
+            if "attention_mask" in self.input_names:
+                onnx_inputs["attention_mask"] = attention_mask
+            if "token_type_ids" in self.input_names:
+                token_type_ids = encodings.get("token_type_ids", np.zeros_like(input_ids))
+                onnx_inputs["token_type_ids"] = token_type_ids.astype(np.int64)
+
+            outputs = self.session.run(None, onnx_inputs)
+            hidden = outputs[0]  # shape (batch, seq, hidden)
+            if len(hidden.shape) == 3:
+                # Mean pooling
+                mask = attention_mask[:, :, None]
+                summed = (hidden * mask).sum(axis=1)
+                counts = mask.sum(axis=1)
+                embeddings = summed / counts
+            else:
+                embeddings = hidden  # already pooled
+            return embeddings.tolist()
         except Exception as e:
             if config.DEBUG_VERBOSE:
-                print(f"Local embedder encode error: {e}")
+                print(f"ONNX embedder encode error: {e}")
             return []
 
-
 _local_embedder = None
-
 
 def get_local_embedder():
     global _local_embedder

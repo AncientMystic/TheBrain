@@ -218,7 +218,7 @@ def reprocess_document(doc_hash, filename, tracker):
         print("  Computing fact embeddings...")
         conn_facts = db.db_connect("key_facts")
         cur_facts = conn_facts.cursor()
-        cur_facts.execute("SELECT fact_id, fact_text FROM key_facts WHERE doc_hash=?", (doc_hash,))
+        cur_facts.execute("SELECT fact_id, fact_text FROM key_facts WHERE doc_hash=? AND fact_embedding IS NULL", (doc_hash,))
         facts_rows = cur_facts.fetchall()
         if facts_rows:
             texts = [r["fact_text"] for r in facts_rows]

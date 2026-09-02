@@ -20,7 +20,7 @@ def _get_doc_display_name(doc_hash):
 def build_context(facts, summaries=None, chunks=None, conversation_history=None):
     parts = []
     if conversation_history:
-        parts.append(f"[Conversation so far]\n{conversation_history}")
+        parts.append(f"<conversation_history>\n{conversation_history}\n</conversation_history>")
     for fact in facts:
         doc_name = fact.get("doc_name", "unknown")
         doc_hash = fact.get("doc_hash")
