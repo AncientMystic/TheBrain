@@ -6,14 +6,14 @@ from pydantic import BaseModel
 
 import config
 from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
-from chat.conversation import add_message, get_conversation_context
-from chat.responder import generate_answer_with_reasoning
 from memory.retrieve import retrieve_memories
 from logic.decision import decide_logic_modules
 from core.embeddings import get_embeddings_batch
 from core import db
 from reasoning.orchestrator import orchestrate_reasoning
 from deep_research.coordinator import DeepResearchCoordinator
+import logging
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TheBrain OpenAI-Compatible API")
 app.add_middleware(
@@ -39,7 +39,7 @@ class ChatCompletionRequest(BaseModel):
     deep_research: bool = False
 
 class EmbeddingRequest(BaseModel):
-    input: Any
+    input_text: Any
     model: str = config.EMBEDDING_MODEL
 
 def _process_chat(messages, session_id=None, reasoning=False, deep_research=False):
@@ -141,7 +141,7 @@ async def responses(req: ChatCompletionRequest):
 
 @app.post("/v1/embeddings")
 async def embeddings(req: EmbeddingRequest):
-    texts = req.input
+    texts = req.input_text_text
     if isinstance(texts, str):
         texts = [texts]
     embs = get_embeddings_batch(texts)
@@ -168,7 +168,8 @@ async def health():
                 "ok": ok,
             })
         except Exception as e:
-            statuses.append({"url": ep.get("url", ""), "ok": False, "error": str(e)})
+            logger.error(f"Backend health check failed for {ep.get('url', '')}: {e}", exc_info=True)
+            statuses.append({"url": ep.get("url", ""), "ok": False, "error": "backend unavailable"})
     return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}
 
 @app.get("/metrics")
