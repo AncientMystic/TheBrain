@@ -38,6 +38,7 @@ from scripts.init_schemas import init_all
 from memory import retrieve_memories, store_memory
 from logic import decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
+from deep_research.recoll_guided_learning import run_recoll_guided_learning
 import threading
 def clean_answer_citations(answer, reference_names):
     """Replace any [doc:n] with [n] and ensure a References section exists."""
@@ -66,7 +67,7 @@ def _safe_str_for_db(value):
         return ""
     try:
         return str(value)
-    except Exception:
+    except Exception as e:
         logger.warning(f"Handled exception: {e}", exc_info=True)
         return ""
 
@@ -300,7 +301,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
                 sym_ok = verify_symstep(fact, prior)
                 if not sym_ok:
                     sym_contradiction = 1
-            except Exception:
+            except Exception as e:
                 logger.warning(f"Handled exception: {e}", exc_info=True)
                 pass
 
@@ -310,7 +311,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
                 triple = extract_triple_from_text(fact.get("fact_text", ""))
                 if triple and all(k in triple for k in ("subject", "predicate", "object")):
                     formal_repr = json.dumps(triple)
-            except Exception:
+            except Exception as e:
                 logger.warning(f"Handled exception: {e}", exc_info=True)
                 pass
 
@@ -320,7 +321,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
                     from reasoning.verify import verify_rcot
                     if verify_rcot(fact.get("fact_text", ""), None):
                         rcot_verified = 1
-                except Exception:
+                except Exception as e:
                     logger.warning(f"Handled exception: {e}", exc_info=True)
                     pass
 
@@ -519,7 +520,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
         try:
             from core import db as db_module
             db_module.close_all_connections()
-        except Exception:
+        except Exception as e:
             logger.warning(f"Handled exception: {e}", exc_info=True)
             pass
         return True
@@ -530,7 +531,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
         try:
             from core import db as db_module
             db_module.close_all_connections()
-        except Exception:
+        except Exception as e:
             logger.warning(f"Handled exception: {e}", exc_info=True)
             pass
         tracker.mark_error(file_hash, stage="processing")
@@ -666,7 +667,7 @@ def promote_verified_file(file_hash, file_name, source_file=None):
             try:
                 socratic_assessment = json.loads(cached[0])
                 print("    (Socratic assessment loaded from cache)")
-            except Exception:
+            except Exception as e:
                 logger.warning(f"Handled exception: {e}", exc_info=True)
                 pass
         else:
@@ -866,40 +867,55 @@ def direct_document_lookup(query, top_k=1000):
 
 
 
-def prepare_next_file(filepath):
-    """Extract text, chunk, and embed for a file (CPU/IO bound)."""
-    import time
-    _t0 = time.time()
-    file_hash = get_file_hash(filepath)
+def _load_or_extract_text(file_hash, filepath):
+    """Return (text, metadata, ocr_used), using document_text_cache when available."""
+    conn = db.db_connect("index")
     try:
-        # Check cache
-        conn = db.db_connect("index")
         cur = conn.cursor()
         cur.execute("SELECT text FROM document_text_cache WHERE file_hash=?", (file_hash,))
         row = cur.fetchone()
+    finally:
         conn.close()
-        if row:
-            text = row["text"]
-        else:
-            result = extract_text_from_file(filepath)
-            text = result["text"]
-            conn = db.db_connect("index")
-            conn.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
-                         (file_hash, text, json.dumps(result.get("metadata", {}))))
-            conn.commit(); conn.close()
-        if not text:
-            return None
-        # Chunk
+    if row:
+        return row["text"], {}, False
+    result = extract_text_from_file(filepath)
+    text = result.get("text", "")
+    metadata = result.get("metadata", {}) or {}
+    ocr_used = bool(result.get("ocr_used", False))
+    if text:
         conn = db.db_connect("index")
+        try:
+            conn.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
+                         (file_hash, text, json.dumps(metadata)))
+            conn.commit()
+        finally:
+            conn.close()
+    return text, metadata, ocr_used
+
+
+def _load_or_chunk(file_hash, text):
+    """Return chunks, using cached document_chunks when available."""
+    conn = db.db_connect("index")
+    try:
         cur = conn.cursor()
         cur.execute("SELECT chunk_text FROM document_chunks WHERE doc_hash=?", (file_hash,))
         cached_chunks = cur.fetchall()
+    finally:
         conn.close()
-        if cached_chunks:
-            chunks = [r["chunk_text"] for r in cached_chunks]
-        else:
-            chunks = chunk_document(text)
-        # Embeddings
+    if cached_chunks:
+        return [r["chunk_text"] for r in cached_chunks]
+    return chunk_document(text)
+
+
+def prepare_next_file(filepath):
+    """Extract text, chunk, and embed for a file (CPU/IO bound). Single canonical implementation."""
+    file_hash = get_file_hash(filepath)
+    try:
+        text, metadata, ocr_used = _load_or_extract_text(file_hash, filepath)
+        if not text:
+            return None
+        chunks = _load_or_chunk(file_hash, text)
+        # Embeddings — always hyperbolic per design; batch size from config, not hardcoded
         chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
         return {
             "file": filepath,
@@ -907,64 +923,13 @@ def prepare_next_file(filepath):
             "text": text,
             "chunks": chunks,
             "chunk_embs": chunk_embs,
-            "metadata": result.get("metadata", {}) if 'result' in locals() else {},
+            "metadata": metadata,
             "format": Path(filepath).suffix.lstrip(".").lower(),
-            "ocr_used": result.get("ocr_used", False) if 'result' in locals() else False,
+            "ocr_used": ocr_used,
         }
     except Exception as e:
-        print(f"    (Prefetch error for {filepath.name}: {e})")
-        logger.warning("Unexpected exception occurred", exc_info=True)
-        return None
-
-
-
-def prepare_next_file(filepath):
-    """Extract text, chunk, and embed for a file (CPU/IO bound)."""
-    import time
-    _t0 = time.time()
-    file_hash = get_file_hash(filepath)
-    try:
-        # Check cache
-        conn = db.db_connect("index")
-        cur = conn.cursor()
-        cur.execute("SELECT text FROM document_text_cache WHERE file_hash=?", (file_hash,))
-        row = cur.fetchone()
-        conn.close()
-        if row:
-            text = row["text"]
-        else:
-            result = extract_text_from_file(filepath)
-            text = result["text"]
-            conn = db.db_connect("index")
-            conn.execute("INSERT OR REPLACE INTO document_text_cache (file_hash, text, metadata_json) VALUES (?,?,?)",
-                         (file_hash, text, json.dumps(result.get("metadata", {}))))
-            conn.commit(); conn.close()
-        if not text:
-            return None
-        # Chunk
-        conn = db.db_connect("index")
-        cur = conn.cursor()
-        cur.execute("SELECT chunk_text FROM document_chunks WHERE doc_hash=?", (file_hash,))
-        cached_chunks = cur.fetchall()
-        conn.close()
-        if cached_chunks:
-            chunks = [r["chunk_text"] for r in cached_chunks]
-        else:
-            chunks = chunk_document(text)
-        # Embeddings
-        chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
-        return {
-            "file": filepath,
-            "file_hash": file_hash,
-            "text": text,
-            "chunks": chunks,
-            "chunk_embs": chunk_embs,
-            "metadata": result.get("metadata", {}) if 'result' in locals() else {},
-            "format": Path(filepath).suffix.lstrip(".").lower(),
-            "ocr_used": result.get("ocr_used", False) if 'result' in locals() else False,
-        }
-    except Exception as e:
-        print(f"    (Prefetch error for {filepath.name}: {e})")
+        fname = getattr(filepath, "name", str(filepath))
+        print(f"    (Prefetch error for {fname}: {e})")
         logger.warning("Unexpected exception occurred", exc_info=True)
         return None
 
@@ -997,7 +962,26 @@ def main():
     if "--input" in sys.argv:
         idx = sys.argv.index("--input") + 1
         if idx < len(sys.argv):
-            input_path = sys.argv[idx]
+            raw_input = sys.argv[idx]
+            try:
+                # Resolve to absolute to avoid traversal surprises; generic, not doc-specific.
+                # Allow any existing path by default, but log resolved value for audit.
+                # Strict allow-list only when THEBRAIN_ALLOWED_ROOTS env is set (comma-separated).
+                from pathlib import Path as _Path
+                import os as _os
+                _resolved = _Path(raw_input).expanduser().resolve()
+                _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
+                if _allowed:
+                    _ar = [str(_Path(r).expanduser().resolve()) for r in _allowed]
+                    if not any(str(_resolved).startswith(a) for a in _ar) and "--allow-outside-root" not in sys.argv:
+                        print(f"[ERROR] --input {raw_input} outside THEBRAIN_ALLOWED_ROOTS. Use --allow-outside-root to override.")
+                        sys.exit(2)
+                input_path = str(_resolved)
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"[ERROR] Invalid --input path: {e}")
+                sys.exit(2)
 
     verified_flag = "--verified" in sys.argv
     admin_facts = []
@@ -1015,14 +999,16 @@ def main():
     if "--recoll-query" in sys.argv:
         idx = sys.argv.index("--recoll-query") + 1
         if idx < len(sys.argv):
-            recoll_query = sys.argv[idx]
+            import os as _os2
+            _maxq = int(_os2.environ.get("RECOLL_MAX_QUERY_CHARS", "500"))
+            recoll_query = str(sys.argv[idx]).strip()[:_maxq]
 
     recoll_limit = None
     if "--recoll-limit" in sys.argv:
         idx = sys.argv.index("--recoll-limit") + 1
         if idx < len(sys.argv):
             try:
-                recoll_limit = int(sys.argv[idx])
+                recoll_limit = max(1, min(int(sys.argv[idx]), 200))
             except ValueError:
                 print("Invalid --recoll-limit value, using default.")
 
@@ -1031,7 +1017,7 @@ def main():
         idx = sys.argv.index("--preview-chars") + 1
         if idx < len(sys.argv):
             try:
-                preview_chars = int(sys.argv[idx])
+                preview_chars = max(100, min(int(sys.argv[idx]), 10000))
             except ValueError:
                 print("Invalid --preview-chars value, using default.")
 

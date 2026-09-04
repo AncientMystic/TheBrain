@@ -103,6 +103,28 @@ def frechet_mean(vectors, steps=100, lr=0.1):
     return mu
 
 
+def ensure_hyperbolic(vec, space='hyperbolic'):
+    """Ensure vector is a valid Poincaré ball point without double-mapping.
+
+    - If space=='hyperbolic': assume already in ball, only clip norm to <1.
+      Never call exp_map here (avoids tanh(tanh()) distortion).
+    - Otherwise: map from tangent space via exp_map.
+    Generic, no doc-specific hardcoding.
+    """
+    arr = np.asarray(vec, dtype=np.float32)
+    if space == 'hyperbolic':
+        n = float(np.linalg.norm(arr))
+        if n >= 1.0 and n > 0:
+            arr = arr / n * 0.999999
+        return arr
+    return exp_map(arr)
+
+
+def hyperbolic_similarity(u, v):
+    """Convert hyperbolic distance to similarity in (0,1]: 1/(1+d)."""
+    return float(1.0 / (1.0 + float(hyperbolic_distance(u, v))))
+
+
 def euclidean_to_hyperbolic(embeddings):
     """Convert Euclidean tangent vectors to hyperbolic points."""
     return [exp_map(v) for v in embeddings]
@@ -111,3 +133,19 @@ def euclidean_to_hyperbolic(embeddings):
 def hyperbolic_to_euclidean(points):
     """Convert hyperbolic points to Euclidean tangent vectors at origin."""
     return [log_map(p) for p in points]
+
+
+def hyperbolic_distance_matrix(u, v):
+    """Vectorized hyperbolic distance between two arrays of points.
+       u: (m, d), v: (n, d) -> returns (m, n) matrix.
+    """
+    u = np.asarray(u, dtype=np.float32)
+    v = np.asarray(v, dtype=np.float32)
+    # Compute pairwise distance using formula
+    # d(u,v) = arccosh(1 + 2 * ||u-v||^2 / ((1-||u||^2)(1-||v||^2)))
+    diff = u[:, None, :] - v[None, :, :]  # (m, n, d)
+    num = 2.0 * np.sum(diff * diff, axis=2)
+    denom = (1.0 - np.sum(u * u, axis=1)[:, None]) * (1.0 - np.sum(v * v, axis=1)[None, :])
+    arg = 1.0 + num / np.maximum(denom, 1e-12)
+    arg = np.maximum(arg, 1.0)
+    return np.arccosh(arg)

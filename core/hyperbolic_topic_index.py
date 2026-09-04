@@ -5,7 +5,7 @@ from pathlib import Path
 import config
 from core import db
 from core.embeddings import get_embeddings_batch
-from core.hyperbolic import exp_map, frechet_mean, hyperbolic_distance
+from core.hyperbolic import ensure_hyperbolic, exp_map, frechet_mean, hyperbolic_distance
 from core.hyperbolic_clustering import cluster_hyperbolic
 import logging
 logger = logging.getLogger(__name__)
@@ -28,13 +28,18 @@ def build_topic_index(max_clusters=None):
         print("  (No chunk embeddings to build topic index)")
         return
 
-    # Convert embeddings to hyperbolic
+    # Convert embeddings to hyperbolic (single map, no double-mapping)
     hyperbolic_embs = []
     valid_rows = []
     for row in rows:
         emb = np.frombuffer(row["embedding"], dtype=np.float32)
         try:
-            h_emb = exp_map(emb)
+            import numpy as _np
+            # chunk_embeddings are hyperbolic by default; only map if Euclidean (norm>1)
+            if float(_np.linalg.norm(emb)) > 1.0:
+                h_emb = exp_map(emb)
+            else:
+                h_emb = ensure_hyperbolic(emb, space='hyperbolic')
         except Exception:
             logger.warning("Unexpected exception occurred", exc_info=True)
             continue

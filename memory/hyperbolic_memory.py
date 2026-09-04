@@ -5,7 +5,7 @@ from pathlib import Path
 import config
 from core import db
 from core.embeddings import get_embedding
-from core.hyperbolic import exp_map, log_map, hyperbolic_distance, frechet_mean, exp_mu, log_mu
+from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance, frechet_mean, exp_mu, log_mu
 
 def _memory_embeddings(session_id=None):
     """Return list of (memory_id, content, hyperbolic_embedding) for a session or all.
@@ -29,7 +29,7 @@ def store_memory_hyperbolic(session_id, content, memory_type="fact", importance=
     emb = get_embedding(content)
     if emb is None:
         return None
-    h_emb = exp_map(np.array(emb, dtype=np.float32))
+    h_emb = ensure_hyperbolic(emb, space='hyperbolic')
     blob = sqlite3.Binary(h_emb.tobytes())
     conn = db.db_connect("memories")
     cur = conn.cursor()
@@ -51,7 +51,7 @@ def retrieve_memories_hyperbolic(query, top_k=5, session_id=None):
     q_emb = get_embedding(query)
     if q_emb is None:
         return []
-    q_h = exp_map(np.array(q_emb, dtype=np.float32))
+    q_h = ensure_hyperbolic(q_emb, space='hyperbolic')
     memories = _memory_embeddings(session_id)
     results = []
     for memory_id, content, emb in memories:
@@ -66,11 +66,11 @@ def update_session_centroid(session_id, query_text, answer_text=""):
     q_emb = get_embedding(query_text)
     if q_emb is None:
         return
-    q_h = exp_map(np.array(q_emb, dtype=np.float32))
+    q_h = ensure_hyperbolic(q_emb, space='hyperbolic')
     if answer_text:
         a_emb = get_embedding(answer_text)
         if a_emb is not None:
-            a_h = exp_map(np.array(a_emb, dtype=np.float32))
+            a_h = ensure_hyperbolic(a_emb, space='hyperbolic')
             new_centroid = frechet_mean([q_h, a_h], steps=10)
         else:
             new_centroid = q_h
@@ -104,7 +104,7 @@ def geodesic_memory_expansion(query_text, centroid_h, top_k=5):
     q_emb = get_embedding(query_text)
     if q_emb is None:
         return []
-    q_h = exp_map(np.array(q_emb, dtype=np.float32))
+    q_h = ensure_hyperbolic(q_emb, space='hyperbolic')
     # Midpoint on geodesic: exp_q(0.5 * log_q(centroid))
     mid_h = exp_mu(q_h, 0.5 * log_mu(q_h, centroid_h))
     memories = _memory_embeddings()

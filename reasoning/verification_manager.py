@@ -291,22 +291,24 @@ class VerificationManager:
                     fact_emb = get_embedding(fact["fact_text"], model=config.EMBEDDING_MODEL)
                 if fact_emb is not None:
                     import numpy as np
-                    fact_vec = np.array(fact_emb, dtype=np.float32)
-                    fact_norm = np.linalg.norm(fact_vec)
+                    from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
+                    fact_vec = ensure_hyperbolic(fact_emb, space='hyperbolic')
                     best_sim = 0.0
                     best_neg = 0
                     best_conf = 1.0
                     for std in standards:
-                        std_vec = np.array(std["embedding"], dtype=np.float32)
-                        std_norm = np.linalg.norm(std_vec)
-                        if std_norm == 0 or fact_norm == 0:
+                        std_vec = ensure_hyperbolic(std["embedding"], space='hyperbolic')
+                        try:
+                            d = float(hyperbolic_distance(fact_vec, std_vec))
+                        except Exception:
                             continue
-                        sim = float(np.dot(fact_vec, std_vec) / (fact_norm * std_norm))
+                        sim = 1.0 / (1.0 + d)
                         if sim > best_sim:
                             best_sim = sim
                             best_neg = std["negation"]
                             best_conf = std["confidence"]
-                    if best_sim > 0.9:
+                    match_threshold = float(getattr(config, "STANDARDS_MATCH_MIN_SIM", 0.9))
+                    if best_sim > match_threshold:
                         if best_neg == (fact.get("negation", 0) or 0):
                             fact["confidence_final"] = max(final_conf, 0.9)
                             fact["verification_status"] = "verified"

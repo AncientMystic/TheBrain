@@ -22,9 +22,11 @@ REASONING_DB_FILE = str(DATA_DIR / "reasoning.db")
 VERIFICATION_STANDARDS_DB_FILE = str(DATA_DIR / "verification_standards.db")
 VERIFICATION_FACTS_JSON_FILE = str(DATA_DIR / "verification_facts.json")
 
-SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 8000
-SERVER_AUTH_TOKEN = ""
+SERVER_HOST = os.environ.get("SERVER_HOST", "127.0.0.1")
+SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
+SERVER_AUTH_TOKEN = os.environ.get("SERVER_AUTH_TOKEN", "")
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+BACKEND_CONFIG_ERROR = False
 
 LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lfm2.5-vl-3b-absolute-heresy-i1")
@@ -39,7 +41,9 @@ if BACKEND_CONFIG_JSON:
         import json as _json
         BACKENDS = _json.loads(BACKEND_CONFIG_JSON)
     except Exception:
-        print("Warning: BACKEND_CONFIG_JSON is not valid JSON; ignoring.")
+        import logging as _logging
+        _logging.getLogger(__name__).error("BACKEND_CONFIG_JSON is not valid JSON; ignoring.", exc_info=True)
+        BACKEND_CONFIG_ERROR = True
 else:
     # Build default backends from legacy LM Studio and new env vars
     _backend_url = os.environ.get("BACKEND_URL", LM_STUDIO_URL)
@@ -61,7 +65,7 @@ LM_STUDIO_URL_2 = os.environ.get("LM_STUDIO_URL_2", "")
 MODEL_NAME_2 = os.environ.get("MODEL_NAME_2", "")
 EMBEDDING_MODEL_2 = os.environ.get("EMBEDDING_MODEL_2", "")
 
-LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "http://10.0.0.33:1234/v1")
+LM_STUDIO_URL_3 = os.environ.get("LM_STUDIO_URL_3", "")
 MODEL_NAME_3 = os.environ.get("MODEL_NAME_3", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL_3 = os.environ.get("EMBEDDING_MODEL_3", "text-embedding-mxbai-embed-large-v1")
 
@@ -502,9 +506,8 @@ VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or
 # Async validation queue (small models extract, large models validate)
 ENABLE_ASYNC_VALIDATION = os.environ.get("ENABLE_ASYNC_VALIDATION", "true").lower() == "true"
 VALIDATION_QUEUE_SIZE = int(os.environ.get("VALIDATION_QUEUE_SIZE", "2000"))
-VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "4"))
+VALIDATION_BATCH_SIZE = int(os.environ.get("VALIDATION_BATCH_SIZE", "1"))
 VALIDATION_WORKERS = int(os.environ.get("VALIDATION_WORKERS", "8"))
-VALIDATION_MODEL_GROUP = os.environ.get("VALIDATION_MODEL_GROUP", "large")  # or "main"
 VALIDATION_TIMEOUT = int(os.environ.get("VALIDATION_TIMEOUT", "680"))
 EXTRACTION_MODEL_GROUP = os.environ.get("EXTRACTION_MODEL_GROUP", "small")  # or "main"
 

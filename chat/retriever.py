@@ -38,25 +38,58 @@ def retrieve_from_graph(query_analysis, top_k=None, max_depth=2, debug=False):
             facts.extend(get_facts_by_keyword(rel_kw))
         facts.extend(get_facts_by_keyword(kw))
 
+    # Batched entity resolution (avoid N+1 per-entity connections)
+    ent_names = []
     for ent in entities:
         ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)
-        if not ent_name:
-            continue
+        if ent_name:
+            ent_names.append(ent_name)
+    gid_map = {}
+    other_gids = set()
+    gid_to_edges = {}
+    if ent_names:
         conn = db.db_connect("external_graph")
-        cur = conn.cursor()
-        cur.execute("SELECT global_node_id, canonical_name FROM global_nodes WHERE canonical_name=? OR EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1",
-                    (ent_name, ent_name))
-        row = cur.fetchone()
-        if row:
-            gid, canonical = row
-            edges = get_global_node_edges(gid)
-            for edge in edges:
-                other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
-                cur.execute("SELECT canonical_name, node_type FROM global_nodes WHERE global_node_id=?", (other_gid,))
-                other = cur.fetchone()
-                if other:
-                    facts.extend(get_facts_by_keyword(other[0]))
-        conn.close()
+        try:
+            cur = conn.cursor()
+            # Batch in 400-sized chunks to respect SQLite variable limit, generic not doc-specific
+            for s in range(0, len(ent_names), 400):
+                chunk = ent_names[s:s+400]
+                ph = ",".join("?" for _ in chunk)
+                cur.execute(f"SELECT global_node_id, canonical_name FROM global_nodes WHERE canonical_name IN ({ph})", chunk)
+                for r in cur.fetchall():
+                    gid_map[r["canonical_name"]] = r["global_node_id"]
+                # Alias matches still per-name (json_each can't use IN efficiently) but single connection
+                for nm in chunk:
+                    if nm not in gid_map:
+                        cur.execute("SELECT global_node_id, canonical_name FROM global_nodes WHERE EXISTS (SELECT 1 FROM json_each(global_nodes.aliases_json) WHERE value = ?) LIMIT 1", (nm,))
+                        r = cur.fetchone()
+                        if r:
+                            gid_map[nm] = r["global_node_id"]
+            for nm, gid in gid_map.items():
+                edges = get_global_node_edges(gid)
+                gid_to_edges[gid] = edges
+                for edge in edges:
+                    other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
+                    other_gids.add(other_gid)
+            # Batch lookup of neighbor names
+            other_names = {}
+            other_list = list(other_gids)
+            for s in range(0, len(other_list), 400):
+                chunk = other_list[s:s+400]
+                if not chunk:
+                    continue
+                ph = ",".join("?" for _ in chunk)
+                cur.execute(f"SELECT global_node_id, canonical_name FROM global_nodes WHERE global_node_id IN ({ph})", chunk)
+                for r in cur.fetchall():
+                    other_names[r["global_node_id"]] = r["canonical_name"]
+            for gid, edges in gid_to_edges.items():
+                for edge in edges:
+                    other_gid = edge["source_node_id"] if edge["source_node_id"] != gid else edge["target_node_id"]
+                    oname = other_names.get(other_gid)
+                    if oname:
+                        facts.extend(get_facts_by_keyword(oname))
+        finally:
+            conn.close()
 
     unique_facts = []
     for fact in facts:
@@ -129,17 +162,26 @@ def fallback_to_chunks(query, top_k=None, debug=False):
     q_emb = get_embedding(query, model=model, space='hyperbolic')
     if q_emb is not None:
         try:
+            import numpy as _np
+            from core.hyperbolic import ensure_hyperbolic
+            q_emb = ensure_hyperbolic(_np.asarray(q_emb, dtype=_np.float32), space='hyperbolic')
             store = _get_vector_store(model)
             if store.tree is not None:
                 top_distances = store.tree.search(q_emb, k=config.CHAT_TOP_K_CHUNKS * 5)
                 ids = [id_ for id_, _ in top_distances]
                 if ids:
+                    # Batch IN queries in 400-sized chunks to respect SQLite variable limit
+                    rows = []
                     conn = db.db_connect("index")
-                    cur = conn.cursor()
-                    placeholders = ",".join("?" for _ in ids)
-                    cur.execute(f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})", ids)
-                    rows = cur.fetchall()
-                    conn.close()
+                    try:
+                        cur = conn.cursor()
+                        for s in range(0, len(ids), 400):
+                            chunk = ids[s:s+400]
+                            placeholders = ",".join("?" for _ in chunk)
+                            cur.execute(f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE chunk_id IN ({placeholders})", chunk)
+                            rows.extend(cur.fetchall())
+                    finally:
+                        conn.close()
                     id_to_row = {row["chunk_id"]: row for row in rows}
                     for cid, dist in top_distances:
                         if cid in id_to_row and cid not in seen:

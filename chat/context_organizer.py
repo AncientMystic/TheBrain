@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 import config
 from core import db
 from core.embeddings import get_embedding
-from core.hyperbolic import exp_map, log_map, hyperbolic_distance
+from core.hyperbolic import ensure_hyperbolic, log_map, hyperbolic_distance
 from core.hyperbolic_clustering import cluster_hyperbolic, select_representatives
 
 def _fact_embedding(fact):
@@ -15,7 +15,7 @@ def _fact_embedding(fact):
     emb = get_embedding(text)
     if emb is None:
         return None
-    return exp_map(np.array(emb, dtype=np.float32))
+    return ensure_hyperbolic(emb, space='hyperbolic')
 
 def _get_node_id_for_entity(entity):
     """Look up global_node_id by canonical name or alias."""
@@ -103,8 +103,7 @@ def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10
             text = fact.get("fact_text", "")
             source = fact.get("doc_name", fact.get("doc_hash", "unknown"))
             lines.append(f"- {text} (source: {source})")
-        return "
-".join(lines)
+        return "\n".join(lines)
 
     # 2. Cluster facts hyperbolically
     n_clusters = min(max_clusters, len(valid_facts))
@@ -194,5 +193,4 @@ def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10
             source = fact.get("doc_name", fact.get("doc_hash", "unknown"))
             lines.append(f"- {text} (source: {source})")
 
-    return "
-".join(lines)
+    return "\n".join(lines)

@@ -1,7 +1,7 @@
 import numpy as np
 from core import db
 from core.embeddings import get_embedding
-from core.hyperbolic import exp_map, log_map, frechet_mean, hyperbolic_distance
+from core.hyperbolic import ensure_hyperbolic, exp_map, log_map, frechet_mean, hyperbolic_distance
 
 def _get_messages(session_id, max_turns=30):
     conn = db.db_connect("memories")
@@ -24,7 +24,7 @@ def _embed_messages(messages):
     for msg in messages:
         emb = get_embedding(msg["content"])
         if emb is not None:
-            h_emb = exp_map(np.array(emb, dtype=np.float32))
+            h_emb = ensure_hyperbolic(emb, space='hyperbolic')
             result.append((msg, h_emb))
     return result
 

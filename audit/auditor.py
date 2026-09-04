@@ -81,7 +81,6 @@ def audit_against_standards():
     Compare unverified key_facts against verified_standards using dynamic thresholds.
     Prints progress per fact. No deletion.
     """
-    from core.fact_normalizer import normalize_name
     from core.embeddings import get_embeddings_batch
 
     print("  Loading standards...")
@@ -113,16 +112,21 @@ def audit_against_standards():
     fact_embs = get_embeddings_batch(fact_statements, batch_size=config.EMBEDDING_BATCH_SIZE)
 
     import numpy as np
+    from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
     all_sims = []
     for fe in fact_embs:
         if fe is None:
             continue
-        a = np.array(fe, dtype=np.float32)
+        a = ensure_hyperbolic(fe, space='hyperbolic')
         for se in standard_embs:
             if se is None:
                 continue
-            b = np.array(se, dtype=np.float32)
-            sim = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+            b = ensure_hyperbolic(se, space='hyperbolic')
+            try:
+                d = float(hyperbolic_distance(a, b))
+            except Exception:
+                continue
+            sim = 1.0 / (1.0 + d)
             all_sims.append(sim)
     if not all_sims:
         return
@@ -143,12 +147,16 @@ def audit_against_standards():
             continue
         best_match = None
         best_sim = 0.0
-        a = np.array(fact_emb, dtype=np.float32)
+        a = ensure_hyperbolic(fact_emb, space='hyperbolic')
         for std, std_emb in zip(standards, standard_embs):
             if std_emb is None:
                 continue
-            b = np.array(std_emb, dtype=np.float32)
-            sim = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8))
+            b = ensure_hyperbolic(std_emb, space='hyperbolic')
+            try:
+                d = float(hyperbolic_distance(a, b))
+            except Exception:
+                continue
+            sim = 1.0 / (1.0 + d)
             if sim > best_sim:
                 best_sim = sim
                 best_match = std

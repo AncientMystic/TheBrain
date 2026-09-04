@@ -3,7 +3,7 @@ import numpy as np
 import config
 from core import db
 from core.embeddings import get_embedding
-from core.hyperbolic import exp_map, hyperbolic_distance
+from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
 
 def filter_by_hyperbolic_radius(facts, query_emb, radius=None):
     """Keep facts within a dynamic hyperbolic radius. If radius is None, compute it."""
@@ -22,7 +22,7 @@ def filter_by_hyperbolic_radius(facts, query_emb, radius=None):
             fact_embs_pairs.append((fact, None))
             candidate_embs.append(None)
             continue
-        h_emb = exp_map(np.array(emb, dtype=np.float32))
+        h_emb = ensure_hyperbolic(emb, space='hyperbolic')
         candidate_embs.append(h_emb)
         fact_embs_pairs.append((fact, h_emb))
     valid_embs = [e for e in candidate_embs if e is not None]
@@ -132,18 +132,17 @@ def format_graph_context(paths, facts):
         text = fact.get("fact_text", "")
         source = fact.get("doc_name", fact.get("doc_hash", "unknown"))
         lines.append(f"- {text} (source: {source})")
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 def prepare_reasoning_context(query, facts, active_entities=None):
     """Main entry: filter facts by hyperbolic radius and find graph paths."""
     if not facts:
         return ""
-    # Get query embedding
+    # Get query embedding (already hyperbolic by default)
     q_emb = get_embedding(query)
     if q_emb is None:
         return ""
-    q_h = exp_map(np.array(q_emb, dtype=np.float32))
+    q_h = ensure_hyperbolic(q_emb, space='hyperbolic')
 
     # Filter by radius
     radius = getattr(config, "HYPERBOLIC_FILTER_RADIUS", 1.0)

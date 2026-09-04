@@ -1,13 +1,24 @@
 from core.embeddings import get_embedding
 from core.text_utils import normalise_text
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
+
+
+def hyperbolic_similarity(a, b):
+    from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
+    ah = ensure_hyperbolic(a, space='hyperbolic')
+    bh = ensure_hyperbolic(b, space='hyperbolic')
+    try:
+        d = float(hyperbolic_distance(ah, bh))
+    except Exception:
+        return 0.0
+    return 1.0 / (1.0 + d)
 
 
 def cosine_similarity(a, b):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-8
-    return float(np.dot(a, b) / denom)
+    # Backward-compat alias: geometry-correct via hyperbolic distance.
+    return hyperbolic_similarity(a, b)
 
 
 def validate_source_span(source_span: str, full_text: str) -> bool:

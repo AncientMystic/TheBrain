@@ -1,3 +1,4 @@
+import os
 import subprocess
 import shutil
 import re
@@ -30,24 +31,41 @@ class RecollClient:
 
 
 def run_recoll_query(query: str, limit: int = None, bin_path: str = None, db_dir: str = None) -> list[dict]:
-    """Run recollq as subprocess and parse output."""
+    """Run recollq as subprocess and parse output (shell=False, validated args)."""
     if limit is None:
         limit = config.RECOLL_MAX_RESULTS
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = int(getattr(config, "RECOLL_MAX_RESULTS", 50))
+    limit = max(1, min(limit, int(getattr(config, "RECOLL_HARD_MAX_RESULTS", 200))))
+    if not isinstance(query, str) or not query.strip():
+        return []
+    # Generic length cap (not doc-specific) to avoid oversized argv
+    max_qlen = int(getattr(config, "RECOLL_MAX_QUERY_CHARS", 500))
+    query = query.strip()[:max_qlen]
     bin_path = bin_path or config.RECOLL_BIN
     db_dir = db_dir if db_dir is not None else config.RECOLL_DB
-
-    if not shutil.which(bin_path):
+    # Resolve binary without shell: allow absolute path or PATH lookup
+    resolved_bin = bin_path if Path(bin_path).is_absolute() else (shutil.which(bin_path) or bin_path)
+    if not (shutil.which(resolved_bin) or (Path(resolved_bin).is_file())):
         raise RuntimeError(f"Recoll binary '{bin_path}' not found in PATH.")
-
-    cmd = [bin_path]
     if db_dir:
-        cmd += ["-c", db_dir]
+        # Resolve confdir to absolute to avoid traversal surprises; must exist if given
+        db_path = str(Path(db_dir).expanduser())
+    else:
+        db_path = ""
+
+    cmd = [resolved_bin]
+    if db_path:
+        cmd += ["-c", db_path]
     cmd += ["-t", "-A", "-n", str(limit), query]
 
     if config.DEBUG_VERBOSE:
-        print(f"    (Running: {' '.join(cmd)})")
+        print(f"    (Running recollq n={limit})")
 
-    proc = subprocess.run(cmd, capture_output=True, timeout=30)
+    timeout = int(getattr(config, "RECOLL_TIMEOUT", 30))
+    proc = subprocess.run(cmd, capture_output=True, timeout=timeout, shell=False, text=False)
     stdout = proc.stdout.decode('utf-8', errors='replace') if proc.stdout else ''
     stderr = proc.stderr.decode('utf-8', errors='replace') if proc.stderr else ''
 

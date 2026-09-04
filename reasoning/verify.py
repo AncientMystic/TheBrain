@@ -4,6 +4,7 @@ from typing import List, Dict, Optional
 from core import db
 from reasoning.graph import query_kg_triples
 from core.llm import call_model_json
+import config
 import logging
 logger = logging.getLogger(__name__)
 
@@ -221,22 +222,20 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
                         claim_emb = get_embedding(step.get("text",""))
                         prior_embs = [get_embedding(a.get("text","")) for a in accepted if a.get("text")]
                         if claim_emb and prior_embs:
-                            claim_vec = np.array(claim_emb, dtype=np.float32)
+                            from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
+                            claim_vec = ensure_hyperbolic(claim_emb, space='hyperbolic')
                             max_sim = 0.0
                             for pe in prior_embs:
                                 if pe:
-                                    pv = np.array(pe, dtype=np.float32)
+                                    pv = ensure_hyperbolic(pe, space='hyperbolic')
                                     if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", True):
-
-                                        from core.hyperbolic import exp_map, hyperbolic_distance
-
-                                        d = hyperbolic_distance(exp_map(claim_vec), exp_map(pv))
-
+                                        d = float(hyperbolic_distance(claim_vec, pv))
                                         sim = 1.0 / (1.0 + d)
-
                                     else:
-
-                                        sim = float(np.dot(claim_vec, pv) / (np.linalg.norm(claim_vec) * np.linalg.norm(pv) + 1e-8))
+                                        import numpy as _np
+                                        claim_arr = _np.asarray(claim_vec, dtype=_np.float32)
+                                        pv_arr = _np.asarray(pv, dtype=_np.float32)
+                                        sim = float(_np.dot(claim_arr, pv_arr) / (_np.linalg.norm(claim_arr) * _np.linalg.norm(pv_arr) + 1e-8))
                                     max_sim = max(max_sim, sim)
                             score = max(0.0, min(1.0, max_sim * 0.8 + (0.5 if consistent else 0.0)))
                         else:

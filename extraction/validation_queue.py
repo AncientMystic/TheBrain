@@ -30,17 +30,34 @@ class ValidationQueue:
         self.processed_count = 0
         self.seen_ids = set()
 
+    def _content_hash(self, item):
+        import hashlib
+        import json
+        try:
+            key_parts = [
+                str(item.get("_category", "")),
+                str(item.get("fact_text", item.get("entity_name", item.get("person_name", item.get("location_name", ""))))),
+                str(item.get("canonical_value", "")),
+                str(item.get("source_span", "")),
+            ]
+            return hashlib.sha256("\0".join(key_parts).encode("utf-8", errors="ignore")).hexdigest()
+        except Exception:
+            return None
+
     def put(self, item, timeout=1.0):
-        """Add an item to the validation list."""
-        if item is None:
+        """Add an item to the validation list (copy-on-put, content-hash dedup)."""
+        if item is None or not isinstance(item, dict):
             return
-        self._next_id = getattr(self, '_next_id', 0) + 1
-        item['_item_id'] = self._next_id
+        item_copy = dict(item)
+        chash = self._content_hash(item_copy)
         with self.lock:
-            if item['_item_id'] in self.seen_ids:
-                return
-            self.seen_ids.add(item['_item_id'])
-            self.items.append(item)
+            self._next_id = getattr(self, '_next_id', 0) + 1
+            item_copy['_item_id'] = self._next_id
+            if chash is not None:
+                if chash in self.seen_ids:
+                    return
+                self.seen_ids.add(chash)
+            self.items.append(item_copy)
             self.total_items += 1
 
     def start(self):
@@ -52,7 +69,7 @@ class ValidationQueue:
            Splits large batches into smaller sub-batches to avoid empty responses."""
         if not batch:
             return
-        max_per_call = 4
+        max_per_call = int(getattr(config, "VALIDATION_MAX_PER_CALL", 4))
         if len(batch) > max_per_call:
             # Recursively process smaller chunks
             for i in range(0, len(batch), max_per_call):
@@ -104,31 +121,55 @@ Return only JSON.
                 print(f"Validation batch error: {e}")
 
         if resp is None or not isinstance(resp, dict):
-            # Fallback: keep original items
+            # Fallback: preserve verification-first — mark unverified, don't pass as validated
+            fallback = []
+            for b in batch:
+                fb = dict(b) if isinstance(b, dict) else {}
+                fb["verification_status"] = "unverified"
+                fb["confidence_final"] = 0.0
+                fallback.append(fb)
             with self.lock:
-                self.results.extend(batch)
+                self.results.extend(fallback)
             self._update_progress(len(batch))
             return
 
         validated = resp.get("validated_items", [])
         if not validated:
+            fallback = []
+            for b in batch:
+                fb = dict(b) if isinstance(b, dict) else {}
+                fb["verification_status"] = "unverified"
+                fb["confidence_final"] = 0.0
+                fallback.append(fb)
             with self.lock:
-                self.results.extend(batch)
+                self.results.extend(fallback)
             self._update_progress(len(batch))
             return
 
-        # Merge metadata back
+        # Merge metadata back by _item_id (not positionally, LLM may reorder/drop)
+        by_id = {b.get("_item_id"): b for b in batch if isinstance(b, dict)}
         merged = []
-        for i, item in enumerate(validated):
+        seen = set()
+        for item in validated:
             if not isinstance(item, dict):
-                item = {}
-            if i < len(batch) and isinstance(batch[i], dict):
-                item["_chunk_idx"] = batch[i].get("_chunk_idx")
-                item["_category"] = batch[i].get("_category")
-                item["_item_id"] = batch[i].get("_item_id")
+                continue
+            iid = item.get("_item_id")
+            src = by_id.get(iid) if iid is not None else None
+            if src is None and len(by_id) == 1:
+                src = next(iter(by_id.values()))
+            if src is not None:
+                item.setdefault("_chunk_idx", src.get("_chunk_idx"))
+                item.setdefault("_category", src.get("_category"))
+                item["_item_id"] = src.get("_item_id")
+                seen.add(src.get("_item_id"))
             merged.append(item)
-        if len(validated) < len(batch):
-            merged.extend(batch[len(validated):])
+        # Any batch items missing from LLM output → keep as unverified, don't silently drop
+        for b in batch:
+            if b.get("_item_id") not in seen:
+                fb = dict(b)
+                fb["verification_status"] = "unverified"
+                fb["confidence_final"] = 0.0
+                merged.append(fb)
 
         # Clean and store
         from extraction.cleaners import (
@@ -178,8 +219,15 @@ Return only JSON.
         if not self.items:
             print()
             return []
+        # Respect LLM endpoint capacities (don't exhaust first endpoint cap 3 with 8 workers)
+        try:
+            caps = getattr(config, "LLM_ENDPOINT_CAPACITIES", []) or []
+            total_cap = sum(int(c) for c in caps) if caps else self.workers
+        except Exception:
+            total_cap = self.workers
+        effective_workers = max(1, min(self.workers, total_cap, len(self.items)))
         # Process in batches using thread pool
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = []
             for i in range(0, len(self.items), self.batch_size):
                 batch = self.items[i:i+self.batch_size]

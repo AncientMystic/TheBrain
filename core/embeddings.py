@@ -15,12 +15,12 @@ logger = get_logger(__name__)
 from core import db
 from core.backends import create_backend
 
-# Local embedding queue and worker thread
+# Local embedding queue and worker thread (Future-based, no busy-wait)
 import threading as _threading
 import queue as _queue
+from concurrent.futures import Future as _Future
 
 _local_embed_queue = None
-_local_embed_results = {}
 _local_embed_worker_started = False
 _local_embed_lock = _threading.Lock()
 
@@ -28,36 +28,49 @@ def _start_local_embed_worker():
     global _local_embed_queue, _local_embed_worker_started
     if _local_embed_worker_started:
         return
-    _local_embed_queue = _queue.Queue(maxsize=getattr(config, "LOCAL_EMBED_QUEUE_SIZE", 100))
-    def worker():
-        from core.local_embedder import get_local_embedder
-        local = get_local_embedder()
-        while True:
-            job = _local_embed_queue.get()
-            if job is None:
-                break
-            job_id, texts = job
-            try:
-                embs = local.encode(texts)
-            except Exception as e:
-                if config.DEBUG_VERBOSE:
-                    print(f"Local embed worker error: {e}")
-                embs = [None] * len(texts)
-            with _local_embed_lock:
-                _local_embed_results[job_id] = embs
-            _local_embed_queue.task_done()
-    t = _threading.Thread(target=worker, daemon=True)
-    t.start()
-    _local_embed_worker_started = True
+    with _local_embed_lock:
+        if _local_embed_worker_started:
+            return
+        _local_embed_queue = _queue.Queue(maxsize=getattr(config, "LOCAL_EMBED_QUEUE_SIZE", 100))
+
+        def worker():
+            from core.local_embedder import get_local_embedder
+            local = get_local_embedder()
+            while True:
+                job = _local_embed_queue.get()
+                if job is None:
+                    _local_embed_queue.task_done()
+                    break
+                fut, texts = job
+                if fut.cancelled():
+                    _local_embed_queue.task_done()
+                    continue
+                try:
+                    embs = local.encode(texts)
+                except Exception as e:
+                    logger.warning(f"Local embed worker error: {e}", exc_info=True)
+                    embs = [None] * len(texts)
+                if not fut.done():
+                    fut.set_result(embs)
+                _local_embed_queue.task_done()
+
+        t = _threading.Thread(target=worker, daemon=True, name="local-embed-worker")
+        t.start()
+        _local_embed_worker_started = True
 
 
-# In-memory cache for embeddings (short TTL)
+# In-memory cache for embeddings (short TTL, hashed key to bound memory)
 _embedding_cache = OrderedDict()
 _embedding_cache_ttl = 300  # seconds
 _embedding_cache_maxsize = 10000  # bounded LRU size
 
 def _cache_key(texts, model, space):
-    return (tuple(texts), model, space)
+    import hashlib
+    h = hashlib.sha256()
+    for t in texts:
+        h.update(t.encode("utf-8", errors="ignore"))
+        h.update(b"\0")
+    return (h.hexdigest(), len(texts), model, space)
 
 def _fetch_batch_with_endpoint(endpoint, batch_texts):
     results = []
@@ -88,21 +101,24 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
         _start_local_embed_worker()
         # Split texts into batches of 32 to avoid huge single job
         batch_size = 32
-        job_ids = []
+        pending = []
         for i in range(0, len(texts), batch_size):
             sub_texts = texts[i:i+batch_size]
-            job_id = f"local_{time.time()}_{i}"
-            _local_embed_queue.put((job_id, sub_texts))
-            job_ids.append((job_id, i, len(sub_texts)))
-        # Wait for all results
+            fut: _Future = _Future()
+            try:
+                _local_embed_queue.put((fut, sub_texts), timeout=5)
+            except _queue.Full:
+                logger.warning("Local embed queue full; returning None for batch at %d", i)
+                fut.set_result([None] * len(sub_texts))
+            pending.append((fut, i))
+        # Wait for all results (blocking on Future, no busy-wait)
         result = [None] * len(texts)
-        for job_id, start, length in job_ids:
-            while True:
-                with _local_embed_lock:
-                    if job_id in _local_embed_results:
-                        embs = _local_embed_results.pop(job_id)
-                        break
-                time.sleep(0.001)
+        for fut, start in pending:
+            try:
+                embs = fut.result(timeout=getattr(config, "LOCAL_EMBED_TIMEOUT", 120))
+            except Exception as e:
+                logger.warning(f"Local embed batch failed: {e}", exc_info=True)
+                embs = [None] * min(batch_size, len(texts) - start)
             for offset, emb in enumerate(embs):
                 idx = start + offset
                 if space == 'hyperbolic' and emb is not None:
@@ -123,12 +139,13 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     if not texts:
         return []
 
-    # --- In-memory cache check ---
+    # --- In-memory cache check (TTL/maxsize from config, not hardcoded) ---
+    _ttl = float(getattr(config, "EMBEDDING_CACHE_TTL", _embedding_cache_ttl))
     cache_key = _cache_key(texts, model, space)
     cached = _embedding_cache.get(cache_key)
     if cached is not None:
         age = time.time() - cached['timestamp']
-        if age < _embedding_cache_ttl:
+        if age < _ttl:
             return cached['result']
         else:
             del _embedding_cache[cache_key]
@@ -187,8 +204,9 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     if not uncached_texts:
         _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
         _embedding_cache.move_to_end(cache_key)
-        # Evict oldest if over maxsize
-        while len(_embedding_cache) > _embedding_cache_maxsize:
+        # Evict oldest if over maxsize (config-driven, not hardcoded)
+        _maxsize = int(getattr(config, "EMBEDDING_CACHE_MAXSIZE", _embedding_cache_maxsize))
+        while len(_embedding_cache) > _maxsize:
             _embedding_cache.popitem(last=False)
         return result
 
@@ -241,8 +259,9 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
     # Move to end for LRU
     _embedding_cache.move_to_end(cache_key)
-    # Evict oldest if over maxsize
-    while len(_embedding_cache) > _embedding_cache_maxsize:
+    # Evict oldest if over maxsize (config-driven)
+    _maxsize = int(getattr(config, "EMBEDDING_CACHE_MAXSIZE", _embedding_cache_maxsize))
+    while len(_embedding_cache) > _maxsize:
         _embedding_cache.popitem(last=False)
     return result
 

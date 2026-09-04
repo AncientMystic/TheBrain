@@ -1,6 +1,6 @@
 import time, uuid, json
 from typing import List, Optional, Any
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -16,13 +16,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TheBrain OpenAI-Compatible API")
+
+_cors_origins = getattr(config, "CORS_ORIGINS", [])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins if _cors_origins else [],
+    allow_credentials=bool(_cors_origins),
+    allow_methods=["*"] if _cors_origins else ["GET", "POST"],
+    allow_headers=["*"] if _cors_origins else ["Content-Type", "Authorization"],
 )
+
+
+async def require_auth(authorization: Optional[str] = Header(None, alias="Authorization")):
+    expected = getattr(config, "SERVER_AUTH_TOKEN", "")
+    if not expected:
+        if getattr(config, "DEBUG_VERBOSE", False):
+            logger.debug("Auth check skipped: no SERVER_AUTH_TOKEN configured")
+        return True
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    if authorization[len("Bearer "):] != expected:
+        raise HTTPException(status_code=401, detail="Invalid auth token")
+    return True
 
 class ChatMessage(BaseModel):
     role: str
@@ -39,7 +54,8 @@ class ChatCompletionRequest(BaseModel):
     deep_research: bool = False
 
 class EmbeddingRequest(BaseModel):
-    input_text: Any
+    input_text: Any = None
+    input: Any = None
     model: str = config.EMBEDDING_MODEL
 
 def _process_chat(messages, session_id=None, reasoning=False, deep_research=False):
@@ -99,7 +115,7 @@ async def list_models():
         })
     return {"data": models, "object": "list"}
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", dependencies=[Depends(require_auth)])
 async def chat_completions(req: ChatCompletionRequest):
     answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
@@ -115,7 +131,7 @@ async def chat_completions(req: ChatCompletionRequest):
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     }
 
-@app.post("/v1/completions")
+@app.post("/v1/completions", dependencies=[Depends(require_auth)])
 async def completions(req: ChatCompletionRequest):
     answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
@@ -127,7 +143,7 @@ async def completions(req: ChatCompletionRequest):
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     }
 
-@app.post("/v1/responses")
+@app.post("/v1/responses", dependencies=[Depends(require_auth)])
 async def responses(req: ChatCompletionRequest):
     answer, facts = _process_chat(req.messages, req.session_id, req.reasoning, req.deep_research)
     return {
@@ -139,16 +155,18 @@ async def responses(req: ChatCompletionRequest):
         "usage": {"input_tokens": 0, "output_tokens": 0}
     }
 
-@app.post("/v1/embeddings")
+@app.post("/v1/embeddings", dependencies=[Depends(require_auth)])
 async def embeddings(req: EmbeddingRequest):
-    texts = req.input_text_text
+    texts = req.input_text if req.input_text is not None else req.input
+    if texts is None:
+        return {"data": [], "model": req.model, "object": "list"}
     if isinstance(texts, str):
         texts = [texts]
-    embs = get_embeddings_batch(texts)
+    embs = get_embeddings_batch(texts, model=req.model)
     data = [{"object": "embedding", "index": i, "embedding": emb} for i, emb in enumerate(embs) if emb is not None]
     return {"data": data, "model": req.model, "object": "list"}
 
-@app.post("/v1/reasoning")
+@app.post("/v1/reasoning", dependencies=[Depends(require_auth)])
 async def reasoning_endpoint(req: ChatCompletionRequest):
     answer, facts = orchestrate_reasoning(req.messages[-1].content)
     return {"answer": answer, "facts": facts}
@@ -172,7 +190,7 @@ async def health():
             statuses.append({"url": ep.get("url", ""), "ok": False, "error": "backend unavailable"})
     return {"status": "ok", "endpoints": len(config.LLM_ENDPOINTS), "endpoint_status": statuses}
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(require_auth)])
 async def metrics():
     from core.metrics import get_all_metrics
     from fastapi.responses import PlainTextResponse
