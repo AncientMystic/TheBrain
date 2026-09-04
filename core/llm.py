@@ -16,7 +16,21 @@ _requests_local = threading.local()
 
 def _get_requests_session():
     if not hasattr(_requests_local, "session"):
-        _requests_local.session = requests.Session()
+        s = requests.Session()
+        try:
+            import config as _cfg
+            from requests.adapters import HTTPAdapter as _HA
+            from urllib3.util.retry import Retry as _Retry
+            _pool_n = int(getattr(_cfg, "LLM_POOL_CONNECTIONS", 10))
+            _pool_m = int(getattr(_cfg, "LLM_POOL_MAXSIZE", 10))
+            _retries = _Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
+            _ad = _HA(pool_connections=_pool_n, pool_maxsize=_pool_m, max_retries=_retries)
+            s.mount("http://", _ad)
+            s.mount("https://", _ad)
+            s.headers.update({"Connection": "keep-alive"})
+        except Exception:
+            pass
+        _requests_local.session = s
     return _requests_local.session
 
 def _select_endpoint_by_type(endpoint_type=None):
@@ -118,13 +132,22 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
 
 
 def repair_json(raw: str) -> str:
+    """Repair common JSON malformations from LLM outputs."""
     raw = raw.strip()
     raw = re.sub(r'^```(?:json)?', '', raw)
     raw = re.sub(r'```$', '', raw).strip()
     raw = raw.rstrip()
     raw = re.sub(r',\s*([}\]])', r'\1', raw)
 
-    # If raw appears to end inside a string, close it first.
+    # Insert missing commas between adjacent JSON values (using capture groups)
+    raw = re.sub(r'\}\s*\{', '},{', raw)
+    raw = re.sub(r'\]\s*\[', '],[', raw)
+    raw = re.sub(r'\}\s*"', '},"', raw)
+    raw = re.sub(r'\]\s*"', '],"', raw)
+    raw = re.sub(r'\}\s*(\d)', r'},\1', raw)  # capture digit
+    raw = re.sub(r'\]\s*(\d)', r'],\1', raw)  # capture digit
+
+    # Ensure any trailing incomplete string is closed
     in_string = False
     escaped = False
     for ch in raw:
@@ -139,6 +162,7 @@ def repair_json(raw: str) -> str:
     if in_string:
         raw += '"'
 
+    # Balance braces/brackets
     open_braces = raw.count('{')
     close_braces = raw.count('}')
     open_brackets = raw.count('[')
@@ -150,7 +174,6 @@ def repair_json(raw: str) -> str:
         raw += ']'
         close_brackets += 1
     return raw
-
 
 def extract_first_json(raw: str):
     """Attempt to extract the first complete JSON object/array from raw text."""
@@ -169,8 +192,8 @@ def extract_first_json(raw: str):
             try:
                 obj, _ = decoder.raw_decode(raw[i:])
                 return obj
-            except json.JSONDecodeError:
-                logger.warning(f"Handled exception: {e}", exc_info=True)
+            except json.JSONDecodeError as e:
+                logger.debug(f"Handled exception: {e}", exc_info=True)
                 continue
     return None
 
@@ -198,8 +221,8 @@ def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
                     return parsed[0]
                 return None
             return parsed
-        except json.JSONDecodeError:
-            logger.warning(f"Handled exception: {e}", exc_info=True)
+        except json.JSONDecodeError as e:
+            logger.debug(f"Handled exception: {e}", exc_info=True)
             pass
 
         return None
@@ -219,7 +242,8 @@ def call_model_json(prompt, model=None, max_tokens=4096, temperature=None,
         return parsed2
 
     preview = (raw or "")[:500].replace("\n", " ")
-    print(f"    (JSON parse failure preview: {preview})")
+    if config.DEBUG_VERBOSE:
+        print(f"    (JSON parse failure preview: {preview})")
     if config.DEBUG_VERBOSE:
         logger.error("Failed to parse JSON from LLM response")
         logger.debug(f"Raw response (first 500 chars): {raw[:500]}")

@@ -52,46 +52,101 @@ class LinearRanker:
     def batch_score(self, query, datapoints, query_entities, reranker=None):
         """Score multiple datapoints efficiently using stored hyperbolic embeddings."""
         from core.embeddings import get_embeddings_batch
+        from core.text_utils import tokenize as _tok
+        from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
         import numpy as np
 
-        # Embed query only once (batched)
+        # Embed query only once (batched) + tokenize once (not per-datapoint)
         query_embs = get_embeddings_batch([query], space='hyperbolic')
         q_emb = query_embs[0] if query_embs else None
+        if q_emb is not None:
+            q_emb = ensure_hyperbolic(np.asarray(q_emb, dtype=np.float32), space='hyperbolic')
+        try:
+            qtok = set(_tok(query))
+        except Exception:
+            qtok = set(query.lower().split())
 
-        conn_emb = db.db_connect("embeddings")
-        cur_emb = conn_emb.cursor()
-        conn_kf = db.db_connect("key_facts")
-        cur_kf = conn_kf.cursor()
-
-        scores = []
+        # Batch-fetch stored embeddings (avoid N+1 SELECTs, 400-chunk IN)
+        fact_ids = []
+        chunk_ids = []
         for dp in datapoints:
-            text = dp.get('text', '') or ''
-            features = []
-
-            # 1. query_overlap
-            features.append(query_overlap(query, text))
-            # 2. rare_term_boost
-            features.append(rare_term_boost(query, text))
-            # 3. semantic_similarity from stored embedding
-            emb = None
             if dp.get('type') == 'fact':
                 fid = dp.get('id', '').split(':')[-1]
                 if fid.isdigit():
-                    cur_kf.execute("SELECT fact_embedding FROM key_facts WHERE fact_id=?", (int(fid),))
-                    row = cur_kf.fetchone()
-                    if row and row[0]:
-                        emb = np.frombuffer(row[0], dtype=np.float32)
+                    fact_ids.append(int(fid))
             elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
-                cur_emb.execute("SELECT embedding FROM chunk_embeddings WHERE chunk_id=?", (dp['chunk_id'],))
-                row = cur_emb.fetchone()
-                if row and row[0]:
-                    emb = np.frombuffer(row[0], dtype=np.float32)
+                chunk_ids.append(dp['chunk_id'])
+        fact_map = {}
+        chunk_map = {}
+        conn_emb = db.db_connect("embeddings")
+        conn_kf = db.db_connect("key_facts")
+        try:
+            cur_kf = conn_kf.cursor()
+            for s in range(0, len(fact_ids), 400):
+                ch = fact_ids[s:s+400]
+                if not ch:
+                    continue
+                ph = ",".join("?" for _ in ch)
+                cur_kf.execute(f"SELECT fact_id, fact_embedding FROM key_facts WHERE fact_id IN ({ph})", ch)
+                for r in cur_kf.fetchall():
+                    if r[1] is not None:
+                        fact_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+            cur_emb = conn_emb.cursor()
+            for s in range(0, len(chunk_ids), 400):
+                ch = chunk_ids[s:s+400]
+                if not ch:
+                    continue
+                ph = ",".join("?" for _ in ch)
+                cur_emb.execute(f"SELECT chunk_id, embedding FROM chunk_embeddings WHERE chunk_id IN ({ph})", ch)
+                for r in cur_emb.fetchall():
+                    if r[1] is not None:
+                        chunk_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+        finally:
+            try:
+                conn_emb.close()
+            except Exception:
+                pass
+            try:
+                conn_kf.close()
+            except Exception:
+                pass
 
-            if q_emb is not None and emb is not None:
-                dist = hyperbolic_distance(q_emb, emb)
-                sim = 1.0 / (1.0 + dist)
-            else:
-                sim = 0.0
+        # Vectorized semantic sims: single distance_matrix call for all present embs
+        ordered_vecs = []
+        present_idx = []
+        for di, dp in enumerate(datapoints):
+            e = None
+            if dp.get('type') == 'fact':
+                fid = dp.get('id', '').split(':')[-1]
+                if fid.isdigit():
+                    e = fact_map.get(int(fid))
+            elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
+                e = chunk_map.get(dp['chunk_id'])
+            if e is not None:
+                ordered_vecs.append(ensure_hyperbolic(e, space='hyperbolic'))
+                present_idx.append(di)
+        pmap = {}
+        if q_emb is not None and ordered_vecs:
+            pmat = np.stack(ordered_vecs)
+            dists = hyperbolic_distance_matrix(q_emb[None, :], pmat)[0]
+            for idx, d in zip(present_idx, dists):
+                pmap[idx] = float(1.0 / (1.0 + float(d)))
+
+        scores = []
+        for di, dp in enumerate(datapoints):
+            text = dp.get('text', '') or ''
+            features = []
+
+            # 1. query_overlap (reuse qtok)
+            try:
+                dtok = set(_tok(text))
+            except Exception:
+                dtok = set(text.lower().split())
+            features.append(len(qtok & dtok) / max(1, len(qtok)))
+            # 2. rare_term_boost
+            features.append(rare_term_boost(query, text))
+            # 3. semantic_similarity from pre-fetched map
+            sim = pmap.get(di, 0.0)
             features.append(sim)
             # 4. graph_proximity
             features.append(graph_proximity(dp, query_entities))

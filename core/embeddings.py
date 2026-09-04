@@ -146,6 +146,9 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     if cached is not None:
         age = time.time() - cached['timestamp']
         if age < _ttl:
+            if cached.get('quant') == 'f16':
+                import numpy as _np3
+                return [(_np3.asarray(r, dtype=_np3.float32).tolist() if r is not None else None) for r in cached['result']]
             return cached['result']
         else:
             del _embedding_cache[cache_key]
@@ -200,9 +203,15 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     conn.commit()
     conn.close()
 
-    # If all cached, store in memory and return
+    # If all cached, store in memory and return (respect quant)
     if not uncached_texts:
-        _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
+        _quant2 = str(getattr(config, "EMBEDDING_QUANT", "float32")).lower()
+        if _quant2 in ("float16", "fp16", "f16"):
+            import numpy as _np4
+            qres = [(_np4.asarray(r, dtype=_np4.float16) if r is not None else None) for r in result]
+            _embedding_cache[cache_key] = {'result': qres, 'timestamp': time.time(), 'quant': 'f16'}
+        else:
+            _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time(), 'quant': 'f32'}
         _embedding_cache.move_to_end(cache_key)
         # Evict oldest if over maxsize (config-driven, not hardcoded)
         _maxsize = int(getattr(config, "EMBEDDING_CACHE_MAXSIZE", _embedding_cache_maxsize))
@@ -235,28 +244,42 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
                     print(f"    (Embedding batch failed: {e})")
                 # Continue with other batches; missing embeddings will be None
 
-    # Store in persistent cache and fill result
+    # Store in persistent cache and fill result (single txn executemany, bulk-checkpoint friendly)
     conn = db.db_connect("embeddings")
-    write_rows = []
-    for i, text in zip(uncached_indices, uncached_texts):
-        if text in retrieved:
-            emb = retrieved[text]
-            if space == 'hyperbolic':
-                from core.hyperbolic import exp_map
-                emb = exp_map(np.array(emb, dtype=np.float32))
-            result[i] = emb
-            blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes())
-            write_rows.append((text, blob, model, space))
-    if write_rows:
-        conn.executemany(
-            "INSERT OR REPLACE INTO embedding_cache (text, embedding, model, space) VALUES (?, ?, ?, ?)",
-            write_rows,
-        )
-    conn.commit()
-    conn.close()
+    try:
+        # Raise autocheckpoint during bulk to avoid per-commit WAL stall; generic, restored after
+        if len(write_rows if 'write_rows' in locals() else []) > 200 or len(uncached_texts) > 200:
+            try:
+                conn.execute(f"PRAGMA wal_autocheckpoint={int(getattr(config, 'BULK_WAL_AUTOCHECKPOINT', 4000))}")
+            except Exception:
+                pass
+        write_rows = []
+        for i, text in zip(uncached_indices, uncached_texts):
+            if text in retrieved:
+                emb = retrieved[text]
+                if space == 'hyperbolic':
+                    from core.hyperbolic import exp_map
+                    emb = exp_map(np.array(emb, dtype=np.float32))
+                result[i] = emb
+                blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes())
+                write_rows.append((text, blob, model, space))
+        if write_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO embedding_cache (text, embedding, model, space) VALUES (?, ?, ?, ?)",
+                write_rows,
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
-    # Store in memory cache
-    _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time()}
+    # Store in memory cache (optional float16 to halve RAM; dequantized on hit transparently)
+    _quant = str(getattr(config, "EMBEDDING_QUANT", "float32")).lower()
+    if _quant in ("float16", "fp16", "f16"):
+        import numpy as _np2
+        qresult = [(_np2.asarray(r, dtype=_np2.float16) if r is not None else None) for r in result]
+        _embedding_cache[cache_key] = {'result': qresult, 'timestamp': time.time(), 'quant': 'f16'}
+    else:
+        _embedding_cache[cache_key] = {'result': result, 'timestamp': time.time(), 'quant': 'f32'}
     # Move to end for LRU
     _embedding_cache.move_to_end(cache_key)
     # Evict oldest if over maxsize (config-driven)
@@ -270,6 +293,25 @@ def get_embedding(text, model=None, space='hyperbolic'):
     """Return a single embedding vector (hyperbolic by default)."""
     result = get_embeddings_batch([text], model=model, space=space)
     return result[0] if result else None
+
+
+def get_embeddings_dict(texts, model=None, space='hyperbolic', batch_size=None):
+    """Batch helper returning {text: emb} with single cache/HTTP fan-out.
+
+    Preserves model/space semantics of get_embeddings_batch; dedups inputs
+    generically (no doc-specific logic) to avoid duplicate work.
+    """
+    if not texts:
+        return {}
+    # Preserve order but dedup for efficiency
+    seen = {}
+    uniq = []
+    for t in texts:
+        if t not in seen:
+            seen[t] = True
+            uniq.append(t)
+    embs = get_embeddings_batch(uniq, model=model, batch_size=batch_size, space=space)
+    return {t: e for t, e in zip(uniq, embs) if e is not None}
 
 
 def load_embedding_from_db(text, model=None):

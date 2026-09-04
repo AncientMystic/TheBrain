@@ -55,10 +55,21 @@ class OnnxNERExtractor:
                 ["CPUExecutionProvider"],
             ]
 
+        import os as _os
+        so = ort.SessionOptions()
+        try:
+            so.intra_op_num_threads = int(getattr(config, "ONNX_INTRA_THREADS", _os.cpu_count() or 4))
+            so.inter_op_num_threads = int(getattr(config, "ONNX_INTER_THREADS", 2))
+            so.enable_mem_pattern = True
+            so.enable_cpu_mem_arena = True
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            so.log_severity_level = 3
+        except Exception:
+            pass
         self.session = None
         for providers in provider_sets:
             try:
-                self.session = ort.InferenceSession(str(onnx_files[0]), providers=providers)
+                self.session = ort.InferenceSession(str(onnx_files[0]), sess_options=so, providers=providers)
                 active_providers = self.session.get_providers()
                 print(f"ONNX providers active: {active_providers}")
                 break

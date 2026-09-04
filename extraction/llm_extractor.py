@@ -287,17 +287,30 @@ def _extract_candidate_texts(annotations):
     return texts
 
 
+def effective_llm_batch_chunks(n):
+    """Race-free helper: preferred LLM batch chunks for n chunks (no global mutation)."""
+    import config as _cfg
+    if not getattr(_cfg, "DYNAMIC_BATCH_SIZE", False):
+        return int(getattr(_cfg, "LLM_BATCH_CHUNKS", 4))
+    if n > 200:
+        return 8
+    if n < 20:
+        return 2
+    return 4
+
+
 def _compute_novelty_flags(chunks, chunk_embeddings):
-    """Novelty detection using hyperbolic ball tree for scalable nearest neighbor search."""
-    from core.hyperbolic import hyperbolic_distance, exp_map
-    from core.vector_store import HyperbolicBallTree
+    """Novelty detection using vectorized hyperbolic distances (no stale tree, no per-chunk search)."""
+    from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
+    from core.vector_store import HyperbolicBallTree  # kept for backward compat import
 
     flags = []
     seen_names = set()
 
     # Convert embeddings to hyperbolic if not already
-    # Dynamic batch size adjustment
-    if getattr(config, "DYNAMIC_BATCH_SIZE", False):
+    # Dynamic batch sizing WITHOUT global mutation (race-free): callers use effective_llm_batch_chunks()
+    # (kept for backward compat: only set global when explicitly single-threaded legacy mode)
+    if getattr(config, "DYNAMIC_BATCH_SIZE", False) and getattr(config, "ALLOW_GLOBAL_BATCH_MUTATION", False):
         if len(chunks) > 200:
             config.LLM_BATCH_CHUNKS = 8
         elif len(chunks) < 20:
@@ -309,73 +322,52 @@ def _compute_novelty_flags(chunks, chunk_embeddings):
         # No embeddings provided; process all chunks
         return [True] * len(chunks)
 
+    import numpy as _np
     hyperbolic_points = []
     for emb in chunk_embeddings:
         if emb is None:
             hyperbolic_points.append(None)
         else:
-            # Assuming embeddings are already hyperbolic; if not, convert
-            arr = np.array(emb, dtype=np.float32)
-            if np.linalg.norm(arr) > 1.0:
-                arr = exp_map(arr)
+            arr = _np.asarray(emb, dtype=_np.float32)
+            if float(_np.linalg.norm(arr)) > 1.0:
+                from core.hyperbolic import exp_map as _em
+                arr = _em(arr)
+            else:
+                arr = ensure_hyperbolic(arr, space='hyperbolic')
             hyperbolic_points.append(arr)
 
-    # Initialize ball tree with first chunk (if any)
-    first_idx = None
-    for i, p in enumerate(hyperbolic_points):
-        if p is not None:
-            first_idx = i
-            break
+    first_idx = next((i for i, p in enumerate(hyperbolic_points) if p is not None), None)
     if first_idx is None:
         return [True] * len(chunks)
 
-    tree = HyperbolicBallTree([hyperbolic_points[first_idx]], [first_idx], leaf_size=32)
     flags = [True] * len(chunks)
     flags[first_idx] = True
     seen_names.update(_extract_candidate_texts(pre_annotate(chunks[first_idx])))
-
+    # Prior novel points for vectorized nearest-neighbor (correct vs all priors, single matrix per chunk batch)
+    prior_pts = [hyperbolic_points[first_idx]]
     for i in range(first_idx + 1, len(chunks)):
         if hyperbolic_points[i] is None:
             flags[i] = True
             continue
-
         annotations = pre_annotate(chunks[i])
         candidates = _extract_candidate_texts(annotations)
         new_candidates = [c for c in candidates if c.lower() not in seen_names]
-
-        # Query ball tree for nearest neighbor distance
-        nearest = tree.search(hyperbolic_points[i], k=1)
-        if nearest:
-            dist = nearest[0][1]  # distance
-            # Convert distance to similarity (roughly)
-            sim = 1.0 / (1.0 + dist)
-        else:
+        try:
+            pmat = _np.stack(prior_pts)
+            dists = hyperbolic_distance_matrix(hyperbolic_points[i][None, :], pmat)[0]
+            dist = float(_np.min(dists)) if len(dists) else float('inf')
+            sim = 1.0 / (1.0 + dist) if dist != float('inf') else 0.0
+        except Exception:
             sim = 0.0
-
         is_novel = True
         if config.NOVELTY_ENABLED and i > 0:
             if sim >= config.NOVELTY_SIM_THRESHOLD and not new_candidates:
                 is_novel = False
-
         flags[i] = is_novel
-
         if is_novel:
-            # Insert into ball tree (simple rebuild if tree doesn't support incremental)
-            # For performance, we rebuild tree every 100 chunks
-            if len(tree.ids) % 100 == 0:
-                all_points = [hyperbolic_points[j] for j in range(len(chunks)) if flags[j] and hyperbolic_points[j] is not None]
-                all_ids = [j for j in range(len(chunks)) if flags[j] and hyperbolic_points[j] is not None]
-                tree = HyperbolicBallTree(all_points, all_ids, leaf_size=32)
-            else:
-                # Add point manually? HyperbolicBallTree doesn't have add; we'll just rebuild less often
-                # For simplicity, we rebuild tree every chunk (not ideal but okay for now)
-                # To keep it simple, we'll just continue with old tree for remainder.
-                pass
-
-        # Update seen names
+            prior_pts.append(hyperbolic_points[i])
         for c in candidates:
             seen_names.add(c.lower())
-
     return flags
 
 def _validate_onnx_batch(batch_chunks, batch_pre, endpoint, model):

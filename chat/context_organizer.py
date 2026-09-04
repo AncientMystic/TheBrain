@@ -3,19 +3,32 @@ import numpy as np
 from collections import defaultdict, deque
 import config
 from core import db
-from core.embeddings import get_embedding
+from core.embeddings import get_embedding, get_embeddings_dict
 from core.hyperbolic import ensure_hyperbolic, log_map, hyperbolic_distance
 from core.hyperbolic_clustering import cluster_hyperbolic, select_representatives
 
-def _fact_embedding(fact):
+def _fact_embedding(fact, emb_map=None):
     """Return hyperbolic embedding for a fact, or None."""
     text = fact.get("fact_text", "")
     if not text:
         return None
-    emb = get_embedding(text)
+    if emb_map is not None:
+        emb = emb_map.get(text)
+    else:
+        emb = get_embedding(text)
     if emb is None:
         return None
     return ensure_hyperbolic(emb, space='hyperbolic')
+
+
+def _batch_fact_embeddings(facts):
+    """Single batched embedding fan-out for a fact list (no per-fact HTTP)."""
+    texts = [f.get("fact_text", "") for f in facts]
+    uniq = [t for t in dict.fromkeys(texts) if t]
+    if not uniq:
+        return {}
+    emb_map = get_embeddings_dict(uniq, space='hyperbolic')
+    return {t: ensure_hyperbolic(e, space='hyperbolic') for t, e in emb_map.items() if e is not None}
 
 def _get_node_id_for_entity(entity):
     """Look up global_node_id by canonical name or alias."""
@@ -87,11 +100,12 @@ def organize_facts(facts, query_embedding=None, session_id=None, max_clusters=10
     if not facts:
         return ""
 
-    # 1. Embed facts and map to hyperbolic
+    # 1. Embed facts and map to hyperbolic (single batch, no per-fact HTTP)
+    emb_map = _batch_fact_embeddings(facts)
     fact_embeddings = []
     valid_facts = []
     for fact in facts:
-        emb = _fact_embedding(fact)
+        emb = _fact_embedding(fact, emb_map=emb_map)
         if emb is not None:
             fact_embeddings.append(emb)
             valid_facts.append(fact)

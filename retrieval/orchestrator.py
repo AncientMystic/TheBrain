@@ -156,47 +156,102 @@ class RetrievalOrchestrator:
 
     def _score_candidates(self, query, candidates, query_entities):
         from core.text_utils import tokenize
-        from core.hyperbolic import hyperbolic_distance
+        from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
         from core.embeddings import get_embeddings_batch
         import numpy as np
 
         q_embs = get_embeddings_batch([query], space='hyperbolic')
         q_emb = q_embs[0] if q_embs else None
+        if q_emb is not None:
+            q_emb = ensure_hyperbolic(np.asarray(q_emb, dtype=np.float32), space='hyperbolic')
         q_tokens = set(tokenize(query))
+        rare_q = [t for t in q_tokens if len(t) > 5]
+        rare_denom = max(1, len(rare_q))
 
-        conn_emb = db.db_connect("embeddings")
-        cur_emb = conn_emb.cursor()
-        conn_kf = db.db_connect("key_facts")
-        cur_kf = conn_kf.cursor()
-
+        # Batch-fetch stored embeddings + confidences (no N+1)
+        fact_ids = []
+        chunk_ids = []
         for dp in candidates:
-            text = dp.get('text', '') or ''
-            d_tokens = set(tokenize(text))
-            overlap = len(q_tokens & d_tokens) / max(1, len(q_tokens))
-            rare_overlap = sum(1 for t in q_tokens if len(t) > 5 and t in d_tokens) / max(1, len([t for t in q_tokens if len(t) > 5]))
-            lexical = 0.6 * overlap + 0.4 * rare_overlap
-
-            emb = None
-            fact_conf = dp.get('confidence', 0.5)
             if dp.get('type') == 'fact':
                 fid = dp.get('id', '').split(':')[-1]
                 if fid.isdigit():
-                    cur_kf.execute("SELECT fact_embedding, confidence FROM key_facts WHERE fact_id=?", (int(fid),))
-                    row = cur_kf.fetchone()
-                    if row:
-                        emb = np.frombuffer(row[0], dtype=np.float32) if row[0] else None
-                        fact_conf = row[1] if row[1] is not None else fact_conf
+                    fact_ids.append(int(fid))
             elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
-                cur_emb.execute("SELECT embedding FROM chunk_embeddings WHERE chunk_id=?", (dp['chunk_id'],))
-                row = cur_emb.fetchone()
-                if row and row[0]:
-                    emb = np.frombuffer(row[0], dtype=np.float32)
+                chunk_ids.append(dp['chunk_id'])
+        fact_map = {}
+        fact_conf_map = {}
+        chunk_map = {}
+        conn_emb = db.db_connect("embeddings")
+        conn_kf = db.db_connect("key_facts")
+        try:
+            cur_kf = conn_kf.cursor()
+            for s in range(0, len(fact_ids), 400):
+                ch = fact_ids[s:s+400]
+                if not ch:
+                    continue
+                ph = ",".join("?" for _ in ch)
+                cur_kf.execute(f"SELECT fact_id, fact_embedding, confidence FROM key_facts WHERE fact_id IN ({ph})", ch)
+                for r in cur_kf.fetchall():
+                    if r[1] is not None:
+                        fact_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+                    if r[2] is not None:
+                        fact_conf_map[r[0]] = r[2]
+            cur_emb = conn_emb.cursor()
+            for s in range(0, len(chunk_ids), 400):
+                ch = chunk_ids[s:s+400]
+                if not ch:
+                    continue
+                ph = ",".join("?" for _ in ch)
+                cur_emb.execute(f"SELECT chunk_id, embedding FROM chunk_embeddings WHERE chunk_id IN ({ph})", ch)
+                for r in cur_emb.fetchall():
+                    if r[1] is not None:
+                        chunk_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+        finally:
+            try:
+                conn_emb.close()
+            except Exception:
+                pass
+            try:
+                conn_kf.close()
+            except Exception:
+                pass
+        # Vectorized sims for present embs
+        ordered = []
+        present_idx = []
+        for di, dp in enumerate(candidates):
+            e = None
+            if dp.get('type') == 'fact':
+                fid = dp.get('id', '').split(':')[-1]
+                if fid.isdigit():
+                    e = fact_map.get(int(fid))
+            elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
+                e = chunk_map.get(dp['chunk_id'])
+            if e is not None:
+                ordered.append(ensure_hyperbolic(e, space='hyperbolic'))
+                present_idx.append(di)
+        sim_map = {}
+        if q_emb is not None and ordered:
+            pmat = np.stack(ordered)
+            dists = hyperbolic_distance_matrix(q_emb[None, :], pmat)[0]
+            for idx, d in zip(present_idx, dists):
+                sim_map[idx] = float(1.0 / (1.0 + float(d)))
+
+        for di, dp in enumerate(candidates):
+            text = dp.get('text', '') or ''
+            d_tokens = set(tokenize(text))
+            overlap = len(q_tokens & d_tokens) / max(1, len(q_tokens))
+            rare_overlap = sum(1 for t in rare_q if t in d_tokens) / rare_denom
+            lexical = 0.6 * overlap + 0.4 * rare_overlap
+
+            fact_conf = dp.get('confidence', 0.5)
+            if dp.get('type') == 'fact':
+                fid = dp.get('id', '').split(':')[-1]
+                if fid.isdigit() and int(fid) in fact_conf_map:
+                    fact_conf = fact_conf_map[int(fid)]
+            elif dp.get('type') == 'chunk_ref' and dp.get('chunk_id'):
                 fact_conf = 0.6
 
-            hyper_sim = 0.0
-            if q_emb is not None and emb is not None:
-                dist = hyperbolic_distance(q_emb, emb)
-                hyper_sim = 1.0 / (1.0 + dist)
+            hyper_sim = sim_map.get(di, 0.0)
 
             graph_prox = 0.0
             for ent in query_entities:
@@ -210,8 +265,6 @@ class RetrievalOrchestrator:
             dp['_hyperbolic_sim'] = hyper_sim
             dp['_lexical_sim'] = lexical
 
-        conn_emb.close()
-        conn_kf.close()
         return candidates
 
     def retrieve(self, query, analysis, top_k=None, anchor_entities=None):

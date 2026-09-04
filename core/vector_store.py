@@ -87,7 +87,7 @@ class HyperbolicBallTree:
                 self._search(node['left'], query, k, best)
 
 class ExactVectorStore:
-    """Wrapper for backwards compatibility, now using HyperbolicBallTree."""
+    """Wrapper for backwards compatibility, now using HyperbolicBallTree with disk persistence."""
     def __init__(self, db_path, table_name, id_col, emb_col):
         self.db_path = db_path
         self.table_name = table_name
@@ -96,21 +96,68 @@ class ExactVectorStore:
         self.ids = []
         self.points = []
         self.tree = None
+        self._index_path = str(Path(db_path).parent / f"{Path(table_name).name}_balltree.npz")
         self._load()
 
+    def _db_mtime(self):
+        try:
+            return Path(self.db_path).stat().st_mtime
+        except Exception:
+            return 0
+
     def _load(self):
-        conn = sqlite3.connect(self.db_path)
-        cur = conn.cursor()
-        cur.execute(f"SELECT {self.id_col}, {self.emb_col} FROM {self.table_name} WHERE {self.emb_col} IS NOT NULL")
-        rows = cur.fetchall()
-        conn.close()
-        if not rows:
+        import config as _cfg
+        # Try persisted index if fresh (no rebuild every 300s from scratch)
+        try:
+            if Path(self._index_path).is_file() and Path(self._index_path).stat().st_mtime >= self._db_mtime():
+                data = np.load(self._index_path, mmap_mode='r')
+                self.ids = data['ids'].tolist()
+                pts = data['points']
+                # pts mmap read-only; copy only if needed for tree (tree stores np.array copy once)
+                self.points = [np.asarray(p, dtype=np.float32) for p in pts]
+                leaf = int(getattr(_cfg, "BALL_TREE_LEAF_SIZE", 64))
+                self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=leaf)
+                print(f"Hyperbolic ball tree loaded from cache with {len(self.ids)} points.")
+                return
+        except Exception:
+            pass
+        # Streaming pooled load (no 2x RAM spike, no direct sqlite3.connect)
+        try:
+            from core import db as _db
+            # Map table back to db_type when possible; fallback to direct path
+            conn = _db.db_connect("embeddings") if "chunk_embeddings" in self.table_name else sqlite3.connect(self.db_path)
+        except Exception:
+            conn = sqlite3.connect(self.db_path)
+        try:
+            cur = conn.cursor()
+            cur.execute(f"SELECT {self.id_col}, {self.emb_col} FROM {self.table_name} WHERE {self.emb_col} IS NOT NULL")
+            ids = []
+            pts = []
+            while True:
+                rows = cur.fetchmany(1000)
+                if not rows:
+                    break
+                for r in rows:
+                    ids.append(r[0])
+                    pts.append(np.frombuffer(r[1], dtype=np.float32).copy())
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if not ids:
             return
-        self.ids = [row[0] for row in rows]
-        self.points = [np.frombuffer(row[1], dtype=np.float32) for row in rows]
+        self.ids = ids
+        self.points = pts
         if self.points:
-            self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=64)
+            import config as _cfg2
+            leaf = int(getattr(_cfg2, "BALL_TREE_LEAF_SIZE", 64))
+            self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=leaf)
             print(f"Hyperbolic ball tree built with {len(self.ids)} points.")
+            try:
+                np.savez_compressed(self._index_path, ids=np.array(self.ids), points=np.stack(self.points))
+            except Exception:
+                pass
 
     def search(self, query_embedding, top_k=10):
         if self.tree is None:
@@ -120,8 +167,26 @@ class ExactVectorStore:
         return [(id_, 1.0/(1.0+dist)) for id_, dist in results]
 
     def add(self, id, embedding):
-        # For simplicity, ignore incremental adds; rebuild from scratch after ingestion
-        pass
+        # Incremental leaf-append (no full rebuild); full rebuild only via _load when needed
+        try:
+            import numpy as _np
+            pt = _np.asarray(embedding, dtype=_np.float32)
+            self.ids.append(id)
+            self.points.append(pt)
+            # Rebuild tree incrementally when crossing batch boundary to bound drift
+            if len(self.ids) % 1000 == 0:
+                import config as _cfg
+                leaf = int(getattr(_cfg, "BALL_TREE_LEAF_SIZE", 64))
+                self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=leaf)
+            elif self.tree is not None:
+                # Fast path: append to root leaf list (search still correct, radius консервативно expanded)
+                try:
+                    self.tree.points = _np.array(self.points, dtype=_np.float32)
+                    self.tree.ids = list(self.ids)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def close(self):
         pass

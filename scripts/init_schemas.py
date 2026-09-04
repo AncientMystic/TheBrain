@@ -44,6 +44,22 @@ def init_index_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_index ON document_chunks(chunk_index)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cache_chunk_hash ON llm_extraction_cache(chunk_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_cache_category ON llm_extraction_cache(category)")
+    # FTS5 for chunk keyword path (10-100x vs LIKE scan); triggers keep it fresh generically
+    cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(chunk_text, doc_hash)")
+    cur.execute("""CREATE TRIGGER IF NOT EXISTS document_chunks_fts_ai AFTER INSERT ON document_chunks BEGIN
+        INSERT INTO document_chunks_fts(rowid, chunk_text, doc_hash) VALUES (new.chunk_id, new.chunk_text, new.doc_hash);
+    END""")
+    cur.execute("""CREATE TRIGGER IF NOT EXISTS document_chunks_fts_ad AFTER DELETE ON document_chunks BEGIN
+        DELETE FROM document_chunks_fts WHERE rowid = old.chunk_id;
+    END""")
+    cur.execute("""CREATE TRIGGER IF NOT EXISTS document_chunks_fts_au AFTER UPDATE ON document_chunks BEGIN
+        DELETE FROM document_chunks_fts WHERE rowid = old.chunk_id;
+        INSERT INTO document_chunks_fts(rowid, chunk_text, doc_hash) VALUES (new.chunk_id, new.chunk_text, new.doc_hash);
+    END""")
+    # Backfill any missing rows (idempotent, no doc-specific logic)
+    cur.execute("""INSERT INTO document_chunks_fts(rowid, chunk_text, doc_hash)
+        SELECT chunk_id, chunk_text, doc_hash FROM document_chunks
+        WHERE chunk_id NOT IN (SELECT rowid FROM document_chunks_fts)""")
     conn.commit(); conn.close()
     print("[init] index.db ready")
 
@@ -164,14 +180,17 @@ def init_embeddings_db():
     if cols and "model" not in cols:
         cur.execute("DROP TABLE embedding_cache")
     cur.execute("""CREATE TABLE IF NOT EXISTS document_embeddings (
-        doc_hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        doc_hash TEXT PRIMARY KEY, embedding BLOB NOT NULL, model TEXT, embedding_space TEXT DEFAULT 'euclidean', timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS chunk_embeddings (
         chunk_id INTEGER PRIMARY KEY, doc_hash TEXT NOT NULL, chunk_text TEXT NOT NULL,
-        embedding BLOB NOT NULL, model TEXT, timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        embedding BLOB NOT NULL, model TEXT, embedding_space TEXT DEFAULT 'euclidean', timestamp TEXT DEFAULT CURRENT_TIMESTAMP)""")
     cur.execute("""CREATE TABLE IF NOT EXISTS embedding_cache (
         text TEXT NOT NULL, embedding BLOB NOT NULL, model TEXT NOT NULL,
-        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        embedding_space TEXT DEFAULT 'euclidean', timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (text, model))""")
+    _alter_table_if_needed(conn, "document_embeddings", "embedding_space", "TEXT DEFAULT 'euclidean'")
+    _alter_table_if_needed(conn, "chunk_embeddings", "embedding_space", "TEXT DEFAULT 'euclidean'")
+    _alter_table_if_needed(conn, "embedding_cache", "embedding_space", "TEXT DEFAULT 'euclidean'")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_doc_embeddings_doc_hash ON document_embeddings(doc_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_doc_hash ON chunk_embeddings(doc_hash)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_chunk_id ON chunk_embeddings(chunk_id)")

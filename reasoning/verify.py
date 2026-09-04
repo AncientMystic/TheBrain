@@ -217,25 +217,28 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
                 consistent = verify_symstep(step, accepted)
                 if calibrated:
                     try:
-                        from core.embeddings import get_embedding
+                        from core.embeddings import get_embeddings_dict
                         import numpy as np
-                        claim_emb = get_embedding(step.get("text",""))
-                        prior_embs = [get_embedding(a.get("text","")) for a in accepted if a.get("text")]
+                        prior_texts = [a.get("text", "") for a in accepted if a.get("text")]
+                        all_texts = [step.get("text", "")] + prior_texts
+                        emb_map = get_embeddings_dict([t for t in all_texts if t], space='hyperbolic')
+                        claim_emb = emb_map.get(step.get("text", ""))
+                        prior_embs = [emb_map.get(t) for t in prior_texts]
+                        prior_embs = [p for p in prior_embs if p is not None]
                         if claim_emb and prior_embs:
-                            from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
-                            claim_vec = ensure_hyperbolic(claim_emb, space='hyperbolic')
-                            max_sim = 0.0
-                            for pe in prior_embs:
-                                if pe:
-                                    pv = ensure_hyperbolic(pe, space='hyperbolic')
-                                    if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", True):
-                                        d = float(hyperbolic_distance(claim_vec, pv))
-                                        sim = 1.0 / (1.0 + d)
-                                    else:
-                                        import numpy as _np
-                                        claim_arr = _np.asarray(claim_vec, dtype=_np.float32)
-                                        pv_arr = _np.asarray(pv, dtype=_np.float32)
-                                        sim = float(_np.dot(claim_arr, pv_arr) / (_np.linalg.norm(claim_arr) * _np.linalg.norm(pv_arr) + 1e-8))
+                            from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
+                            claim_vec = ensure_hyperbolic(claim_emb, space='hyperbolic')[None, :]
+                            pmat = np.stack([ensure_hyperbolic(p, space='hyperbolic') for p in prior_embs])
+                            if getattr(config, "USE_HYPERBOLIC_RETRIEVAL", True):
+                                dists = hyperbolic_distance_matrix(claim_vec, pmat)[0]
+                                sims = 1.0 / (1.0 + dists)
+                                max_sim = float(np.max(sims)) if len(sims) else 0.0
+                            else:
+                                import numpy as _np
+                                claim_arr = _np.asarray(claim_vec[0], dtype=_np.float32)
+                                max_sim = 0.0
+                                for pv in pmat:
+                                    sim = float(_np.dot(claim_arr, pv) / (_np.linalg.norm(claim_arr) * _np.linalg.norm(pv) + 1e-8))
                                     max_sim = max(max_sim, sim)
                             score = max(0.0, min(1.0, max_sim * 0.8 + (0.5 if consistent else 0.0)))
                         else:

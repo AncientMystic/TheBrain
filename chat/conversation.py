@@ -83,30 +83,30 @@ def get_hyperbolic_conversation_history(session_id, query, max_turns=10, max_tok
     """
     import re
     import numpy as np
-    from core.hyperbolic import hyperbolic_distance
-    from core.embeddings import get_embedding
+    from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
+    from core.embeddings import get_embeddings_dict
     from core.dynamic_hyperbolic import dynamic_radius
 
     messages = get_recent_messages(session_id, max_turns)
     if not messages:
         return ""
 
-    q_emb = get_embedding(query, space='hyperbolic')
+    texts_needed = [query] + [m["content"][:1000] for m in messages if m["content"]]
+    emb_map = get_embeddings_dict([t for t in texts_needed if t], space='hyperbolic')
+    q_emb = emb_map.get(query)
     if q_emb is None:
         return ""
+    q_emb = ensure_hyperbolic(np.asarray(q_emb, dtype=np.float32), space='hyperbolic')
 
     request_full = any(trigger in query.lower() for trigger in full_memory_triggers)
 
-    scored = []
-    for msg in messages:
-        text = msg["content"]
-        if len(text) == 0:
-            continue
-        emb = get_embedding(text[:1000], space='hyperbolic')
-        if emb is None:
-            continue
-        dist = hyperbolic_distance(q_emb, emb)
-        scored.append((dist, msg["role"], text))
+    # Vectorized distances for all messages at once
+    valid = [(m["role"], m["content"]) for m in messages if m["content"] and emb_map.get(m["content"][:1000]) is not None]
+    if not valid:
+        return ""
+    mmat = np.stack([ensure_hyperbolic(emb_map[m[1][:1000]], space='hyperbolic') for m in valid])
+    dists = hyperbolic_distance_matrix(q_emb[None, :], mmat)[0]
+    scored = [(float(d), role, text) for d, (role, text) in zip(dists, valid)]
 
     if not scored:
         return ""

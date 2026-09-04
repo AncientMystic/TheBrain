@@ -2,22 +2,23 @@
 import numpy as np
 import config
 from core import db
-from core.embeddings import get_embedding
-from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance
+from core.embeddings import get_embeddings_dict
+from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance, hyperbolic_distance_matrix
 
 def filter_by_hyperbolic_radius(facts, query_emb, radius=None):
     """Keep facts within a dynamic hyperbolic radius. If radius is None, compute it."""
     if not facts or query_emb is None:
         return facts
+    texts = [f.get("fact_text", "") for f in facts]
+    emb_map = get_embeddings_dict([t for t in texts if t], space='hyperbolic')
     candidate_embs = []
     fact_embs_pairs = []
-    for fact in facts:
-        text = fact.get("fact_text", "")
+    for fact, text in zip(facts, texts):
         if not text:
             fact_embs_pairs.append((fact, None))
             candidate_embs.append(None)
             continue
-        emb = get_embedding(text)
+        emb = emb_map.get(text)
         if emb is None:
             fact_embs_pairs.append((fact, None))
             candidate_embs.append(None)

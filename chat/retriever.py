@@ -126,17 +126,41 @@ def fallback_to_chunks(query, top_k=None, debug=False):
         variants = tokens
 
     if variants:
+        rows = []
         try:
             conn = db.db_connect("index")
             cur = conn.cursor()
-            likes = []
-            params = []
-            for v in variants:
-                likes.append("chunk_text LIKE ?")
-                params.append(f"%{v}%")
-            like_sql = " OR ".join(likes)
-            cur.execute(f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE {like_sql} LIMIT 500", params)
-            rows = cur.fetchall()
+            # FTS5 first when available (10-100x vs LIKE scan); LIKE only fallback.
+            # document_chunks_fts is created on demand (see scripts/init_schemas.py enhancement).
+            try:
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_chunks_fts'")
+                has_fts = cur.fetchone() is not None
+            except Exception:
+                has_fts = False
+            if has_fts:
+                # Sanitize to FTS5 phrase queries (generic, no doc-specific logic)
+                import re as _re
+                terms = []
+                for v in variants[:10]:
+                    vv = _re.sub(r'["*:()^]', ' ', v).strip()
+                    if len(vv) > 2:
+                        terms.append(f'"{vv}"')
+                if terms:
+                    fts_q = " OR ".join(terms)
+                    try:
+                        cur.execute("SELECT chunk_id, doc_hash, chunk_text FROM document_chunks_fts JOIN document_chunks ON document_chunks_fts.rowid=document_chunks.chunk_id WHERE document_chunks_fts MATCH ? LIMIT 500", (fts_q,))
+                        rows = cur.fetchall()
+                    except Exception:
+                        rows = []
+            if not rows:
+                likes = []
+                params = []
+                for v in variants[:20]:
+                    likes.append("chunk_text LIKE ?")
+                    params.append(f"%{v}%")
+                like_sql = " OR ".join(likes)
+                cur.execute(f"SELECT chunk_id, doc_hash, chunk_text FROM document_chunks WHERE {like_sql} LIMIT 500", params)
+                rows = cur.fetchall()
             conn.close()
             phrase = " ".join(variants)
             for row in rows:

@@ -10,7 +10,9 @@ from core.file_utils import get_file_hash
 from extractors.registry import extract_text_from_file
 from ingestion.chunker import chunk_document
 from core.llm import call_model_json
-from core.embeddings import get_embedding
+from core.embeddings import get_embeddings_dict
+import logging
+logger = logging.getLogger(__name__)
 
 
 LOGIC_EXTRACTION_PROMPT = """
@@ -67,25 +69,32 @@ def learn_logic_from_file(filepath: Path):
         if data and "modules" in data:
             modules.extend(data["modules"])
 
+    # Single batched embedding fan-out (no per-module HTTP), single txn
+    texts = [(m.get("name", "") + " " + m.get("summary", "")) for m in modules]
+    emb_map = get_embeddings_dict([t for t in texts if t.strip()], space='hyperbolic')
     conn = db.db_connect("logic")
     cur = conn.cursor()
     stored_ids = []
-    for mod in modules:
+    kw_rows = []
+    for mod, txt in zip(modules, texts):
         name = mod.get("name", "")
         category = mod.get("category", "other")
         summary = mod.get("summary", "")
         keywords = json.dumps(mod.get("keywords", []))
         content = mod.get("content", "")
-        emb = get_embedding(name + " " + summary)
-        blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes()) if emb else None
+        emb = emb_map.get(txt)
+        blob = sqlite3.Binary(np.array(emb, dtype=np.float32).tobytes()) if emb is not None else None
         cur.execute("""
             INSERT OR REPLACE INTO logic_modules (name, category, summary, keywords, content, embedding)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (name, category, summary, keywords, content, blob))
-        stored_ids.append(cur.lastrowid)
+        lid = cur.lastrowid
+        stored_ids.append(lid)
         for kw in mod.get("keywords", []):
-            cur.execute("INSERT OR IGNORE INTO logic_keywords (logic_id, keyword, weight) VALUES (?, ?, 1.0)",
-                        (cur.lastrowid, kw))
+            kw_rows.append((lid, kw))
+    if kw_rows:
+        cur.executemany("INSERT OR IGNORE INTO logic_keywords (logic_id, keyword, weight) VALUES (?, ?, 1.0)",
+                        [(lid, kw) for lid, kw in kw_rows])
     conn.commit()
     conn.close()
 

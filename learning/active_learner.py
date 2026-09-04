@@ -6,9 +6,10 @@ import math
 from typing import List, Dict
 from core import db
 import config
-from core.hyperbolic import hyperbolic_distance
-from core.embeddings import get_embedding
-from core.hyperbolic import exp_map
+from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance, hyperbolic_distance_matrix
+from core.embeddings import get_embeddings_dict
+import logging
+logger = logging.getLogger(__name__)
 
 
 class ActiveLearner:
@@ -53,20 +54,35 @@ class ActiveLearner:
             return entity
 
     def select_gap_hyperbolic(self, query_embedding=None):
-        """Select gap using hyperbolic uncertainty (max distance from query)."""
+        """Select gap using hyperbolic uncertainty (max distance from query). Single batch, no double-map."""
         if query_embedding is None:
             return self.select_gap()
-        distances = []
-        for gap in self.gaps:
-            entity = gap.get("entity", "")
-            emb = get_embedding(entity)
-            if emb is not None:
-                h = exp_map(emb)
-                d = hyperbolic_distance(query_embedding, h)
+        import numpy as _np
+        entities = [g.get("entity", "") for g in self.gaps]
+        emb_map = get_embeddings_dict([e for e in entities if e], space='hyperbolic')
+        qh = ensure_hyperbolic(_np.asarray(query_embedding, dtype=_np.float32), space='hyperbolic')[None, :]
+        vecs = []
+        valid = []
+        for e in entities:
+            emb = emb_map.get(e)
+            if emb is None:
+                valid.append(False)
             else:
-                d = float('inf')
-            distances.append(d)
-        best_idx = max(range(len(distances)), key=lambda i: distances[i])
+                vecs.append(ensure_hyperbolic(emb, space='hyperbolic'))
+                valid.append(True)
+        if not vecs:
+            return self.select_gap()
+        pmat = _np.stack(vecs)
+        dists = hyperbolic_distance_matrix(qh, pmat)[0]
+        full = []
+        di = 0
+        for v in valid:
+            if not v:
+                full.append(float('inf'))
+            else:
+                full.append(float(dists[di]))
+                di += 1
+        best_idx = max(range(len(full)), key=lambda i: full[i])
         return self.gaps[best_idx]
 
     def run_round(self, process_file_callback, tracker, max_rounds=3):
@@ -89,6 +105,7 @@ class ActiveLearner:
             except Exception as e:
                 print(f"Recoll search failed: {e}")
                 self.update(gap.get("id", id(gap)), False)
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 continue
 
             processed = 0
