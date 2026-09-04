@@ -1,0 +1,237 @@
+"""
+DB-aware recall augmenter for priority-guaranteed extraction.
+
+Scans preloaded RecallIndex during fast pass (no LLM) to match similar
+topics, dates, references, events and flag priority to ensure capture.
+Priority = must-extract + must-verify (escalate), never must-believe.
+Preserves hyperbolic geometry (distance, not cosine), verification-first,
+no lazy truncation, no doc-specific hardcoding (weights/thresholds in config).
+"""
+import re
+import config
+import logging
+logger = logging.getLogger(__name__)
+
+_YEAR_RE = re.compile(r'\b(17|18|19|20)\d{2}\b')
+
+
+def _default_weights():
+    return {
+        "entity": 0.3,
+        "topic": 0.2,
+        "date": 0.25,
+        "event": 0.15,
+        "standards": 0.3,
+        "contradiction": 0.5,
+    }
+
+
+def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
+    """Return list of recall dicts per chunk: {score, priority, reasons, context}.
+
+    Batched (single FTS + single distance_matrix per batch), no per-chunk DB storm.
+    """
+    from extraction.recall_index import RecallIndex
+    idx = recall_index or RecallIndex.load()
+    n = len(chunks)
+    out = [{"score": 0.0, "priority": False, "reasons": [], "context": "", "hits": {}} for _ in range(n)]
+    if n == 0:
+        return out
+    try:
+        weights = dict(_default_weights())
+        cfg_w = getattr(config, "RECALL_PRIORITY_WEIGHTS", None)
+        if isinstance(cfg_w, dict):
+            for k, v in cfg_w.items():
+                if k in weights:
+                    try:
+                        weights[k] = float(v)
+                    except Exception:
+                        pass
+        threshold = float(getattr(config, "RECALL_PRIORITY_THRESHOLD", 0.5))
+    except Exception:
+        weights = _default_weights()
+        threshold = 0.5
+
+    # Pre-tokenize + fast entities per chunk (reuse fast_pres when available)
+    chunk_entity_texts = []
+    for i, ch in enumerate(chunks):
+        try:
+            if fast_pres and i < len(fast_pres) and fast_pres[i]:
+                pre = fast_pres[i]
+                ents = []
+                for k in ("entities", "people", "locations", "organizations"):
+                    for it in pre.get(k, []) or []:
+                        if isinstance(it, dict):
+                            t = it.get("text") or it.get("entity_name") or it.get("person_name") or it.get("location_name") or ""
+                            if t:
+                                ents.append(str(t))
+                chunk_entity_texts.append(ents)
+            else:
+                chunk_entity_texts.append([])
+        except Exception:
+            chunk_entity_texts.append([])
+
+    # Entity linking via automaton (single pass per chunk, no DB)
+    linked = [[] for _ in range(n)]
+    try:
+        A = idx.alias_automaton
+        if A is not None:
+            for i, ch in enumerate(chunks):
+                try:
+                    low = ch.lower()
+                    seen = set()
+                    for _, (canon, _) in A.iter(low):
+                        if canon not in seen:
+                            seen.add(canon)
+                            linked[i].append(canon)
+                            if len(linked[i]) >= 10:
+                                break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # Topic sims vectorized (single matrix when centroids + embs available)
+    topic_sims = [0.0] * n
+    try:
+        if idx.topic_centroids and chunk_embs:
+            import numpy as _np
+            from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
+            cents = [c for _, c in idx.topic_centroids[:20]]
+            cmat = _np.stack([ensure_hyperbolic(c, space='hyperbolic') for c in cents])
+            qlist = []
+            qidx = []
+            for i, e in enumerate(chunk_embs):
+                if e is None or i >= n:
+                    continue
+                try:
+                    qlist.append(ensure_hyperbolic(_np.asarray(e, dtype=_np.float32), space='hyperbolic'))
+                    qidx.append(i)
+                except Exception:
+                    continue
+            if qlist:
+                qmat = _np.stack(qlist)
+                dmat = hyperbolic_distance_matrix(qmat, cmat)
+                for r, i in enumerate(qidx):
+                    try:
+                        best = float(_np.min(dmat[r]))
+                        topic_sims[i] = float(1.0 / (1.0 + best))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # Standards / contradiction sims batched (single matrix for all chunks with embs)
+    std_sims = [0.0] * n
+    std_neg_mismatch = [False] * n
+    try:
+        if idx.standards and chunk_embs:
+            import numpy as _np2
+            from core.hyperbolic import ensure_hyperbolic as _eh, hyperbolic_distance_matrix as _dm
+            smat = _np2.stack([_eh(_np2.asarray(s["embedding"], dtype=_np2.float32), space='hyperbolic') for s in idx.standards if s.get("embedding") is not None])
+            qlist = []
+            qidx = []
+            for i, e in enumerate(chunk_embs):
+                if e is None or i >= n:
+                    continue
+                try:
+                    qlist.append(_eh(_np2.asarray(e, dtype=_np2.float32), space='hyperbolic'))
+                    qidx.append(i)
+                except Exception:
+                    continue
+            if qlist and len(smat):
+                qmat = _np2.stack(qlist)
+                dmat = _dm(qmat, smat)
+                for r, i in enumerate(qidx):
+                    try:
+                        bi = int(_np2.argmin(dmat[r]))
+                        best_d = float(dmat[r][bi])
+                        std_sims[i] = float(1.0 / (1.0 + best_d))
+                        # Negation mismatch heuristic: chunk mentions "not/no/never" near linked entity
+                        # while standard negation differs -> contradiction candidate (must-verify)
+                        low = chunks[i].lower()
+                        has_neg = (" not " in low or " no " in low or " never " in low or "n't " in low)
+                        std_neg = idx.standards[bi].get("negation", 0) or 0
+                        # We don't know chunk negation yet; flag when high sim + neg words present
+                        if std_sims[i] > 0.6 and has_neg:
+                            std_neg_mismatch[i] = True
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+
+    for i, ch in enumerate(chunks):
+        reasons = []
+        score = 0.0
+        hits = {}
+        try:
+            # Entity
+            ents = linked[i] or chunk_entity_texts[i]
+            if ents:
+                hits["entities"] = ents[:5]
+                score += weights["entity"] * min(1.0, len(ents) / 3.0)
+                reasons.append(f"linked {len(ents)} known entities")
+            # Topic
+            if topic_sims[i] > 0.4:
+                hits["topic_sim"] = round(topic_sims[i], 3)
+                score += weights["topic"] * topic_sims[i]
+                reasons.append(f"topic sim {topic_sims[i]:.2f}")
+            # Dates
+            try:
+                years = set(m.group() for m in _YEAR_RE.finditer(ch))
+                dhit = years & idx.date_anchors if hasattr(idx.date_anchors, "__contains__") else set()
+                if dhit:
+                    hits["dates"] = sorted(dhit)[:5]
+                    score += weights["date"]
+                    reasons.append(f"date anchors {sorted(dhit)[:3]}")
+            except Exception:
+                pass
+            # Events
+            try:
+                low = ch.lower()
+                ev = [t for t in idx.event_triggers if t and t in low]
+                if ev:
+                    hits["events"] = ev[:5]
+                    score += weights["event"] * min(1.0, len(ev) / 2.0)
+                    reasons.append(f"event triggers {ev[:3]}")
+            except Exception:
+                pass
+            # Standards
+            if std_sims[i] > 0.5:
+                hits["standards_sim"] = round(std_sims[i], 3)
+                score += weights["standards"] * std_sims[i]
+                reasons.append(f"standards sim {std_sims[i]:.2f}")
+            if std_neg_mismatch[i]:
+                hits["contradiction_candidate"] = True
+                score += weights["contradiction"]
+                reasons.append("possible contradiction of anchor (must-verify)")
+            # Hard anchors (always priority, no weighting needed)
+            hard = False
+            try:
+                norm = re.sub(r'\s+', ' ', ch.lower()).strip()
+                for s in idx.standards[:200]:
+                    ss = str(s.get("statement", "")).lower().strip()
+                    if ss and (ss in norm or norm in ss):
+                        hard = True
+                        reasons.append("exact anchor match")
+                        break
+            except Exception:
+                pass
+            priority = hard or (score >= threshold)
+            # Build concise recall_context for prompt (<=500ch, templated)
+            ctx_parts = []
+            if hits.get("entities"):
+                ctx_parts.append("Linked: " + ", ".join(hits["entities"][:5]))
+            if hits.get("dates"):
+                ctx_parts.append("Dates: " + ", ".join(hits["dates"][:5]))
+            if hits.get("events"):
+                ctx_parts.append("Events: " + ", ".join(hits["events"][:5]))
+            if hits.get("standards_sim"):
+                ctx_parts.append(f"See standards (sim {hits['standards_sim']}) for contradictions")
+            if hits.get("contradiction_candidate"):
+                ctx_parts.append("Check negation vs anchor carefully")
+            context = "; ".join(ctx_parts)[:500]
+            out[i] = {"score": round(float(score), 3), "priority": bool(priority), "reasons": reasons[:5], "context": context, "hits": hits}
+        except Exception:
+            continue
+    return out

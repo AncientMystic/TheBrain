@@ -287,16 +287,27 @@ def _extract_candidate_texts(annotations):
     return texts
 
 
-def effective_llm_batch_chunks(n):
-    """Race-free helper: preferred LLM batch chunks for n chunks (no global mutation)."""
+def effective_llm_batch_chunks(n, endpoint_type=None, endpoint=None):
+    """Race-free helper: preferred LLM batch chunks (no global mutation).
+
+    Per-endpoint-type aware (small local models need smaller batches to fit context),
+    then n-aware. Generic, config-driven, no doc-specific hardcoding.
+    """
     import config as _cfg
-    if not getattr(_cfg, "DYNAMIC_BATCH_SIZE", False):
-        return int(getattr(_cfg, "LLM_BATCH_CHUNKS", 4))
-    if n > 200:
-        return 8
-    if n < 20:
-        return 2
-    return 4
+    # Base by endpoint capability: small local 3B -> 2, large -> 4-8
+    if endpoint_type == "small" or (endpoint and "small" in str(endpoint.get("model", "")).lower()):
+        base = int(getattr(_cfg, "LLM_BATCH_SMALL", 2))
+    elif endpoint_type == "large":
+        base = int(getattr(_cfg, "LLM_BATCH_LARGE", 4))
+    else:
+        base = int(getattr(_cfg, "LLM_BATCH_CHUNKS", 4))
+        if getattr(_cfg, "DYNAMIC_BATCH_SIZE", False):
+            if n > 200:
+                base = 8
+            elif n < 20:
+                base = min(base, 2)
+    # Clamp generic bounds
+    return max(1, min(base, int(getattr(_cfg, "LLM_BATCH_MAX", 8))))
 
 
 def _compute_novelty_flags(chunks, chunk_embeddings):
@@ -528,6 +539,37 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
                 key = f"chunk_{idx}"
                 chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
                 chunk_data = _normalize_chunk_data(chunk_data)
+                if not chunk_data or not any(chunk_data.get(k) for k in field_keys):
+                    # Solo retry: one poison chunk shouldn't kill batch of N (full-doc guarantee).
+                    # Single-chunk prompt is smaller, fits small-model context, bounded to 1 retry.
+                    try:
+                        solo_text = _format_chunks_text([batch_chunks[original_idx]])
+                        solo_prompt = prompt_template.replace("{num_chunks}", "1")
+                        solo_prompt = solo_prompt.replace("{chunks_text}", solo_text)
+                        solo_prompt = solo_prompt.replace("{logic_context}", logic_context if logic_context else "")
+                        # Pre-extractions for solo (single item to avoid cross-chunk confusion)
+                        try:
+                            solo_pre = batch_pre_extractions[original_idx] if batch_pre_extractions else None
+                            solo_pre_str = _format_pre_extractions_for_prompt([solo_pre]) if solo_pre else "None"
+                        except Exception:
+                            solo_pre_str = "None"
+                        solo_prompt = solo_prompt.replace("{pre_extractions}", solo_pre_str)
+                        solo_resp = call_model_json(solo_prompt, model=actual_model, max_tokens=4096 if category=="facts_entities_relationships" else 2048,
+                                                    system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
+                        if isinstance(solo_resp, list) and solo_resp and isinstance(solo_resp[0], dict):
+                            solo_resp = solo_resp[0]
+                        solo_data = {}
+                        if isinstance(solo_resp, dict):
+                            solo_data = solo_resp.get("chunk_0", solo_resp)
+                            solo_data = _normalize_chunk_data(solo_data) or {}
+                        if solo_data and any(solo_data.get(k) for k in field_keys):
+                            chunk_data = solo_data
+                            if getattr(config, "DEBUG_VERBOSE", False):
+                                print(f"    (Solo retry recovered chunk {original_idx} for {category})")
+                        else:
+                            chunk_data = chunk_data or {}
+                    except Exception:
+                        chunk_data = chunk_data or {}
                 if not chunk_data:
                     chunk_data = {}
                 chunk_hash = _hash_text(batch_chunks[original_idx])
@@ -601,6 +643,46 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
         chunk_embeddings = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
 
     flags = _compute_novelty_flags(chunks, chunk_embeddings)
+    # Safety floor (generic, config-driven): never skip so aggressively that coverage collapses.
+    # Keeps most-distant skipped chunks (diversity, not prefix) up to floor.
+    try:
+        kept = sum(1 for f in flags if f)
+        _ratio = float(getattr(config, "NOVELTY_MIN_KEEP_RATIO", 0.3))
+        _min_n = int(getattr(config, "NOVELTY_MIN_KEEP_COUNT", 3))
+        min_keep = max(_min_n if len(chunks) >= _min_n else len(chunks), int(len(chunks) * _ratio))
+        if kept < min_keep and len(chunks) > 0:
+            import numpy as _npf
+            from core.hyperbolic import ensure_hyperbolic, hyperbolic_distance_matrix
+            # Score skipped by max distance to kept priors (most novel first)
+            kept_pts = [chunk_embeddings[i] for i, f in enumerate(flags) if f and chunk_embeddings[i] is not None]
+            skipped_idx = [i for i, f in enumerate(flags) if not f]
+            if kept_pts and skipped_idx:
+                try:
+                    kmat = _npf.stack([ensure_hyperbolic(_npf.asarray(e, dtype=_npf.float32), space='hyperbolic') for e in kept_pts])
+                    scores = []
+                    for i in skipped_idx:
+                        emb = chunk_embeddings[i]
+                        if emb is None:
+                            scores.append((float('inf'), i))
+                            continue
+                        qh = ensure_hyperbolic(_npf.asarray(emb, dtype=_npf.float32), space='hyperbolic')[None, :]
+                        d = float(_npf.min(hyperbolic_distance_matrix(qh, kmat)[0]))
+                        scores.append((d, i))
+                    scores.sort(reverse=True)
+                    need = min_keep - kept
+                    for _, i in scores[:need]:
+                        flags[i] = True
+                except Exception:
+                    need = min_keep - kept
+                    for i in skipped_idx[:need]:
+                        flags[i] = True
+            else:
+                need = min_keep - kept
+                for i in skipped_idx[:need]:
+                    flags[i] = True
+            print(f"  (Novelty floor: kept {kept}/{len(chunks)}, raised to {sum(1 for f in flags if f)}/{len(chunks)} for coverage)")
+    except Exception:
+        pass
 
     fast_pre_results = None
     if config.FAST_EXTRACTOR_ENABLED:
@@ -616,6 +698,30 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
         except Exception as e:
             print(f"    (Fast extractor error: {e}); falling back to full LLM extraction.")
             fast_pre_results = None
+
+    # DB-aware recall (fast-pass scans DBs for topics/dates/refs/events, flags priority).
+    # Priority = must-extract + must-verify, never must-believe. Generic, no hardcoding.
+    recall_list = [None] * len(chunks)
+    if getattr(config, "RECALL_AUGMENT_ENABLED", True):
+        try:
+            from extraction.recall_augmenter import augment_batch
+            recall_list = augment_batch(chunks, fast_pres=fast_pre_results, chunk_embs=chunk_embeddings)
+            n_prio = sum(1 for r in recall_list if r and r.get("priority"))
+            if n_prio:
+                print(f"  (Recall: {n_prio}/{len(chunks)} priority chunks flagged for guaranteed extraction)")
+                # Bypass novelty skip for priority (full-doc guarantee for anchors)
+                for i, r in enumerate(recall_list):
+                    if r and r.get("priority") and not flags[i]:
+                        flags[i] = True
+                try:
+                    from core.metrics import inc_counter as _inc2
+                    _inc2("recall_priority_chunks_total", n_prio)
+                except Exception:
+                    pass
+        except Exception as e:
+            if getattr(config, "DEBUG_VERBOSE", False):
+                print(f"    (Recall augmenter error: {e})")
+            recall_list = [None] * len(chunks)
 
     gate = None
     gate_features_cache = {}
@@ -683,23 +789,14 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             continue
 
         pre = fast_pre_results[i] if fast_pre_results else None
+        rec = recall_list[i] if i < len(recall_list) else None
+        is_prio = bool(rec and rec.get("priority"))
 
-        if distilled_results is not None and i < len(distilled_results):
-            distilled_result = distilled_results[i]
-            if distilled_result is not None:
-                all_results[i]["facts"] = distilled_result.get("facts", [])
-                all_results[i]["entities"] = distilled_result.get("entities", [])
-                all_results[i]["people"] = distilled_result.get("people", [])
-                all_results[i]["locations"] = distilled_result.get("locations", [])
-                all_results[i]["dates"] = distilled_result.get("dates", [])
-                all_results[i]["events"] = distilled_result.get("events", [])
-                all_results[i]["discoveries"] = distilled_result.get("discoveries", [])
-                all_results[i]["gems"] = distilled_result.get("gems", [])
-                continue
-        elif distilled_extractor is not None:
-            try:
-                distilled_result = distilled_extractor(chunks[i])
-                if distilled_result is not None:
+        # Priority bypasses distilled-empty skip and gate skip (must-extract, not must-believe)
+        if not is_prio:
+            if distilled_results is not None and i < len(distilled_results):
+                distilled_result = distilled_results[i]
+                if distilled_result is not None and any(distilled_result.get(k) for k in ("facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems")):
                     all_results[i]["facts"] = distilled_result.get("facts", [])
                     all_results[i]["entities"] = distilled_result.get("entities", [])
                     all_results[i]["people"] = distilled_result.get("people", [])
@@ -709,12 +806,33 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                     all_results[i]["discoveries"] = distilled_result.get("discoveries", [])
                     all_results[i]["gems"] = distilled_result.get("gems", [])
                     continue
-            except Exception as e:
-                if config.DEBUG_VERBOSE:
-                    print(f"    (Distilled extractor error: {e})")
+            elif distilled_extractor is not None:
+                try:
+                    distilled_result = distilled_extractor(chunks[i])
+                    if distilled_result is not None and any(distilled_result.get(k) for k in ("facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems")):
+                        all_results[i]["facts"] = distilled_result.get("facts", [])
+                        all_results[i]["entities"] = distilled_result.get("entities", [])
+                        all_results[i]["people"] = distilled_result.get("people", [])
+                        all_results[i]["locations"] = distilled_result.get("locations", [])
+                        all_results[i]["dates"] = distilled_result.get("dates", [])
+                        all_results[i]["events"] = distilled_result.get("events", [])
+                        all_results[i]["discoveries"] = distilled_result.get("discoveries", [])
+                        all_results[i]["gems"] = distilled_result.get("gems", [])
+                        continue
+                except Exception as e:
+                    if config.DEBUG_VERBOSE:
+                        print(f"    (Distilled extractor error: {e})")
+        else:
+            # Still consult distilled for enrichment, but never skip LLM on empty
+            if distilled_results is not None and i < len(distilled_results) and distilled_results[i]:
+                _dr = distilled_results[i]
+                if any(_dr.get(k) for k in ("facts", "entities", "people", "locations")):
+                    for k in ("facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems"):
+                        if _dr.get(k):
+                            all_results[i][k] = _dr.get(k, [])
 
         use_full_llm = True
-        if gate is not None and chunk_embeddings is not None and chunk_embeddings[i] is not None:
+        if gate is not None and not is_prio and chunk_embeddings is not None and chunk_embeddings[i] is not None:
             if 'all' not in gate_features_cache:
                 from core.spectral import compute_spectral_features
                 feat = compute_spectral_features(chunk_emb_matrix, top_k=22)
@@ -725,7 +843,9 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                 use_full_llm = False
 
         if use_full_llm:
-            selected_items.append((i, chunks[i], pre))
+            # Carry recall context for prompt injection (guides LLM to linked anchors)
+            rctx = (rec.get("context", "") if rec else "")
+            selected_items.append((i, chunks[i], pre, rctx, is_prio))
         else:
             all_results[i]["entities"] = pre.get("entities", []) if pre else []
             all_results[i]["people"] = pre.get("people", []) if pre else []
@@ -739,7 +859,13 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
     if not selected_items:
         return all_results
 
-    batch_size = config.LLM_BATCH_CHUNKS
+    # Small-safe batching: shared queue serves small + large endpoints, so fit smallest context.
+    # Uses race-free helper, no global mutation. Preserves full-doc (same items, more batches).
+    try:
+        batch_size = effective_llm_batch_chunks(len(selected_items), endpoint_type="small")
+    except Exception:
+        batch_size = int(getattr(config, "LLM_BATCH_CHUNKS", 4))
+        batch_size = max(1, min(batch_size, 4))
     batches = []
     for i in range(0, len(selected_items), batch_size):
         batch = selected_items[i:i+batch_size]
@@ -747,9 +873,24 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
 
     task_queue = queue.Queue()
     for batch_idx, batch in enumerate(batches):
-        batch_texts = [text for _, text, _ in batch]
-        batch_pre = [pre for _, _, pre in batch]
-        task_queue.put((batch_idx, batch_texts, batch_pre))
+        # Batch items are (orig_idx, text, pre, rctx, is_prio) after recall wiring
+        batch_texts = []
+        batch_pre = []
+        batch_rctx = []
+        batch_prio = []
+        batch_orig = []
+        for item in batch:
+            if len(item) == 5:
+                oi, tx, pr, rc, ip = item
+            else:
+                oi, tx, pr = item
+                rc, ip = "", False
+            batch_orig.append(oi)
+            batch_texts.append(tx)
+            batch_pre.append(pr)
+            batch_rctx.append(rc)
+            batch_prio.append(ip)
+        task_queue.put((batch_idx, batch_texts, batch_pre, batch_rctx, batch_prio, batch_orig))
 
     results = {}
     lock = threading.Lock()
@@ -777,23 +918,45 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             def worker(ep=endpoint, wid=worker_idx, eidx=ep_idx):
                 while True:
                     try:
-                        batch_idx, batch_texts, batch_pre = task_queue.get_nowait()
+                        batch_idx, batch_texts, batch_pre, batch_rctx, batch_prio, batch_orig = task_queue.get_nowait()
                     except queue.Empty:
                         break
                     if config.DEBUG_VERBOSE:
                         print(f"    [Endpoint {eidx}, worker {wid}] processing batch {batch_idx}")
                     try:
                         actual_model = ep["model"]
+                        # Inject recall contexts into logic_context (guides LLM to linked anchors, no hardcoding)
+                        _rctxs = [c for c in batch_rctx if c]
+                        _lctx = logic_context or ""
+                        if _rctxs:
+                            _uniq = []
+                            seen_rc = set()
+                            for c in _rctxs:
+                                if c not in seen_rc:
+                                    seen_rc.add(c)
+                                    _uniq.append(c)
+                            _rctx_block = "Recall (DB-linked, verify carefully): " + " | ".join(_uniq)[:1000]
+                            _lctx = (_lctx + "\n\n" + _rctx_block) if _lctx else _rctx_block
                         batch_results = _process_batch(
                             batch_texts,
                             model=None,
-                            logic_context=logic_context,
+                            logic_context=_lctx,
                             endpoint=ep,
                             actual_model=actual_model,
                             batch_pre_extractions=batch_pre,
                         )
+                        # Tag priority facts for downstream protection/escalation (must-verify)
+                        try:
+                            for br, ip in zip(batch_results, batch_prio):
+                                if ip and isinstance(br, dict):
+                                    for k in ("facts", "entities", "people", "locations", "dates", "events", "discoveries", "gems"):
+                                        for it in br.get(k, []) or []:
+                                            if isinstance(it, dict):
+                                                it["recall_priority"] = True
+                        except Exception:
+                            pass
                         with lock:
-                            results[batch_idx] = batch_results
+                            results[batch_idx] = (batch_results, batch_orig, batch_prio)
                     except Exception as e:
                         print(f"    (Batch {batch_idx} error on endpoint {eidx}: {e})")
                         empty = [{
@@ -802,7 +965,7 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                             "events": [], "discoveries": [], "gems": []
                         } for _ in batch_texts]
                         with lock:
-                            results[batch_idx] = empty
+                            results[batch_idx] = (empty, batch_orig if 'batch_orig' in locals() else [], [False]*len(batch_texts))
                     finally:
                         task_queue.task_done()
                         if pbar:
@@ -829,8 +992,13 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             conn = db_mod.db_connect("key_facts")
             cur = conn.cursor()
             for batch_idx in sorted(results.keys()):
-                batch_indices = [idx for idx, _, _ in batches[batch_idx]]
-                for orig_idx, chunk_data in zip(batch_indices, results[batch_idx]):
+                _res = results[batch_idx]
+                if isinstance(_res, tuple) and len(_res) == 3:
+                    _batch_results, _batch_orig, _ = _res
+                else:
+                    _batch_results = _res
+                    _batch_orig = [idx for idx, *_ in batches[batch_idx]]
+                for orig_idx, chunk_data in zip(_batch_orig, _batch_results):
                     if chunk_data.get("facts") or chunk_data.get("entities"):
                         target = {
                             "facts": chunk_data.get("facts", []),
@@ -854,9 +1022,13 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                 print(f"    (Distilled training data collection error: {e})")
 
     for batch_idx in sorted(results.keys()):
-        batch_indices = [idx for idx, _, _ in batches[batch_idx]]
-        batch_results = results[batch_idx]
-        for original_idx, res in zip(batch_indices, batch_results):
+        _res = results[batch_idx]
+        if isinstance(_res, tuple) and len(_res) == 3:
+            _batch_results, _batch_orig, _ = _res
+        else:
+            _batch_results = _res
+            _batch_orig = [idx for idx, *_ in batches[batch_idx]]
+        for original_idx, res in zip(_batch_orig, _batch_results):
             all_results[original_idx] = res
 
     if config.ENABLE_ASYNC_VALIDATION:

@@ -260,7 +260,10 @@ class VerificationManager:
                     print(f"    (Gated verification error: {e})")
 
         conf = sum(v["confidence"] for v in layers if v["verified"]) / max(1, len(layers))
-        if conf < getattr(config, "VERIFICATION_ESCALATION_THRESHOLD", 0.7):
+        # Priority anchors always escalate (must-verify with all layers, not adaptive skip)
+        _is_prio = bool(fact.get("recall_priority"))
+        _thr = 1.0 if _is_prio else getattr(config, "VERIFICATION_ESCALATION_THRESHOLD", 0.7)
+        if conf < _thr:
             layers.append(self._vericot(fact))
             layers.append(self._rcot(fact))
             layers.append(self._ares(fact, accepted_facts))

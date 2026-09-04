@@ -110,14 +110,20 @@ def _clean_facts(facts):
             cleaned.append(f)
             continue
 
-        # Normal (strict) mode - original logic
+        # Normal (strict) mode - provenance-preserving (verification-first)
+        # Never silently drop valid content pre-verifier; flag + penalize instead.
+        _verbatim = False
         if source_span:
             if len(source_span.split()) > 4 or _is_redundant_span(source_span, fact_text):
                 source_span = _shorten_source_span(source_span, max_words=4)
                 if _is_redundant_span(source_span, fact_text):
-                    source_span = " ".join(fact_text.split()[:3])
+                    # Don't fabricate span from fact (breaks text_grounding); keep shortened original
+                    # and mark for verifier to down-weight text_grounding, not drop.
+                    _verbatim = True
         if _is_verbatim_copy(fact_text, source_span):
-            continue
+            # Keep with penalty + flag; verifier (text_grounding/SymStep) decides truth.
+            # Dropping here caused 25k-char docs -> 1 fact when small models copy verbatim.
+            _verbatim = True
         f["fact_text"] = fact_text
         f["canonical_value"] = _safe_str(f.get("canonical_value"), 80)
         f["source_span"] = source_span
@@ -126,6 +132,14 @@ def _clean_facts(facts):
             f["confidence"] = float(f.get("confidence", 0.0))
         except Exception as e:
             f["confidence"] = 0.0
+        if _verbatim:
+            f["verbatim"] = True
+            try:
+                # Priority anchors get milder penalty (must-verify, not drop)
+                _pen = 0.9 if f.get("recall_priority") else 0.7
+                f["confidence"] = float(f["confidence"]) * _pen
+            except Exception:
+                pass
         if fact_text.strip():
             cleaned.append(f)
     return cleaned

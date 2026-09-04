@@ -190,8 +190,44 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
                     fact_chunk_map[(fact["fact_text"], span)] = chunk_idx  # store chunk index; later convert to chunk_id
 
         print("  Validating and deduplicating...")
-        validated_facts = [f for f in all_extracted["facts"] if isinstance(f, dict) and f.get("source_span") and f.get("confidence",0) >= 0.5]
-        all_extracted["facts"] = deduplicate_list(validated_facts, key_func=lambda f: normalize_key(f.get("fact_text","")))
+        import config as _cfg2
+        _min_conf = float(getattr(_cfg2, "MIN_FACT_CONFIDENCE", 0.3))
+        _min_prio = float(getattr(_cfg2, "MIN_PRIORITY_CONFIDENCE", 0.2))
+        _raw_n = len(all_extracted["facts"])
+        _kept = []
+        _dropped_conf = 0
+        for f in all_extracted["facts"]:
+            if not isinstance(f, dict) or not f.get("fact_text", "").strip():
+                _dropped_conf += 1
+                continue
+            try:
+                _c = float(f.get("confidence", 0.0))
+            except Exception:
+                _c = 0.0
+            _thr = _min_prio if f.get("recall_priority") else _min_conf
+            if _c < _thr:
+                _dropped_conf += 1
+                continue
+            # Preserve span-missing for verifier (text_grounding will fail gracefully);
+            # never fabricate span (breaks provenance). Flag instead.
+            if not f.get("source_span"):
+                f["span_missing"] = True
+                try:
+                    f["confidence"] = _c * 0.8
+                except Exception:
+                    pass
+            _kept.append(f)
+        print(f"  (Fact triage: raw={_raw_n} kept={len(_kept)} dropped_lowconf={_dropped_conf} min_conf={_min_conf})")
+        try:
+            from core.metrics import inc_counter as _inc
+            _inc("facts_raw_total", _raw_n)
+            _inc("facts_kept_triage_total", len(_kept))
+        except Exception:
+            pass
+        _pre_dedup = len(_kept)
+        all_extracted["facts"] = deduplicate_list(_kept, key_func=lambda f: normalize_key(f.get("fact_text","") + "||" + f.get("source_span","")))
+        if len(all_extracted["facts"]) < _pre_dedup:
+            print(f"  (Dedup: {_pre_dedup} -> {len(all_extracted['facts'])} by text+span)")
 
         from reasoning.verification_manager import VerificationManager
         vm = VerificationManager()
