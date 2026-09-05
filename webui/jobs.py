@@ -16,6 +16,33 @@ _lock = threading.Lock()
 _seq = itertools.count(1)
 
 
+def _allowed_input_dir(raw):
+    """Resolve user-supplied input to an existing directory inside the allow-list.
+
+    Returns resolved path string, or None when missing/outside/not-a-directory.
+    Uses realpath semantics (symlinks followed) plus commonpath containment
+    (immune to sibling-prefix bypass that plain startswith allows).
+    Guided-learning legitimately accepts any local folder, so without
+    THEBRAIN_ALLOWED_ROOTS set every existing directory is accepted.
+    """
+    import os as _os
+    try:
+        from pathlib import Path as _P
+        if not raw:
+            return None
+        resolved = str(_P(str(raw)).expanduser().resolve())
+        if not _os.path.isdir(resolved):
+            return None
+        _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
+        if _allowed:
+            _roots = [str(_P(r).expanduser().resolve()) for r in _allowed]
+            if not any(_os.path.commonpath([resolved, rt]) == rt for rt in _roots):
+                return None
+        return resolved
+    except Exception:
+        return None
+
+
 def create_job(kind, params=None):
     jid = f"job-{uuid.uuid4().hex[:8]}"
     q = queue.Queue(maxsize=1000)
@@ -27,19 +54,15 @@ def create_job(kind, params=None):
     # Real workers when prerequisites exist; else mocked skeleton stream (offline demo/tests)
     target = _run_mock
     if kind == "guided-learning":
-        try:
-            from pathlib import Path as _P
-            _inp = (params or {}).get("input", "")
-            if _inp and _P(str(_inp)).expanduser().exists():
-                target = _run_guided_real
-        except Exception:
-            target = _run_mock
+        if _allowed_input_dir((params or {}).get("input", "")):
+            target = _run_guided_real
+    elif kind == "logic-learn":
+        if _allowed_input_dir((params or {}).get("input", "")):
+            target = _run_logic_real
     elif kind == "audit":
         target = _run_audit_real
     elif kind == "research":
         target = _run_research_real
-    elif kind == "logic-learn":
-        target = _run_logic_real
     elif kind == "consolidate":
         target = _run_consolidate_real
     t = threading.Thread(target=target, args=(job,), daemon=True)
@@ -67,26 +90,22 @@ def _run_guided_real(job):
     logic_mode = bool(params.get("logic"))
     verified_flag = bool(params.get("verified"))
     _emit(job, {"type": "log", "level": "info", "msg": f"Starting guided-learning on {raw_inp or '(no input)'}"})
-    # Resolve + allow-list (same rules as CLI --input)
-    try:
-        inp = str(_P(raw_inp).expanduser().resolve())
-    except Exception as e:
-        _emit(job, {"type": "error", "msg": f"Invalid input path: {e}"})
+    # Resolve + allow-list via shared helper (realpath + commonpath containment).
+    # allow_outside_root tick bypasses the allow-list, never the existence/dir checks.
+    import os as _os
+    inp = _allowed_input_dir(raw_inp)
+    if not inp and params.get("allow_outside_root"):
+        try:
+            from pathlib import Path as _P2
+            _cand = str(_P2(str(raw_inp)).expanduser().resolve())
+            inp = _cand if _os.path.isdir(_cand) else None
+        except Exception:
+            inp = None
+    if not inp:
+        _emit(job, {"type": "error", "msg": "Invalid input folder (must exist, be a directory, and sit inside THEBRAIN_ALLOWED_ROOTS unless allow-outside-root is ticked)"})
         _emit(job, {"type": "done", "ok": False})
         job["done"] = True
         return
-    import os as _os
-    _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
-    if _allowed:
-        try:
-            _ar = [str(_P(r).expanduser().resolve()) for r in _allowed]
-            if not any(inp.startswith(a) for a in _ar) and not params.get("allow_outside_root"):
-                _emit(job, {"type": "error", "msg": f"Input outside THEBRAIN_ALLOWED_ROOTS (tick allow-outside-root to override)"})
-                _emit(job, {"type": "done", "ok": False})
-                job["done"] = True
-                return
-        except Exception:
-            pass
     # Scan files (reuse CLI scanner; fallback to rglob)
     try:
         from ingestion.scanner import scan_files
@@ -296,17 +315,17 @@ def _run_logic_real(job):
     except Exception:
         limit = None
     dry = bool(params.get("dry"))
-    try:
-        inp = str(_P(raw_inp).expanduser().resolve())
-    except Exception as e:
-        _emit(job, {"type": "error", "msg": f"Invalid input path: {e}"})
-        _emit(job, {"type": "done", "ok": False})
-        job["done"] = True
-        return
     import os as _os
-    _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
-    if _allowed and not any(inp.startswith(str(_P(r).expanduser().resolve())) for r in _allowed) and not params.get("allow_outside_root"):
-        _emit(job, {"type": "error", "msg": "Input outside THEBRAIN_ALLOWED_ROOTS"})
+    inp = _allowed_input_dir(raw_inp)
+    if not inp and params.get("allow_outside_root"):
+        try:
+            from pathlib import Path as _P2
+            _cand = str(_P2(str(raw_inp)).expanduser().resolve())
+            inp = _cand if _os.path.isdir(_cand) else None
+        except Exception:
+            inp = None
+    if not inp:
+        _emit(job, {"type": "error", "msg": "Invalid input folder (must exist, be a directory, and sit inside THEBRAIN_ALLOWED_ROOTS unless allow-outside-root is ticked)"})
         _emit(job, {"type": "done", "ok": False})
         job["done"] = True
         return

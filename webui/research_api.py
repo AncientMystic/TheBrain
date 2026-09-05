@@ -48,14 +48,28 @@ def register_research_routes(app, require_auth):
 
     @app.get("/api/research/report", dependencies=[Depends(require_auth)])
     async def get_report(name: str):
-        # No traversal: basename only, must stay inside reports dir
-        safe = Path(str(name or "")).name
-        if not safe or not safe.endswith(".md"):
+        # Strict allow-list: report names the coordinator writes are
+        # [A-Za-z0-9._-]+.md. Anything else (slashes, .., null bytes,
+        # absolute paths, other extensions) is rejected before touching disk.
+        import re as _re
+        import os as _os
+        raw = str(name or "")
+        if not _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.md", raw):
             return {"text": "", "error": "invalid name"}
-        p = _reports_dir() / safe
+        root = _reports_dir().resolve()
+        p = (root / raw).resolve()
         try:
-            if not str(p.resolve()).startswith(str(_reports_dir().resolve())):
-                return {"text": "", "error": "invalid path"}
+            # is_relative_to is immune to the sibling-prefix bypass that
+            # plain startswith allows (e.g. /reports-evil/x vs /reports).
+            inside = p.is_relative_to(root)
+        except Exception:
+            try:
+                inside = _os.path.commonpath([str(p), str(root)]) == str(root)
+            except Exception:
+                inside = False
+        if not inside or not p.is_file():
+            return {"text": "", "error": "invalid path"}
+        try:
             text = p.read_text(encoding="utf-8", errors="replace")[:20000]
             return {"text": text}
         except Exception as e:
