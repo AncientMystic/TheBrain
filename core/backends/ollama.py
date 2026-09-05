@@ -99,6 +99,19 @@ class Provider(BackendProvider):
             data = resp.json()
             return [m["id"] for m in data.get("data", [])]
 
+    def loaded_models(self):
+        """Names of models currently resident (no reload needed). Native Ollama
+        only (/api/ps); other modes return None (unknown, not False)."""
+        try:
+            if self.mode != "ollama":
+                return None
+            import requests
+            resp = requests.get(f"{self.base_url}/ps", headers=self._headers(), timeout=5)
+            resp.raise_for_status()
+            return [m.get("name", "") for m in resp.json().get("models", [])]
+        except Exception:
+            return None
+
     def health_check(self):
         try:
             if self.mode == "ollama":

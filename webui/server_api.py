@@ -18,16 +18,25 @@ def register_server_routes(app, require_auth):
         out = []
         for ep in getattr(_cfg, "LLM_ENDPOINTS", []):
             t0 = time.time()
+            loaded = None
             try:
                 from core.backends import create_backend
-                ok = bool(create_backend(ep).health_check())
+                provider = create_backend(ep)
+                ok = bool(provider.health_check())
+                try:
+                    resident = provider.loaded_models() if hasattr(provider, "loaded_models") else None
+                    if resident is not None:
+                        want = str(ep.get("model", "")).lower()
+                        loaded = any(want and (want in str(r).lower() or str(r).lower().startswith(want.split(":")[0] + ":")) for r in resident)
+                except Exception:
+                    pass
             except Exception as e:
                 ok = False
                 err = str(e)[:150]
             else:
                 err = ""
             out.append({"url": ep.get("url", ""), "model": ep.get("model", ""),
-                        "backend": ep.get("backend", ""), "ok": ok,
+                        "backend": ep.get("backend", ""), "ok": ok, "loaded": loaded,
                         "ms": int((time.time() - t0) * 1000), "error": err})
         return {"endpoints": out}
 

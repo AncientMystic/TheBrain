@@ -10,6 +10,7 @@ from core.llm import call_model, call_model_json
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
 from graph.expansion import pre_select_candidates
 from core import db
+import config
 import logging
 logger = logging.getLogger(__name__)
 
@@ -137,23 +138,29 @@ def adaptive_reasoning(query, kg=None, max_rounds=3):
     # Expand via graph
     expanded_facts = expand_facts_via_graph(initial_facts, kg)
 
-    # Retrieve chunks only if needed
+    # Retrieve chunks only if needed (single shared budget for both passes)
+    try:
+        from core.model_context import answer_budget
+        _budget, _blabel = answer_budget()
+    except Exception:
+        _budget, _blabel = None, ""
     chunks = []
-    context = build_context(expanded_facts, chunks=chunks)
+    context = build_context(expanded_facts, chunks=chunks, budget_chars=_budget, model_label=_blabel)
 
     if not is_sufficient(query, context):
         # Fallback to chunks
         chunks = fallback_to_chunks(query, top_k=8)
-        context = build_context(expanded_facts, chunks=chunks)
+        context = build_context(expanded_facts, chunks=chunks, budget_chars=_budget, model_label=_blabel)
 
-    # Synthesize final answer
+    # Synthesize final answer through the shared funnel (same prompt, tags,
+    # budget, and token policy as every other chat path).
     if expanded_facts or chunks:
-        facts_context = "\n".join([f"- {f.get('fact_text','')}" for f in expanded_facts[:50]])
-        chunks_context = "\n".join([f"- {text[:400]}" for _, _, _, text in chunks[:8]])
-        combined = "Verified facts:\n" + facts_context + "\n\nRelevant excerpts:\n" + chunks_context
-        prompt = f"Using the following information, answer the user's question clearly and completely.\nQuestion: {query}\n\n{combined}\n\nAnswer:"
-        answer = call_model(prompt, max_tokens=1024)
-        return answer, expanded_facts
+        from chat.context_builder import build_tagged_context
+        from chat.synthesize import synthesize_answer
+        context, ordered, _ = build_tagged_context(
+            expanded_facts, chunks=chunks, budget_chars=_budget, model_label=_blabel)
+        answer = synthesize_answer(query, context)
+        return answer, ordered
     else:
         return "I couldn't find enough information to answer that question.", []
 

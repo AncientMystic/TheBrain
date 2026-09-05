@@ -109,7 +109,14 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
     facts = retrieve_from_graph(analysis, top_k=50)
     chunks = fallback_to_chunks(query, top_k=3)
 
-    context = build_context(facts, chunks=chunks)
+    try:
+        from core.model_context import answer_budget
+        _budget, _blabel = answer_budget()
+    except Exception:
+        _budget, _blabel = None, ""
+    from chat.context_builder import build_tagged_context
+    context, facts, _tagmap = build_tagged_context(
+        facts, chunks=chunks, budget_chars=_budget, model_label=_blabel)
     if logic_context:
         context = logic_context + "\n\n" + context
     if memory_text:

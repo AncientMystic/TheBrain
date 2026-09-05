@@ -60,19 +60,50 @@ def generate_answer_verified(query: str, conversation_history: str = "", active_
         print(f"    (Verify: {len(facts)} candidates -> {len(_pre)} batched -> "
               f"{len(verified_facts)} verified in {_t.time() - _t0:.1f}s)")
 
+    try:
+        from core.model_context import answer_budget
+        _budget, _blabel = answer_budget()
+    except Exception:
+        _budget, _blabel = None, ""
+    # Organized path is free-form text: fit the fact list to budget first so the
+    # groups + excerpts stay inside the serving model's window (same omitted note).
+    if verified_facts and _budget is not None:
+        try:
+            room, fitted = int(_budget), []
+            for fact in verified_facts:
+                est = len(str(fact.get("fact_text", ""))) + len(str(fact.get("source_span", ""))) + 120
+                if fitted and room - est < 0:
+                    continue
+                fitted.append(fact)
+                room -= est
+            if not fitted:
+                fitted = verified_facts[:1]
+            _omitted = len(verified_facts) - len(fitted)
+            verified_facts = fitted
+        except Exception:
+            _omitted = 0
+    else:
+        _omitted = 0
+
     if not verified_facts:
-        context = build_context([], chunks=chunks, conversation_history=conversation_history)
-        prompt = f"""The user asked: {query}
+        context = build_context([], chunks=chunks, conversation_history=conversation_history,
+                                budget_chars=_budget, model_label=_blabel)
+        from chat.synthesize import synthesize_cautious
+        return synthesize_cautious(query, context)
 
-We could not find enough verified information. Answer in at most 3 sentences from the snippets below, clearly stating uncertainty. One citation total, short form `(Document: filename)`.
-
-Context:
-{context}
-
-Answer:"""
-        raw_answer = call_model(prompt, max_tokens=min(getattr(config, "CHAT_ANSWER_MAX_TOKENS", 4096), 4096))
-        return clean_answer(raw_answer)
-
+    # Cross-chunk dedupe (order-preserving): identical claims extracted from
+    # adjacent chunks must not appear twice downstream.
+    try:
+        from chat.context_builder import _dedup_facts
+        verified_facts = _dedup_facts(verified_facts, limit=max(len(verified_facts), 1))
+    except Exception:
+        pass
+    # Number tags in final order so the ledger below aligns with citations.
+    for _ti, _tf in enumerate(verified_facts):
+        try:
+            _tf["citation_tag"] = f"S{_ti + 1}"
+        except Exception:
+            pass
     # Filter chunks: keep only those whose doc_hash appears in verified_facts
     verified_doc_hashes = {f.get("doc_hash") for f in verified_facts if f.get("doc_hash")}
     if verified_doc_hashes:
@@ -81,6 +112,7 @@ Answer:"""
     if getattr(config, "USE_CONTEXT_ORGANIZER", True):
         try:
             from chat.context_organizer import organize_facts
+            from chat.context_builder import build_tag_ledger
             organized = organize_facts(verified_facts, active_entities=active_entities)
             if organized:
                 # Keep chunks as a separate section if available
@@ -89,32 +121,27 @@ Answer:"""
                     for _, _, doc_hash, text in chunks[:10]:
                         chunk_lines.append(f"- {text[:300]}")
                     organized = organized + "\n\n" + "\n".join(chunk_lines)
-                context = organized
+                _ledger = build_tag_ledger(verified_facts)
+                context = organized + ("\n\n" + _ledger if _ledger else "")
             else:
-                context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+                context, verified_facts, _ = build_tagged_context(
+                    verified_facts, chunks=chunks, conversation_history=conversation_history,
+                    budget_chars=None, model_label=_blabel)
         except Exception as e:
             if config.DEBUG_VERBOSE:
                 print(f"    (Context organizer error: {e})")
-            context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+            from chat.context_builder import build_tagged_context as _btc
+            context, verified_facts, _ = _btc(
+                verified_facts, chunks=chunks, conversation_history=conversation_history,
+                budget_chars=_budget, model_label=_blabel)
     else:
-        context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
+        from chat.context_builder import build_tagged_context as _btc2
+        context, verified_facts, _ = _btc2(
+            verified_facts, chunks=chunks, conversation_history=conversation_history,
+            budget_chars=_budget, model_label=_blabel)
+    if _omitted:
+        context += (f"\n\n[Context fit to {_blabel or 'current model'}: {_omitted} lower-ranked "
+                    f"verified facts omitted; ranked highest-first.]")
 
-    try:
-        from chat.query_intent import detect_intent
-        _intent = detect_intent(query)
-    except Exception:
-        _intent = "general"
-    prompt = f"""The user asked: {query}
-
-Use only the verified facts and graph paths below (pre-deduped, confidence-scored, highest first). If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked. Use ALL relevant supplied facts — write as much as the material warrants, with no artificial length limit.
-
-Response type for this {_intent} request: match the format to the request — summary gets headed sections plus key-figures bullets plus verdict; factual leads with the direct answer then thorough detail; detail/report gets full headed sections covering every relevant fact with tables for figures/dates; comparative gets a side-by-side table plus verdict; causal gets the chain step by step; temporal gets an ordered timeline plus narrative.
-Quality rules for every type: lead with the answer (no throat-clearing, no sycophancy); never repeat a claim twice and never restate the intro as the conclusion; cite short form `(Document: filename)` on every sourced paragraph or bullet while grouping same-source claims naturally; every figure, date, and proper name MUST carry a citation; never hedge without a cited fact behind it.
-If information is insufficient, say so briefly and stop.
-
-Context:
-{context}
-
-Answer:"""
-    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
-    return clean_answer(raw_answer)
+    from chat.synthesize import synthesize_answer
+    return synthesize_answer(query, context)

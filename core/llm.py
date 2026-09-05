@@ -34,13 +34,26 @@ def _get_requests_session():
     return _requests_local.session
 
 def _select_endpoint_by_type(endpoint_type=None):
-    """Return endpoint based on type ('small', 'large', 'audit') if configured."""
+    """Return endpoint based on type ('small', 'large', 'audit', 'chat') if configured.
+
+    Chat answers previously fell through to the shared global cycle, so consecutive
+    messages could land on different models/servers and force weight reloads.
+    Routing chat to its own pool keeps one conversation on one loaded model.
+    """
     if endpoint_type == "small" and config.SMALL_MODEL_ENDPOINT:
         return config.SMALL_MODEL_ENDPOINT
     if endpoint_type == "large" and config.LARGE_MODEL_ENDPOINT:
         return config.LARGE_MODEL_ENDPOINT
     if endpoint_type == "audit" and config.AUDIT_MODEL_ENDPOINT:
         return config.AUDIT_MODEL_ENDPOINT
+    if endpoint_type == "chat":
+        if getattr(config, "CHAT_MODEL_ENDPOINT", None):
+            return config.CHAT_MODEL_ENDPOINT
+        try:
+            from core.model_router import get_chat_endpoint
+            return get_chat_endpoint()
+        except Exception:
+            pass
     return None
 
 

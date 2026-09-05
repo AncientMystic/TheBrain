@@ -47,17 +47,19 @@ def _intent_label(question):
         return "general"
 
 
-def generate_answer(question, context, model=None, conversation_history=None):
+def generate_answer(question, context, model=None, conversation_history=None,
+                    endpoint=None, endpoint_type="chat"):
+    """Thin wrapper over the shared synthesis funnel (chat/synthesize.py).
+
+    Kept for backward compatibility (server.py, main.py CLI). New code should
+    prefer synthesize_answer directly.
+    """
+    from chat.synthesize import synthesize_answer
     full_context = context
     if conversation_history:
         full_context = conversation_history + "\n\n" + context
-    try:
-        prompt = ANSWER_PROMPT.format(context=full_context, question=question,
-                                      intent_label=_intent_label(question))
-    except Exception:
-        prompt = ANSWER_PROMPT.format(context=full_context, question=question,
-                                      intent_label="general")
-    return call_model(prompt, model=model, max_tokens=_answer_max_tokens())
+    return synthesize_answer(question, full_context, model=model,
+                             endpoint=endpoint, endpoint_type=endpoint_type)
 
 def generate_answer_with_reasoning(question, model=None):
     """Use the verification-first reasoning orchestrator."""

@@ -37,6 +37,12 @@ def register_chat_routes(app, require_auth):
             # Reuse server pipeline (normal + reasoning + deep-research + logic + memories)
             from server import ChatMessage as _CM, _process_chat as _pc
             msgs = [_CM(role="user", content=q)]
+            try:
+                from core.llm import _select_endpoint_by_type as _sel
+                _ep = _sel("chat")
+                _served = {"model": _ep.get("model", ""), "url": _ep.get("url", "")} if _ep else {}
+            except Exception:
+                _served = {}
             answer, facts = _pc(msgs, body.session_id, body.reasoning, body.deep_research)
             clean = []
             for f in (facts or [])[:20]:
@@ -44,7 +50,7 @@ def register_chat_routes(app, require_auth):
                     clean.append({"fact_text": str(f.get("fact_text", ""))[:300],
                                   "confidence": f.get("confidence", 0),
                                   "doc": f.get("doc_name", f.get("doc_hash", ""))})
-            return {"answer": answer, "facts": clean, "ms": int((time.time() - t0) * 1000)}
+            return {"answer": answer, "facts": clean, "ms": int((time.time() - t0) * 1000), "served": _served}
         except Exception as e:
             return {"answer": f"Chat failed: {e}", "facts": [], "ms": int((time.time() - t0) * 1000)}
 

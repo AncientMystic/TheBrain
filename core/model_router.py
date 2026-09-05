@@ -10,9 +10,20 @@ _pools_built = False
 _lock = threading.Lock()
 _cycles = {}
 _cycle_lengths = {}
+_main_len = -1
+
+def _reset_pools():
+    global _pools_built, _main_len
+    del _small_pool[:]
+    del _large_pool[:]
+    del _chat_pool[:]
+    _cycles.clear()
+    _cycle_lengths.clear()
+    _pools_built = False
+    _main_len = -1
 
 def _build_pools():
-    global _pools_built
+    global _pools_built, _main_len
     if _pools_built:
         return
     with _lock:
@@ -52,25 +63,38 @@ def _build_pools():
         _cycle_lengths["small"] = len(_small_pool)
         _cycle_lengths["large"] = len(_large_pool)
         _cycle_lengths["chat"] = len(_chat_pool)
+        _main_len = len(config.LLM_ENDPOINTS)
         _pools_built = True
 
 def get_endpoint_for_group(group: str) -> dict:
     """Return an endpoint for the given group ('small', 'large', 'chat', 'main')."""
     _build_pools()
-    # Rebuild cycle if underlying list length changed (dynamic endpoints)
-    with _lock:
-        current_len = len(config.LLM_ENDPOINTS)
-        if group in ("small", "large", "chat"):
-            if _cycle_lengths.get(group, 0) != len(_cycles.get(group, [])):
-                _build_pools()  # force rebuild
-        if group == "small":
-            return next(_cycles["small"])
-        elif group == "large":
-            return next(_cycles["large"])
-        elif group == "chat":
-            return next(_cycles["chat"])
+    # Rebuild pools if endpoint configuration changed (compare list lengths,
+    # never len() of a cycle object). next() on a cycle is thread-safe enough
+    # for rotation purposes; pool rebuilds take the lock briefly.
+    _lock.acquire()
+    try:
+        pools = {"small": _small_pool, "large": _large_pool, "chat": _chat_pool}
+        stale = _cycle_lengths.get(group, -1) != len(pools.get(group, [])) if group in pools else False
+        if _main_len != len(config.LLM_ENDPOINTS):
+            stale = True
+        if stale:
+            _reset_pools()
+            rebuild = True
         else:
-            return next(itertools.cycle(config.LLM_ENDPOINTS)) if config.LLM_ENDPOINTS else None
+            rebuild = False
+        cycle = None if rebuild else _cycles.get(group)
+    finally:
+        _lock.release()
+    if rebuild:
+        _build_pools()
+        with _lock:
+            cycle = _cycles.get(group)
+    if group in ("small", "large", "chat"):
+        return next(cycle)
+    with _lock:
+        eps = list(config.LLM_ENDPOINTS)
+    return next(itertools.cycle(eps)) if eps else None
 
 def get_chat_endpoint():
     return get_endpoint_for_group("chat")

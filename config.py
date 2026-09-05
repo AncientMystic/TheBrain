@@ -201,6 +201,21 @@ CHAT_MAX_CONTEXT_TOKENS = 32768
 CHAT_MIN_FACTS_BEFORE_FALLBACK = 50
 CHAT_TOP_K_CHUNKS = int(os.environ.get("CHAT_TOP_K_CHUNKS", "8"))
 
+# Dynamic answer-context budget (detected per model pool, never hardcoded per doc).
+MODEL_MAX_CONTEXT = int(os.environ.get("MODEL_MAX_CONTEXT", "0"))  # 0 = auto-detect
+try:
+    import json as _json_ctx
+    _ctx_raw = os.environ.get("MODEL_CONTEXT_JSON", "")
+    MODEL_CONTEXT_JSON = _json_ctx.loads(_ctx_raw) if _ctx_raw else {}
+    if not isinstance(MODEL_CONTEXT_JSON, dict):
+        MODEL_CONTEXT_JSON = {}
+except Exception:
+    MODEL_CONTEXT_JSON = {}
+MODEL_FALLBACK_CONTEXT = int(os.environ.get("MODEL_FALLBACK_CONTEXT", "8192"))
+ANSWER_RESERVE_TOKENS = int(os.environ.get("ANSWER_RESERVE_TOKENS", "2048"))
+PROMPT_OVERHEAD_TOKENS = int(os.environ.get("PROMPT_OVERHEAD_TOKENS", "1000"))
+CHARS_PER_TOKEN = float(os.environ.get("CHARS_PER_TOKEN", "4.0"))
+
 # Debug verbosity (set by --debug flag)
 DEBUG_VERBOSE = False
 
