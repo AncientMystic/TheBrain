@@ -31,11 +31,24 @@ class RecallIndex:
         self.memory_keywords = set()
 
     @classmethod
+    def _cache_key_parts(cls):
+        try:
+            import config as _cfgk
+            import re as _rek
+            _dim = int(getattr(_cfgk, "EMBEDDING_DIM", 1024))
+            _model = str(getattr(_cfgk, "EMBEDDING_MODEL", "mxbai"))
+            _safe = _rek.sub(r'[^A-Za-z0-9._-]+', '_', _model)[:60]
+            return _dim, _safe
+        except Exception:
+            return 1024, "mxbai"
+
+    @classmethod
     def _cache_path(cls):
         try:
             from pathlib import Path as _P
             import config as _cfg
-            return str(_P(_cfg.BASE_DIR) / "data" / "recall_index_cache.npz")
+            _dim, _safe = cls._cache_key_parts()
+            return str(_P(_cfg.BASE_DIR) / "data" / f"recall_index_cache_d{_dim}_{_safe}.npz")
         except Exception:
             return ""
 
@@ -74,15 +87,37 @@ class RecallIndex:
                         _d = _np_ld.load(_cp, allow_pickle=True)
                         idx = cls()
                         try:
+                            import config as _cfg_v
+                            _exp = int(getattr(_cfg_v, "EMBEDDING_DIM", 1024))
                             _std = list(_d["standards"])
-                            idx.standards = [{"statement": s, "negation": int(n), "confidence": float(c), "embedding": e}
-                                             for s, n, c, e in _std]
+                            _kept = []
+                            for s, n, c, e in _std:
+                                try:
+                                    import numpy as _np_v
+                                    _arr = _np_v.asarray(e)
+                                    if _arr.shape[-1] != _exp:
+                                        continue
+                                    _kept.append({"statement": s, "negation": int(n), "confidence": float(c), "embedding": e})
+                                except Exception:
+                                    continue
+                            idx.standards = _kept
                         except Exception:
                             idx.standards = []
                         try:
                             _tc = list(_d["centroids"])
                             import numpy as _np_c
-                            idx.topic_centroids = [(int(cid), _np_c.asarray(c, dtype=_np_c.float32)) for cid, c in _tc]
+                            import config as _cfg_c
+                            _exp2 = int(getattr(_cfg_c, "EMBEDDING_DIM", 1024))
+                            _tkept = []
+                            for cid, c in _tc:
+                                try:
+                                    _arr = _np_c.asarray(c, dtype=_np_c.float32)
+                                    if _arr.shape[-1] != _exp2:
+                                        continue
+                                    _tkept.append((int(cid), _arr))
+                                except Exception:
+                                    continue
+                            idx.topic_centroids = _tkept
                         except Exception:
                             idx.topic_centroids = []
                         try:
