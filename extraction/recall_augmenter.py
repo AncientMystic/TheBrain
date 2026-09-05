@@ -74,14 +74,14 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
     # Entity linking via automaton with word boundaries + collective coherence prune.
     # Single batched embedding fetch for all candidates (no per-chunk HTTP storm).
     linked = [[] for _ in range(n)]
-    _all_cands = []
+    _mentions_list = [{} for _ in range(n)]
+    _all_options = []
     try:
         A = idx.alias_automaton
         if A is not None:
             for i, ch in enumerate(chunks):
                 try:
                     low = ch.lower()
-                    # mention -> list[canon] (ambiguity preserved); single-canon legacy shape supported
                     mentions = {}
                     for end_idx, (canon_val, term_lower) in A.iter(low):
                         try:
@@ -101,40 +101,13 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
                                 break
                         except Exception:
                             continue
-                    # Collective choice per chunk across ambiguous mentions (generic coherence)
-                    cands = []
-                    try:
-                        if mentions and any(len(v) > 1 for v in mentions.values()):
-                            from core.entity_linking import collective_link as _cl2
-                            _mkeys = list(mentions.keys())
-                            _mnames = [f"m{k}" for k in _mkeys]
-                            _cands_fn = lambda m, _mk=_mkeys, _mn=_mnames, _mm=mentions: (
-                                [(c, None) for c in _mm[_mk[_mn.index(m)]]] if m in _mn else [])
-                            _res = _cl2(_mnames, _cands_fn)
-                            for mk, mn in zip(_mkeys, _mnames):
-                                _chosen = _res.get(mn) if isinstance(_res, dict) else None
-                                if _chosen:
-                                    cands.append(_chosen)
-                                else:
-                                    cands.extend(mentions[mk][:1])
-                        else:
-                            for v in mentions.values():
-                                cands.extend(v[:1])
-                    except Exception:
-                        for v in mentions.values():
-                            cands.extend(v[:1])
-                    # Dedup preserve order, cap 20
-                    seen = {}
-                    for _c in cands:
-                        if _c not in seen and len(seen) < 20:
-                            seen[_c] = True
-                    cands = list(seen.keys())[:20]
-                    linked[i] = cands
-                    _all_cands.extend(cands)
+                    _mentions_list[i] = mentions
+                    for v in mentions.values():
+                        _all_options.extend(v)
                 except Exception:
                     continue
-            # Single batch for all unique candidates
-            _uniq = list(dict.fromkeys(_all_cands))
+            # Single batch for all ambiguous options (no per-chunk HTTP)
+            _uniq = list(dict.fromkeys(_all_options))
             _emap = {}
             if _uniq:
                 try:
@@ -142,6 +115,51 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
                     _emap = _ged(_uniq, space='hyperbolic')
                 except Exception:
                     _emap = {}
+            # Collective choice per chunk with embeddings (true coherence, not first-match)
+            try:
+                from core.entity_linking import collective_link as _cl2
+            except Exception:
+                _cl2 = None
+            for i in range(n):
+                mentions = _mentions_list[i]
+                if not mentions:
+                    linked[i] = []
+                    continue
+                cands = []
+                try:
+                    if _cl2 is not None and any(len(v) > 1 for v in mentions.values()):
+                        _mkeys = list(mentions.keys())
+                        _mnames = [f"m{k}" for k in _mkeys]
+                        def _cands_fn(m, _mk=_mkeys, _mn=_mnames, _mm=mentions, _em=_emap):
+                            try:
+                                if m not in _mn:
+                                    return []
+                                lst = _mm[_mk[_mn.index(m)]]
+                                return [(c, _em.get(c)) for c in lst]
+                            except Exception:
+                                return []
+                        _res = _cl2(_mnames, _cands_fn)
+                        for mk, mn in zip(_mkeys, _mnames):
+                            try:
+                                _chosen = _res.get(mn) if isinstance(_res, dict) else None
+                            except Exception:
+                                _chosen = None
+                            if _chosen:
+                                cands.append(_chosen)
+                            else:
+                                cands.extend(mentions[mk][:1])
+                    else:
+                        for v in mentions.values():
+                            cands.extend(v[:1])
+                except Exception:
+                    for v in mentions.values():
+                        cands.extend(v[:1])
+                seen = {}
+                for _c in cands:
+                    if _c not in seen and len(seen) < 20:
+                        seen[_c] = True
+                linked[i] = list(seen.keys())[:20]
+            _all_cands = list(dict.fromkeys([c for sub in linked for c in sub]))
             # Per-chunk coherence prune using cached vectors (no HTTP in loop)
             try:
                 from core.hyperbolic import ensure_hyperbolic as _eh, hyperbolic_distance_matrix as _dm
