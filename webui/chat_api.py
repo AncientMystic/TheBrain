@@ -37,7 +37,7 @@ def register_chat_routes(app, require_auth):
             # Reuse server pipeline (normal + reasoning + deep-research + logic + memories)
             from server import ChatMessage as _CM, _process_chat as _pc
             msgs = [_CM(role="user", content=q)]
-            answer, facts = _process_chat(msgs, body.session_id, body.reasoning, body.deep_research)
+            answer, facts = _pc(msgs, body.session_id, body.reasoning, body.deep_research)
             clean = []
             for f in (facts or [])[:20]:
                 if isinstance(f, dict):
