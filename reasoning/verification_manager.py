@@ -283,6 +283,11 @@ class VerificationManager:
         fact["verification_layers"] = layers
         fact["confidence_final"] = final_conf
         fact["verified_by"] = "VerificationManager"
+        try:
+            from core.truth import from_fact as _truth_of
+            fact["truth_class"] = _truth_of(fact)
+        except Exception:
+            pass
 
         # Adjust confidence based on cached trusted standards
         try:
@@ -363,6 +368,13 @@ class VerificationManager:
                         results[i]["shape_calibrated"] = True
                     except Exception:
                         pass
+        except Exception:
+            pass
+        # Append-only valuations (never rewrites history; best-effort, never blocks).
+        try:
+            from core.fact_versions import record_version
+            for _vf in results:
+                record_version(_vf, _vf.get("fact_id"))
         except Exception:
             pass
         return results

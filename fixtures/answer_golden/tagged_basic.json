@@ -1,0 +1,17 @@
+{
+  "description": "Deterministic build_tagged_context output. Regenerate with tools/regenerate_golden.py after intentional changes.",
+  "input": {
+    "facts": [
+      {"fact_text": "Beta claim here.", "confidence": 0.5, "doc_name": "b.pdf", "source_span": "s"},
+      {"fact_text": "Alpha claim here.", "confidence": 0.9, "doc_name": "a.pdf", "source_span": "s"},
+      {"fact_text": "beta CLAIM here.", "confidence": 0.7, "doc_name": "b.pdf", "source_span": "s"}
+    ],
+    "kwargs": {"max_facts": 25, "budget_chars": null, "model_label": ""}
+  },
+  "expected": {
+    "tags": ["S1", "S2"],
+    "first_text": "beta CLAIM here.",
+    "first_confidence": 0.7,
+    "contains": ["[S1]", "[S2]", "confidence 0.70", "confidence 0.90"]
+  }
+}
