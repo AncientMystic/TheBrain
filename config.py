@@ -25,6 +25,10 @@ VERIFICATION_FACTS_JSON_FILE = str(DATA_DIR / "verification_facts.json")
 SERVER_HOST = os.environ.get("SERVER_HOST", "127.0.0.1")
 SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
 SERVER_AUTH_TOKEN = os.environ.get("SERVER_AUTH_TOKEN", "")
+# Explicit opt-in: startup fails fast if true with no token (prevents thinking
+# you are protected when you are not). Default false: auth disabled, open server.
+# Setting a token alone also enables auth; this flag only adds the fail-fast.
+REQUIRE_AUTH = os.environ.get("REQUIRE_AUTH", "false").lower() == "true"
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 BACKEND_CONFIG_ERROR = False
 
@@ -260,7 +264,12 @@ FAST_EXTRACTOR_ENABLED = True
 FAST_EXTRACTOR_MODEL_NAME = "optimum/bert-base-NER"
 FAST_EXTRACTOR_MODEL_DIR = str(BASE_DIR / "models" / "ner_onnx")
 FAST_EXTRACTOR_CONFIDENCE_THRESHOLD = 0.7  # below this, LLM verification used
+# Optional linguistic backend (never downloaded automatically; absent = rule path)
+SPACY_MODEL = os.environ.get("SPACY_MODEL", "en_core_web_sm")
 FAST_EXTRACTOR_LOW_CONFIDENCE_RATIO = 0.2   # max ratio of items to send to LLM
+# Pre-pass threads sharing one ONNX session (session.run is thread-safe;
+# extract() is stateless). Small: NER is ms-scale, threads hide tokenizer GIL.
+FAST_EXTRACTOR_WORKERS = int(os.environ.get("FAST_EXTRACTOR_WORKERS", "4"))
 ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "directml")  # "auto", "cpu", "cuda", "directml"
 
 # Performance
@@ -476,6 +485,9 @@ EXHAUSTIVE_EXTRACTION = True
 USE_HYPERBOLIC_MEMORY = os.environ.get('USE_HYPERBOLIC_MEMORY', 'true').lower() == 'true'
 USE_HYPERBOLIC_CONVERSATION_SUMMARY = os.environ.get('USE_HYPERBOLIC_CONVERSATION_SUMMARY', 'true').lower() == 'true'
 MEMORY_CONSOLIDATION_THRESHOLD = float(os.environ.get('MEMORY_CONSOLIDATION_THRESHOLD', '0.5'))
+# PII redaction before memory storage (patterns on, person names opt-in via backend)
+MEMORY_PII_REDACT = os.environ.get('MEMORY_PII_REDACT', 'true').lower() == 'true'
+MEMORY_PII_REDACT_NAMES = os.environ.get('MEMORY_PII_REDACT_NAMES', 'false').lower() == 'true'
 USE_HYPERBOLIC_CLUSTERING = os.environ.get('USE_HYPERBOLIC_CLUSTERING', 'false').lower() == 'true'
 USE_GRAPH_REASONING = os.environ.get('USE_GRAPH_REASONING', 'true').lower() == 'true'
 USE_CONTEXT_ORGANIZER = os.environ.get('USE_CONTEXT_ORGANIZER', 'true').lower() == 'true'

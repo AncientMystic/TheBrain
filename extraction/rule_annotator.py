@@ -123,14 +123,21 @@ def pre_annotate(text: str) -> dict:
         for m in re.finditer(suffix_pattern, text, re.IGNORECASE):
             annotations["organizations"].append({"text": m.group(), "start": m.start(), "end": m.end()})
 
-    # Events: trigger words
+    # Events: trigger words, extended to sentence boundaries (deterministic stdlib)
     triggers = gaz["event_triggers"]
     if triggers:
         trigger_pattern = r'\b(?:' + '|'.join(re.escape(t) for t in triggers) + r')\b'
+        try:
+            from extraction.nlp_primitives import split_sentences
+            _sentences = split_sentences(text)
+        except Exception:
+            _sentences = []
         for m in re.finditer(trigger_pattern, text, re.IGNORECASE):
-            # Extend a bit to capture surrounding sentence
-            start = max(0, m.start() - 100)
-            end = min(len(text), m.end() + 200)
+            start, end = max(0, m.start() - 100), min(len(text), m.end() + 200)
+            for s_text, s_start, s_end in _sentences:
+                if s_start <= m.start() and m.end() <= s_end:
+                    start, end = s_start, s_end
+                    break
             annotations["events"].append({"text": text[start:end], "start": start, "end": end})
 
     return annotations

@@ -20,7 +20,11 @@ class FastExtractor:
         self.organizations = []
 
     def extract(self, text):
-        """Extract structured entities from text. Returns dict of lists with confidence."""
+        """Extract structured entities from text. Returns dict of lists with confidence.
+
+        Stateless across calls (locals only): the ONNX session is read-only
+        after init, so concurrent extract() from a thread pool is safe.
+        """
         entities = []
         # Rule-based
         rule_entities = extract_entities_rules(text)
@@ -47,21 +51,26 @@ class FastExtractor:
             key = (ent["type"], ent["text"].lower())
             if key not in merged or ent["confidence"] > merged[key]["confidence"]:
                 merged[key] = ent
-        final_entities = list(merged.values())
+        # POS filter when an optional backend exists (no-op otherwise)
+        try:
+            from extraction.nlp_primitives import pos_filtered_entities
+            filtered = pos_filtered_entities(list(merged.values()), text)
+            final_entities = filtered if filtered is not None else list(merged.values())
+        except Exception:
+            final_entities = list(merged.values())
 
-        # Separate into categories
-        self.people = [e for e in final_entities if e["type"] == "PERSON"]
-        self.organizations = [e for e in final_entities if e["type"] == "ORG"]
-        self.locations = [e for e in final_entities if e["type"] == "LOC"]
-        self.dates = [e for e in final_entities if e["type"] == "DATE"]
-        self.entities = final_entities
+        # Separate into categories (locals: no cross-call state, thread-safe)
+        people = [e for e in final_entities if e["type"] == "PERSON"]
+        organizations = [e for e in final_entities if e["type"] == "ORG"]
+        locations = [e for e in final_entities if e["type"] == "LOC"]
+        dates = [e for e in final_entities if e["type"] == "DATE"]
 
         return {
             "entities": final_entities,
-            "people": self.people,
-            "locations": self.locations,
-            "dates": self.dates,
-            "organizations": self.organizations,
+            "people": people,
+            "locations": locations,
+            "dates": dates,
+            "organizations": organizations,
         }
 
     def get_low_confidence_items(self, threshold=None):
