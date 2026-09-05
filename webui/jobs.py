@@ -24,10 +24,162 @@ def create_job(kind, params=None):
            "cancel": cancel, "done": False, "thread": None}
     with _lock:
         _jobs[jid] = job
-    t = threading.Thread(target=_run_mock, args=(job,), daemon=True)
+    # Real guided worker when input path exists; else mocked skeleton stream (offline demo/tests)
+    target = _run_mock
+    if kind == "guided-learning":
+        try:
+            from pathlib import Path as _P
+            _inp = (params or {}).get("input", "")
+            if _inp and _P(str(_inp)).expanduser().exists():
+                target = _run_guided_real
+        except Exception:
+            target = _run_mock
+    t = threading.Thread(target=target, args=(job,), daemon=True)
     job["thread"] = t
     t.start()
     return jid
+
+
+def _run_guided_real(job):
+    """Sequential real guided-learning with per-file events (no artificial limits).
+
+    Same pipeline as CLI (single extraction via prepare_next_file, full LLM batches,
+    verification, graphs). Emits log/document/progress per file; cancel checked
+    between files (not mid-file — process_file is atomic per file by design).
+    """
+    from pathlib import Path as _P
+    params = job.get("params", {})
+    raw_inp = str(params.get("input", ""))
+    try:
+        limit = params.get("limit")
+        limit = int(limit) if limit not in (None, "") else None
+    except Exception:
+        limit = None
+    dry = bool(params.get("dry"))
+    logic_mode = bool(params.get("logic"))
+    verified_flag = bool(params.get("verified"))
+    _emit(job, {"type": "log", "level": "info", "msg": f"Starting guided-learning on {raw_inp or '(no input)'}"})
+    # Resolve + allow-list (same rules as CLI --input)
+    try:
+        inp = str(_P(raw_inp).expanduser().resolve())
+    except Exception as e:
+        _emit(job, {"type": "error", "msg": f"Invalid input path: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    import os as _os
+    _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
+    if _allowed:
+        try:
+            _ar = [str(_P(r).expanduser().resolve()) for r in _allowed]
+            if not any(inp.startswith(a) for a in _ar) and not params.get("allow_outside_root"):
+                _emit(job, {"type": "error", "msg": f"Input outside THEBRAIN_ALLOWED_ROOTS (tick allow-outside-root to override)"})
+                _emit(job, {"type": "done", "ok": False})
+                job["done"] = True
+                return
+        except Exception:
+            pass
+    # Scan files (reuse CLI scanner; fallback to rglob)
+    try:
+        from ingestion.scanner import scan_files
+        files = scan_files(inp)
+    except Exception:
+        try:
+            files = [p for p in _P(inp).rglob("*") if p.is_file()]
+        except Exception as e:
+            _emit(job, {"type": "error", "msg": f"Scan failed: {e}"})
+            _emit(job, {"type": "done", "ok": False})
+            job["done"] = True
+            return
+    if limit is not None:
+        files = files[:limit]
+    total = len(files)
+    if dry:
+        for f in files:
+            _emit(job, {"type": "log", "level": "info", "msg": f"[DRY-RUN] Would process: {getattr(f, 'name', f)}"})
+        _emit(job, {"type": "done", "ok": True})
+        job["done"] = True
+        return
+    if not files:
+        _emit(job, {"type": "log", "level": "warn", "msg": "No files found"})
+        _emit(job, {"type": "done", "ok": True})
+        job["done"] = True
+        return
+    # Lazy imports (avoid circular main<->webui at module load)
+    try:
+        from main import process_file, prepare_next_file, promote_verified_file
+        from core.progress import ProgressTracker
+        from core.file_utils import get_file_hash
+        from logic import decide_logic_modules
+        from core import db as _db
+    except Exception as e:
+        _emit(job, {"type": "error", "msg": f"Import failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    tracker = ProgressTracker()
+    tracker.total_files = total
+    tracker.processed_count = 0
+    done = 0
+    for f in files:
+        if job["cancel"].is_set():
+            _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled by user (finishing current file safely)"})
+            break
+        fname = getattr(f, "name", str(f))
+        _emit(job, {"type": "log", "level": "info", "msg": f"Processing {fname}"})
+        try:
+            _prep = prepare_next_file(f)
+        except Exception as e:
+            _emit(job, {"type": "log", "level": "error", "msg": f"Prepare failed for {fname}: {e}"})
+            _prep = None
+        logic_context = ""
+        if logic_mode and _prep and _prep.get("text"):
+            try:
+                _ft = _prep["text"][:1000]
+                _ids = decide_logic_modules(_ft, context=_ft)
+                if _ids:
+                    _conn = _db.db_connect("logic")
+                    _cur = _conn.cursor()
+                    for _lid in _ids:
+                        _cur.execute("SELECT name, category, summary, content FROM logic_modules WHERE logic_id=?", (_lid,))
+                        _row = _cur.fetchone()
+                        if _row:
+                            logic_context += f"[Logic: {_row[0]} ({_row[1]})]\n{_row[2]}\n{_row[3]}\n\n"
+                    _conn.close()
+            except Exception as e:
+                _emit(job, {"type": "log", "level": "warn", "msg": f"Logic decision failed: {e}"})
+        try:
+            ok = process_file(f, tracker, logic_context=logic_context, preloaded=_prep)
+        except Exception as e:
+            _emit(job, {"type": "log", "level": "error", "msg": f"Failed {fname}: {e}"})
+            ok = False
+        # Counts for this file (cheap COUNTs, same DBs the pipeline just wrote)
+        facts_n, chunks_n = -1, -1
+        try:
+            _fh = get_file_hash(f)
+            _c = _db.db_connect("key_facts")
+            _cur = _c.cursor()
+            _cur.execute("SELECT COUNT(*) AS n FROM key_facts WHERE doc_hash=?", (_fh,))
+            _row = _cur.fetchone()
+            facts_n = int(_row["n"]) if _row else -1
+            _c.close()
+            _ci = _db.db_connect("index")
+            _curi = _ci.cursor()
+            _curi.execute("SELECT COUNT(*) AS n FROM document_chunks WHERE doc_hash=?", (_fh,))
+            _rowi = _curi.fetchone()
+            chunks_n = int(_rowi["n"]) if _rowi else -1
+            _ci.close()
+            if verified_flag and ok:
+                promote_verified_file(_fh, fname, source_file=f)
+        except Exception:
+            pass
+        tracker.processed_count += 1
+        done += 1
+        _emit(job, {"type": "document", "name": fname, "chunks": chunks_n, "facts": facts_n,
+                    "status": "done" if ok else "failed"})
+        _emit(job, {"type": "progress", "done": done, "total": total})
+    _emit(job, {"type": "done", "ok": not job["cancel"].is_set()})
+    job["done"] = True
 
 
 def get_job(jid):
