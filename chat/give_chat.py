@@ -34,26 +34,43 @@ def generate_answer_verified(query: str, conversation_history: str = "", active_
         if dp.get("type") == "chunk_ref":
             chunks.append((0, dp.get("chunk_id"), dp.get("doc_hash"), dp.get("text", "")))
 
-    # Reflect: verify facts
+    # Reflect: verify facts in ONE batch (single embedding/triple fan-out).
+    # Pre-cap by pre-verification confidence so batch cost stays bounded;
+    # the cap is prompt-size hygiene on candidates, never on the corpus.
+    import time as _t
+    _t0 = _t.time()
+    try:
+        _pre = sorted(facts, key=lambda f: float(f.get("confidence", 0) or 0), reverse=True)[:25]
+    except Exception:
+        _pre = facts[:25]
     vm = VerificationManager()
-    verified_facts = []
-    for fact in facts:
-        vfact = vm.verify_single_online(fact)
-        if vfact["verification_status"] in ("verified", "partially_verified"):
-            if vfact.get("confidence_final", 0) >= 0.6:
-                verified_facts.append(vfact)
+    try:
+        _batch = vm.verify_batch(_pre)
+    except Exception:
+        _batch = []
+        for fact in _pre:
+            try:
+                _batch.append(vm.verify_single_online(fact))
+            except Exception:
+                continue
+    verified_facts = [v for v in _batch
+                      if v.get("verification_status") in ("verified", "partially_verified")
+                      and float(v.get("confidence_final", 0) or 0) >= 0.6]
+    if getattr(config, "DEBUG_VERBOSE", False):
+        print(f"    (Verify: {len(facts)} candidates -> {len(_pre)} batched -> "
+              f"{len(verified_facts)} verified in {_t.time() - _t0:.1f}s)")
 
     if not verified_facts:
         context = build_context([], chunks=chunks, conversation_history=conversation_history)
         prompt = f"""The user asked: {query}
 
-We could not find enough verified information. Provide a cautious answer based on the available snippets, clearly stating uncertainty.
+We could not find enough verified information. Answer in at most 3 sentences from the snippets below, clearly stating uncertainty. One citation total, short form `(Document: filename)`.
 
 Context:
 {context}
 
 Answer:"""
-        raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+        raw_answer = call_model(prompt, max_tokens=min(getattr(config, "CHAT_ANSWER_MAX_TOKENS", 4096), 4096))
         return clean_answer(raw_answer)
 
     # Filter chunks: keep only those whose doc_hash appears in verified_facts
@@ -84,12 +101,15 @@ Answer:"""
 
     prompt = f"""The user asked: {query}
 
-Use only the verified facts and graph paths below to answer accurately. If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked. Cite sources as [doc: filename] when possible.
-If information is insufficient, say so.
+Use only the verified facts and graph paths below (pre-deduped, confidence-scored, highest first). If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked.
+
+Structure: 1-2 sentence direct answer first, then short sections or bullets for distinct parts, then a 1-sentence verdict. Aim for ~400 words.
+Citations: at most ONCE per paragraph or bullet, short form `(Document: filename)`. Never cite the same document twice in a row. Every figure, date, and proper name MUST carry a citation. Never hedge ("debated", "moderate") without a cited fact behind it.
+If information is insufficient, say so in one sentence and stop.
 
 Context:
 {context}
 
 Answer:"""
-    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
+    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 4096))
     return clean_answer(raw_answer)
