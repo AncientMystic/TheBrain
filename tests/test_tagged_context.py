@@ -60,3 +60,21 @@ def test_intent_instructions_cover_all_labels():
     from chat.query_intent import detect_intent  # noqa: F401 (documents the contract)
     for label in ["summary", "factual", "detail", "comparative", "causal", "temporal", "general"]:
         assert label in _syn.INTENT_INSTRUCTIONS
+
+
+def test_full_coverage_rule_present():
+    assert "at least once" in _syn.SHARED_QUALITY_RULES
+    for label in ("summary", "detail", "general"):
+        assert "at least once" in _syn.INTENT_INSTRUCTIONS[label]
+
+
+def test_no_word_targets_anywhere():
+    blob = _syn.SYNTHESIZE_PROMPT + _syn.SHARED_QUALITY_RULES + "".join(_syn.INTENT_INSTRUCTIONS.values())
+    assert "400 words" not in blob
+
+
+def test_references_and_uncertainty_scoping():
+    blob = _syn.INTENT_INSTRUCTIONS["detail"] + _syn.INTENT_INSTRUCTIONS["general"]
+    assert "key-references" in blob
+    assert "unclear" in blob
+    assert "corroboration" in _syn.SHARED_QUALITY_RULES or "provisional" in blob

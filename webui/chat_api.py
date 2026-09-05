@@ -45,7 +45,8 @@ def register_chat_routes(app, require_auth):
                 _served = {}
             answer, facts = _pc(msgs, body.session_id, body.reasoning, body.deep_research)
             clean = []
-            for f in (facts or [])[:20]:
+            # 25 matches the context fact cap so every cited [S#] tag resolves to a footnote.
+            for f in (facts or [])[:25]:
                 if isinstance(f, dict):
                     clean.append({"fact_text": str(f.get("fact_text", ""))[:300],
                                   "confidence": f.get("confidence", 0),
