@@ -31,10 +31,87 @@ class RecallIndex:
         self.memory_keywords = set()
 
     @classmethod
+    def _cache_path(cls):
+        try:
+            from pathlib import Path as _P
+            import config as _cfg
+            return str(_P(_cfg.BASE_DIR) / "data" / "recall_index_cache.npz")
+        except Exception:
+            return ""
+
+    @classmethod
+    def _db_fingerprint(cls):
+        import os as _os
+        _max = 0.0
+        try:
+            import config as _cfg2
+            from core import db as _db2
+            for _k in ("verification_standards", "embeddings", "external_graph", "key_facts", "logic", "memories", "reasoning"):
+                try:
+                    _p = _db2.DB_FILES.get(_k, "")
+                    if _p and _os.path.exists(_p):
+                        _max = max(_max, _os.path.getmtime(_p))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return _max
+
+    @classmethod
     def load(cls, force=False):
         global _index_cache
         if _index_cache is not None and not force:
             return _index_cache
+        # Disk cache when DBs unchanged (minutes saved per run, same data — no quality change)
+        try:
+            import os as _os3
+            _cp = cls._cache_path()
+            if _cp and not force and _os3.path.exists(_cp):
+                try:
+                    import numpy as _np_ld
+                    _fp = cls._db_fingerprint()
+                    if _os3.path.getmtime(_cp) >= _fp:
+                        _d = _np_ld.load(_cp, allow_pickle=True)
+                        idx = cls()
+                        try:
+                            _std = list(_d["standards"])
+                            idx.standards = [{"statement": s, "negation": int(n), "confidence": float(c), "embedding": e}
+                                             for s, n, c, e in _std]
+                        except Exception:
+                            idx.standards = []
+                        try:
+                            _tc = list(_d["centroids"])
+                            import numpy as _np_c
+                            idx.topic_centroids = [(int(cid), _np_c.asarray(c, dtype=_np_c.float32)) for cid, c in _tc]
+                        except Exception:
+                            idx.topic_centroids = []
+                        try:
+                            import json as _js
+                            idx.alias_map = dict(_d["alias_map"].item()) if "alias_map" in _d else {}
+                            _amb = _d["alias_ambiguity"].item() if "alias_ambiguity" in _d else {}
+                            idx.alias_ambiguity = {k: list(v)[:5] for k, v in dict(_amb).items()}
+                            idx.date_anchors = set(_d["date_anchors"].tolist()) if "date_anchors" in _d else set()
+                            idx.event_triggers = set(_d["event_triggers"].tolist()) if "event_triggers" in _d else set()
+                            idx.logic_keywords = set(_d["logic_keywords"].tolist()) if "logic_keywords" in _d else set()
+                            idx.memory_keywords = set(_d["memory_keywords"].tolist()) if "memory_keywords" in _d else set()
+                        except Exception:
+                            pass
+                        # Rebuild automaton from map (fast, in-memory, no DB)
+                        try:
+                            import ahocorasick
+                            A = ahocorasick.Automaton()
+                            for term_lower, canons in list(idx.alias_ambiguity.items())[:20000]:
+                                A.add_word(term_lower, (list(canons), term_lower))
+                            A.make_automaton()
+                            idx.alias_automaton = A
+                        except Exception:
+                            idx.alias_automaton = None
+                        _index_cache = idx
+                        return idx
+                except Exception:
+                    pass
+        except Exception:
+            pass
         idx = cls()
         try:
             idx._load_standards()
@@ -65,6 +142,24 @@ class RecallIndex:
         except Exception:
             pass
         _index_cache = idx
+        # Persist for next run (same data when DBs unchanged — no quality change)
+        try:
+            import numpy as _np_sv
+            _cp = cls._cache_path()
+            if _cp:
+                _std = [(s["statement"], s["negation"], s["confidence"], s["embedding"]) for s in idx.standards if s.get("embedding") is not None]
+                _tc = [(int(cid), c) for cid, c in idx.topic_centroids[:20]]
+                _np_sv.savez_compressed(_cp,
+                    standards=np.array(_std, dtype=object),
+                    centroids=np.array(_tc, dtype=object),
+                    alias_map=np.array(idx.alias_map, dtype=object),
+                    alias_ambiguity=np.array(idx.alias_ambiguity, dtype=object),
+                    date_anchors=np.array(sorted(idx.date_anchors)[:5000]),
+                    event_triggers=np.array(sorted(idx.event_triggers)[:500]),
+                    logic_keywords=np.array(sorted(idx.logic_keywords)[:2000]),
+                    memory_keywords=np.array(sorted(idx.memory_keywords)[:2000]))
+        except Exception:
+            pass
         return idx
 
     def _load_standards(self):
