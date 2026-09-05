@@ -54,6 +54,11 @@ def mount_webui(app):
         register_research_routes(app, _auth)
     except Exception as e:
         print(f"  (Research routes skipped: {e})")
+    try:
+        from webui.logic_api import register_logic_routes
+        register_logic_routes(app, _auth)
+    except Exception as e:
+        print(f"  (Logic routes skipped: {e})")
 
     @app.get("/api/health/summary")
     async def health_summary():
