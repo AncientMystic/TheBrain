@@ -39,6 +39,8 @@ def train():
     best_loss = float('inf')
     patience = 10
     no_improve = 0
+    _param_hist = []
+    _arc_len = 0.0
     for epoch in range(200):
         perm = np.random.permutation(len(X_train))
         X_train = X_train[perm]
@@ -59,12 +61,31 @@ def train():
 
         val_outputs = np.array([gate.forward(f) for f in X_val])
         val_loss = -np.mean(y_val * np.log(val_outputs + 1e-8) + (1-y_val) * np.log(1-val_outputs + 1e-8))
+        # Track trajectory length + saturation for stability audit (generic diagnostics)
+        try:
+            _vec = np.concatenate([gate.beta, gate.gamma, gate.delta]).astype(np.float64)
+            if _param_hist:
+                _arc_len += float(np.linalg.norm(_vec - _param_hist[-1]))
+            _param_hist.append(_vec.copy())
+        except Exception:
+            pass
         if epoch % 10 == 0:
             try:
-                from core.regime_audit import loading_fingerprint
+                from core.regime_audit import loading_fingerprint, saturation_index
                 fp = loading_fingerprint(gate)
+                try:
+                    _prof = [[float(gate.forward(f))] * 3 for f in X_val[:200]]
+                    _sat = saturation_index(_prof)
+                except Exception:
+                    _sat = 0.0
+                try:
+                    _straight = float(np.linalg.norm(_param_hist[-1] - _param_hist[0])) if len(_param_hist) > 1 else 0.0
+                    _ratio = (_arc_len / _straight) if _straight > 0 else 0.0
+                except Exception:
+                    _ratio = 0.0
                 print(f"Epoch {epoch}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}, "
-                      f"prime={fp['prime_support']:.2f} even={fp['even_support']:.2f} anchor={fp['anchor_coherence']:.2f}")
+                      f"prime={fp['prime_support']:.2f} even={fp['even_support']:.2f} anchor={fp['anchor_coherence']:.2f}, "
+                      f"sat={_sat:.2f} traj_ratio={_ratio:.2f}")
             except Exception:
                 print(f"Epoch {epoch}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}")
         if val_loss < best_loss - 1e-4:
