@@ -99,17 +99,22 @@ Answer:"""
     else:
         context = build_context(verified_facts, chunks=chunks, conversation_history=conversation_history)
 
+    try:
+        from chat.query_intent import detect_intent
+        _intent = detect_intent(query)
+    except Exception:
+        _intent = "general"
     prompt = f"""The user asked: {query}
 
-Use only the verified facts and graph paths below (pre-deduped, confidence-scored, highest first). If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked.
+Use only the verified facts and graph paths below (pre-deduped, confidence-scored, highest first). If a graph path is present, explain the connection using that path. Do not combine facts that are not explicitly linked. Use ALL relevant supplied facts — write as much as the material warrants, with no artificial length limit.
 
-Structure: 1-2 sentence direct answer first, then short sections or bullets for distinct parts, then a 1-sentence verdict. Aim for ~400 words.
-Citations: at most ONCE per paragraph or bullet, short form `(Document: filename)`. Never cite the same document twice in a row. Every figure, date, and proper name MUST carry a citation. Never hedge ("debated", "moderate") without a cited fact behind it.
-If information is insufficient, say so in one sentence and stop.
+Response type for this {_intent} request: match the format to the request — summary gets headed sections plus key-figures bullets plus verdict; factual leads with the direct answer then thorough detail; detail/report gets full headed sections covering every relevant fact with tables for figures/dates; comparative gets a side-by-side table plus verdict; causal gets the chain step by step; temporal gets an ordered timeline plus narrative.
+Quality rules for every type: lead with the answer (no throat-clearing, no sycophancy); never repeat a claim twice and never restate the intro as the conclusion; cite short form `(Document: filename)` on every sourced paragraph or bullet while grouping same-source claims naturally; every figure, date, and proper name MUST carry a citation; never hedge without a cited fact behind it.
+If information is insufficient, say so briefly and stop.
 
 Context:
 {context}
 
 Answer:"""
-    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 4096))
+    raw_answer = call_model(prompt, max_tokens=getattr(config, "CHAT_ANSWER_MAX_TOKENS", 32768))
     return clean_answer(raw_answer)
