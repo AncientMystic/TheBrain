@@ -24,7 +24,7 @@ def create_job(kind, params=None):
            "cancel": cancel, "done": False, "thread": None}
     with _lock:
         _jobs[jid] = job
-    # Real guided worker when input path exists; else mocked skeleton stream (offline demo/tests)
+    # Real workers when prerequisites exist; else mocked skeleton stream (offline demo/tests)
     target = _run_mock
     if kind == "guided-learning":
         try:
@@ -34,6 +34,8 @@ def create_job(kind, params=None):
                 target = _run_guided_real
         except Exception:
             target = _run_mock
+    elif kind == "audit":
+        target = _run_audit_real
     t = threading.Thread(target=target, args=(job,), daemon=True)
     job["thread"] = t
     t.start()
@@ -206,6 +208,33 @@ def _emit(job, event):
                 job["queue"].put_nowait(event)
             except Exception:
                 pass
+
+
+def _run_audit_real(job):
+    """Run audit_all as a job with start/finish events (same function as CLI --audit).
+
+    audit_all is atomic (not mid-run cancellable by design); cancel checked before start.
+    Emits log + progress 0/1 + done. Never auto-deletes admin/verified (enforced inside audit).
+    """
+    if job["cancel"].is_set():
+        _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled before audit started"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info", "msg": "Starting audit (same checks as --audit)"})
+    _emit(job, {"type": "progress", "done": 0, "total": 1})
+    try:
+        from audit.auditor import audit_all
+        audit_all()
+        _emit(job, {"type": "log", "level": "info", "msg": "Audit finished — see Review table below"})
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Audit failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "progress", "done": 1, "total": 1})
+    _emit(job, {"type": "done", "ok": True})
+    job["done"] = True
 
 
 def _run_mock(job):
