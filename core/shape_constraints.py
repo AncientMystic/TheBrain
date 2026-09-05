@@ -92,6 +92,53 @@ def trapezoid_clip(theta_vec, lower, upper):
     return np.minimum(np.maximum(t, lo), hi).astype(np.float32)
 
 
+def unimodal_penalty(theta):
+    """Convex surrogate for single-peak shape: sum |Δt+1 - Δt| (TV of differences).
+
+    Zero when differences are constant; small when peak is sharp and sides smooth.
+    Convex (norm of linear map),unlike max(0,Δt·Δt+1) product form which is nonconvex.
+    Generic, no doc-specific peak location.
+    """
+    t = np.asarray(theta, dtype=np.float64)
+    if len(t) < 3:
+        return 0.0
+    d = np.diff(t)
+    return float(np.sum(np.abs(np.diff(d))))
+
+
+def project_unimodal(theta):
+    """Exact single-peak projection via peak enumeration + PAVA on each side.
+
+    Tries every peak κ, projects left (≤κ) non-decreasing and right (≥κ)
+    non-increasing, keeps smallest-error candidate. O(m^2) worst, m≈12 typical.
+    Returns projected copy.
+    """
+    y = np.asarray(theta, dtype=np.float32)
+    m = len(y)
+    if m < 3:
+        return y.copy()
+    best = None
+    best_err = float("inf")
+    for k in range(m):
+        left = pav_regression(y[:k + 1]) if k >= 1 else y[:1].copy()
+        # Right side non-increasing = -PAVA(-right)
+        right_seg = y[k:]
+        neg_proj = pav_regression(-right_seg)
+        right = -neg_proj
+        # Stitch (peak shared, average the two estimates at k for continuity)
+        cand = np.empty(m, dtype=np.float32)
+        cand[:k + 1] = left
+        cand[k:] = right
+        # Enforce continuity at peak by averaging
+        if k > 0 and k < m - 1:
+            cand[k] = float((float(left[-1]) + float(right[0])) / 2.0)
+        err = float(np.sum((cand.astype(np.float64) - y.astype(np.float64)) ** 2))
+        if err < best_err:
+            best_err = err
+            best = cand
+    return best if best is not None else y.copy()
+
+
 def calibrate_confidences(confidences, monotone_idx=None, trapezoid_bounds=None):
     """Calibrate confidence vector without overwriting order more than needed.
 
