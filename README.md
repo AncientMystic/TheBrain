@@ -7,10 +7,22 @@ The system includes **graph-based retrieval**, **verification-first reasoning**,
 
 TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) for document and entity representation, **prime-even gated extraction** to intelligently reduce LLM calls, and **gated verification** that learns to trust or skip verification layers.
 
+It also ships a **glassmorphism WebUI** (`python main.py --webui`, or double-click `start-webui.bat` / `start-webui.sh`) with nine tabs covering every feature — guided learning, chat, deep-graph mindmap, Recoll search, audit, server health, deep research, logic & memory, and full configuration.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/Screenshots/guided-learning-tab.JPG?raw=true" alt="Guided Learning tab" width="100%"><br><em>Guided Learning tab — folders, terminal log, per-document progress</em></td>
+<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/Screenshots/deep-graph-tab.JPG?raw=true" alt="Deep Graph tab" width="100%"><br><em>Deep Graph tab — mindmap with right-click research actions</em></td>
+</tr>
+</table>
+
 ---
 
 ## Table of Contents
 
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
@@ -42,8 +54,9 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
   - [Recoll-Guided Autonomous Learning](#recoll-guided-autonomous-learning)
   - [Recoll Fast Mode](#recoll-fast-mode)
   - [Build Recoll Index](#build-recoll-index)
-  - [Server](#server)
-  - [Logic Learning](#logic-learning)
+- [Server](#server)
+- [WebUI](#webui)
+- [Logic Learning](#logic-learning)
   - [Socratic/PSYOP Scoring](#socraticpsyop-scoring)
   - [Training Gate Models](#training-gate-models)
   - [Active Learning Review](#active-learning-review)
@@ -131,7 +144,19 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
   Lightweight, keyword-focused learning using contextual previews around search hits.
 
 - **OpenAI-compatible server**  
-  Exposes `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, and `/metrics`.
+  Exposes `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, and `/metrics`. All `/v1/*` endpoints (except health/models) accept optional Bearer-token auth via `SERVER_AUTH_TOKEN`, and CORS origins are configurable instead of wide-open.
+
+- **Glassmorphism WebUI**  
+  Start with `python main.py --webui` (or double-click `start-webui.bat` / `start-webui.sh` — the browser opens automatically). Nine tabs cover every feature with plain-language controls: Guided Learning (folders, live terminal log, per-document progress bars), Chat (sessions, verification-first reasoning, `remember:` memories), Deep Graph (mindmap canvas with drag, wheel zoom, click-to-expand, and right-click Deep research / Recoll search), Recoll search, Audit & review queue (safe resolve/dismiss, never auto-deletes verified facts), Server health (endpoint latency, database sizes, metrics), Deep Research (report generation with Markdown/PDF export), Logic & Memory browsers, and a full Config tab documenting all 70+ options with guarded editing.
+
+- **Extraction reliability (no silent loss)**  
+  Small-model-safe LLM batching, per-chunk solo retry on empty results, second pass for long thin chunks, novelty safety floor (never drops below 30% / 3 chunks), verbatim facts kept with confidence penalty instead of dropped, lenient triage (`MIN_FACT_CONFIDENCE` 0.3) with the verifier deciding truth, and character-offset source-span validation with sentence fallback.
+
+- **Recall-augmented priority extraction**  
+  The fast pass scans existing databases for matching topics, dates, references, and events (single batched embedding fetch, hyperbolic distances only) and flags priority chunks for guaranteed extraction plus full verification escalation — must-extract and must-verify, never must-believe. Alias ambiguity is preserved with collective coherence resolution.
+
+- **Embedding alignment guards (1024-dim mxbai contract)**  
+  All embedding endpoints and stored vectors must match `EMBEDDING_DIM` (1024). Startup probes exclude mismatched endpoints with loud warnings, foreign-dimension cache/index rows are quarantined rather than mixed, and disk caches are keyed by model and dimension. Switching embedding models requires a full re-embed migration — never silent mixing.
 
 - **Audit & governance**  
   Automatic cleanup, standards comparison, contradiction detection, confidence scoring, provenance tracking, and review-queue handling for unresolved contradictions.
@@ -470,8 +495,8 @@ RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "t
 | `EMBEDDING_BATCH_SIZE` | `128` | Embedding batch size |
 | `LLM_BATCH_CHUNKS` | `4` | Chunks per LLM extraction call |
 | `OCR_BATCH_SIZE` | `64` | Pages per OCR batch |
-| `USE_PRIME_EVEN_GATE` | `false` | Enable prime-even gated extraction |
-| `USE_HYPERBOLIC_RETRIEVAL` | `false` | Use hyperbolic distance in retrieval |
+| `USE_PRIME_EVEN_GATE` | `true` | Enable prime-even gated extraction |
+| `USE_HYPERBOLIC_RETRIEVAL` | `true` | Use hyperbolic distance in retrieval |
 | `USE_GATED_VERIFICATION` | `false` | Enable learned verification gate |
 | `USE_HYPERBOLIC_CONVERSATION_SUMMARY` | `true` | Summarize older conversation history with hyperbolic clustering |
 | `USE_HYPERBOLIC_MEMORY` | `true` | Store/retrieve memories in hyperbolic space |
@@ -483,6 +508,17 @@ RECOLL_INTERACTIVE = os.environ.get("RECOLL_INTERACTIVE", "false").lower() == "t
 | `RECOLL_MAX_RESULTS` | `50` | Default max results for Recoll queries |
 | `PREVIEW_CHAR_WINDOW` | `1000` | Character window for fast mode previews |
 | `RECOLL_AUTO_KEYWORD_LIMIT` | `20` | Seed keyword count for automatic fast mode |
+| `SERVER_HOST` | `127.0.0.1` | Bind address (`0.0.0.0` for LAN, with a token set) |
+| `SERVER_PORT` | `8000` | API and WebUI port |
+| `SERVER_AUTH_TOKEN` | empty | Bearer token for `/v1/*` and `/api/*` (empty = open) |
+| `CORS_ORIGINS` | empty | Allowed browser origins, comma-separated |
+| `THEBRAIN_ALLOWED_ROOTS` | empty | Restrict `--input` folders (comma-separated, empty = anywhere) |
+| `EMBEDDING_DIM` | `1024` | Contract: all endpoints and stored vectors must match (mxbai) |
+| `MIN_FACT_CONFIDENCE` | `0.3` | Lenient triage floor (verifier decides truth) |
+| `RECALL_PRIORITY_THRESHOLD` | `0.5` | Score at/above which a chunk is priority |
+| `OCR_WORKERS` | CPU count (max 8) | Parallel OCR processes |
+| `PARALLEL_WORKERS` | `2` | Parallel file workers |
+| `PREFETCH_NEXT_DOCUMENT` | `true` | Overlap next-file prep with current LLM calls |
 
 ---
 
@@ -690,7 +726,21 @@ python main.py --build-recoll-index --input "A:/documents"
 python main.py --server
 ```
 
-Endpoints: `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, `/metrics`.
+Endpoints: `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/embeddings`, `/v1/models`, `/v1/reasoning`, `/v1/health`, and `/metrics`.
+
+Set `SERVER_AUTH_TOKEN` to require Bearer-token auth on all `/v1/*` endpoints (except models/health) and `/api/*` (except the health summary). `CORS_ORIGINS` replaces the old allow-all policy — leave it empty for local-only use. The server binds `127.0.0.1` by default; set `SERVER_HOST=0.0.0.0` only for LAN access (with a token set).
+
+### WebUI
+
+No terminal skills needed:
+
+```bash
+python main.py --webui
+```
+
+Or double-click `start-webui.bat` (Windows) / `start-webui.sh` (Mac/Linux) — the browser opens automatically at `http://localhost:8000/ui`. Leave the window open while you work; add `--no-browser` to skip the auto-open.
+
+Nine tabs, each with plain-language controls, a live terminal log, and progress bars: **Guided** (folders, verified/logic toggles, dry run, per-document rows), **Chat** (sessions, verification-first reasoning, deep research, `remember:` memories), **Graph** (mindmap with drag, wheel zoom, click-to-expand, right-click Deep research / Recoll search, facts viewer, scrolling log), **Recoll** (search, fast preview, binary status), **Audit** (one-click audit run, review queue with safe resolve/dismiss), **Server** (endpoint latency, database sizes, metrics tail), **Research** (report generation with Markdown download and print-to-PDF export), **Logic** (module/memory browsers, folder learning runs, consolidation), **Config** (all 70+ options with explanations, validated saving, secrets masked, model switches gated behind explicit confirm).
 
 ### Logic Learning
 
@@ -844,9 +894,18 @@ The model is saved to `models/topic_shift/topic_shift_lstm.pt`.
 
 ```
 TheBrain/
-├── main.py
-├── server.py
-├── config.py
+├── main.py                   # CLI (+ --webui one-click start)
+├── start-webui.bat / .sh     # Double-click WebUI launchers
+├── server.py                 # OpenAI-compatible API + WebUI mount
+├── config.py                 # All settings (env-overridable)
+├── webui/                    # Glassmorphism WebUI (9 tabs)
+│   ├── app.py                # Mount: /ui + /api/* with shared auth
+│   ├── schema.py             # Config introspection (73 options + docs)
+│   ├── jobs.py               # Guided/audit/research/logic workers + SSE
+│   ├── *_api.py              # Per-tab backends reusing CLI functions
+│   └── static/index.html     # Single-file UI (no build step)
+├── Screenshots/              # UI screenshots (see top of readme)
+├── docs/                     # Model card + dataset datasheet templates
 ├── audit/
 ├── chat/
 │   ├── give_chat.py          # GIVE-pattern verified chat
@@ -858,6 +917,14 @@ TheBrain/
 │   ├── hyperbolic.py         # Poincaré ball geometry, Fréchet mean
 │   ├── hyperbolic_utils.py   # Safe mapping, similarity, interpolation
 │   ├── hyperbolic_clustering.py  # Clustering utilities (opt-in)
+│   ├── shape_constraints.py  # PAVA / Edgeworth / trapezoid / unimodal / dominance
+│   ├── klein.py / dykstra.py # Klein maps + family-block projections
+│   ├── regime_audit.py       # Marginal rates, co-occurrence, saturation
+│   ├── provenance.py         # Run ledger with hashes + replay checks
+│   ├── entity_linking.py     # Collective coherence resolution
+│   ├── span_validation.py    # Offset checks with sentence fallback
+│   ├── vector_store.py       # Ball-tree index with dim-keyed cache
+│   ├── recoll_client.py      # Validated recollq wrapper
 │   ├── spectral.py           # Spectral feature extraction
 │   ├── metrics.py            # Metrics registry
 │   ├── logging_config.py     # JSON logging setup
@@ -866,6 +933,8 @@ TheBrain/
 ├── deep_research/
 ├── extraction/
 │   ├── gate.py               # Prime-even gated extraction
+│   ├── recall_index.py       # DB-aware recall preload (disk-cached)
+│   ├── recall_augmenter.py   # Priority scoring with batched coherence
 │   └── ...
 ├── extractors/
 ├── fast_extractor/
@@ -886,6 +955,10 @@ TheBrain/
 │   └── ...
 ├── scripts/
 │   ├── train_gate.py
+│   ├── tune_gate_weights.py  # 5-fold CV grid + fingerprint stats
+│   ├── verify_run.py         # 5-step provenance replay checks
+│   ├── audit_regimes.py      # Regime-cube audit runner
+│   ├── synthetic_spectral.py # Deterministic regime generator
 │   ├── train_verification_gate.py
 │   ├── train_topic_shift.py
 │   ├── train_gnn.py
