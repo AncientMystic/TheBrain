@@ -19,6 +19,11 @@ def mount_webui(app):
     except Exception:
         async def _auth():
             return True
+    try:
+        from webui.graph_api import register_graph_routes
+        register_graph_routes(app, _auth)
+    except Exception as e:
+        print(f"  (Graph routes skipped: {e})")
 
     @app.get("/api/health/summary")
     async def health_summary():
