@@ -408,16 +408,36 @@ def validate_embedding_config(probe=True):
                 pass
     except Exception as e:
         warns.append(f"Stored-blob audit skipped: {e}")
-    # 2. Live endpoint probe (single text, parallel via existing batch fan-out)
+    # 2. Live endpoint probe (single text each; parallel when many endpoints, same checks)
     if probe:
         try:
             eps = getattr(config, "EMBEDDING_ENDPOINTS", [])
-            for ep in list(eps):
+
+            def _probe_one(ep):
                 try:
                     from core.backends import create_backend
                     prov = create_backend(ep)
                     vecs = prov.embeddings(["alignment probe"], model=ep.get("model"))
                     d = len(vecs[0]) if vecs and vecs[0] is not None else 0
+                    return (ep, d, None)
+                except Exception as e:
+                    return (ep, 0, str(e))
+
+            _results = []
+            if len(list(eps)) > 3:
+                try:
+                    from concurrent.futures import ThreadPoolExecutor as _TPE
+                    with _TPE(max_workers=min(len(list(eps)), 8)) as _ex:
+                        _results = list(_ex.map(_probe_one, list(eps)))
+                except Exception:
+                    _results = [_probe_one(ep) for ep in list(eps)]
+            else:
+                _results = [_probe_one(ep) for ep in list(eps)]
+            for ep, d, err in _results:
+                try:
+                    if err:
+                        warns.append(f"Endpoint probe failed for {ep.get('url')}: {err}")
+                        continue
                     if d != exp_dim:
                         msg = (f"POISON RISK: endpoint {ep.get('url')}:{ep.get('model')} returned dim={d}, "
                                f"expected {exp_dim} (mxbai/1024 contract). EXCLUDED from rotation — "
