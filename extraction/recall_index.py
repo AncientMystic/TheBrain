@@ -85,6 +85,13 @@ class RecallIndex:
                     _fp = cls._db_fingerprint()
                     if _os3.path.getmtime(_cp) >= _fp:
                         _d = _np_ld.load(_cp, allow_pickle=True)
+                        try:
+                            _meta = _d["meta"].item() if "meta" in _d else {}
+                            _dim0, _model0 = cls._cache_key_parts()
+                            if int(_meta.get("dim", _dim0)) != int(_dim0):
+                                raise ValueError("recall cache dim mismatch")
+                        except Exception:
+                            raise ValueError("recall cache metadata mismatch")
                         idx = cls()
                         try:
                             import config as _cfg_v
@@ -177,11 +184,14 @@ class RecallIndex:
         except Exception:
             pass
         _index_cache = idx
-        # Persist for next run (same data when DBs unchanged — no quality change)
+        # Persist for next run (same data when DBs unchanged — no quality change).
+        # Metadata-stamped (dim/model) so renamed/copied files never load silently.
         try:
             import numpy as _np_sv
             _cp = cls._cache_path()
             if _cp:
+                _dim0, _model0 = cls._cache_key_parts()
+                _meta0 = {"dim": int(_dim0), "model": str(_model0)}
                 _std = [(s["statement"], s["negation"], s["confidence"], s["embedding"]) for s in idx.standards if s.get("embedding") is not None]
                 _tc = [(int(cid), c) for cid, c in idx.topic_centroids[:20]]
                 _np_sv.savez_compressed(_cp,
@@ -192,7 +202,8 @@ class RecallIndex:
                     date_anchors=np.array(sorted(idx.date_anchors)[:5000]),
                     event_triggers=np.array(sorted(idx.event_triggers)[:500]),
                     logic_keywords=np.array(sorted(idx.logic_keywords)[:2000]),
-                    memory_keywords=np.array(sorted(idx.memory_keywords)[:2000]))
+                    memory_keywords=np.array(sorted(idx.memory_keywords)[:2000]),
+                    meta=np.array(_meta0, dtype=object))
         except Exception:
             pass
         return idx
