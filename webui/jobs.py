@@ -36,6 +36,8 @@ def create_job(kind, params=None):
             target = _run_mock
     elif kind == "audit":
         target = _run_audit_real
+    elif kind == "research":
+        target = _run_research_real
     t = threading.Thread(target=target, args=(job,), daemon=True)
     job["thread"] = t
     t.start()
@@ -229,6 +231,44 @@ def _run_audit_real(job):
         _emit(job, {"type": "log", "level": "info", "msg": "Audit finished — see Review table below"})
     except Exception as e:
         _emit(job, {"type": "log", "level": "error", "msg": f"Audit failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "progress", "done": 1, "total": 1})
+    _emit(job, {"type": "done", "ok": True})
+    job["done"] = True
+
+
+def _run_research_real(job):
+    """Run deep-research coordinator as a job (same function as CLI/chat deep path).
+
+    Long-running (minutes); cancel checked before start (coordinator itself is
+    atomic per subtopic batch — safe to let current batch finish, then stop).
+    Emits log + progress (indeterminate, pulsed) + done with report path.
+    """
+    params = job.get("params", {})
+    query = str(params.get("query", "")).strip()[:500]
+    session_id = params.get("session_id")
+    if not query:
+        _emit(job, {"type": "error", "msg": "Empty research query"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    if job["cancel"].is_set():
+        _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled before research started"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info", "msg": f"Deep research started: {query[:120]}"})
+    _emit(job, {"type": "progress", "done": 0, "total": 1})
+    try:
+        from deep_research.coordinator import DeepResearchCoordinator
+        coordinator = DeepResearchCoordinator(session_id)
+        report_path = coordinator.run(query)
+        _emit(job, {"type": "log", "level": "info", "msg": f"Report generated: {report_path}"})
+        _emit(job, {"type": "report", "path": str(report_path)})
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Research failed: {e}"})
         _emit(job, {"type": "done", "ok": False})
         job["done"] = True
         return
