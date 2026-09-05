@@ -18,11 +18,50 @@ class PrimeEvenGate:
         self.delta = np.zeros(23, dtype=np.float32)
         self._init_params()
 
-    def _init_params(self):
+    def _init_params(self, structured=True):
+        # Structured prime-supported init per manuscript (69)-(71): prime/gamma/delta biases 0.5,
+        # intercepts zero (gate 0.5 at centroid). Falls back to diffuse N(0,0.1) only if disabled.
+        # Generic, config-driven, no doc-specific values beyond arithmetic sets.
+        import os as _os
+        _structured = bool(getattr(__import__("config"), "GATE_STRUCTURED_INIT", True)) if structured else False
+        if not _structured:
+            rng = np.random.default_rng(42)
+            self.beta = rng.normal(0, 0.1, self.beta.shape).astype(np.float32)
+            self.gamma = rng.normal(0, 0.1, self.gamma.shape).astype(np.float32)
+            self.delta = rng.normal(0, 0.1, self.delta.shape).astype(np.float32)
+            return
+        try:
+            b_prime = float(getattr(__import__("config"), "GATE_BETA_PRIME", 0.5))
+            g_even = float(getattr(__import__("config"), "GATE_GAMMA_EVEN", 0.5))
+            d_prime = float(getattr(__import__("config"), "GATE_DELTA_PRIME", 0.5))
+            d_anchor = float(getattr(__import__("config"), "GATE_DELTA_ANCHOR", 0.5))
+        except Exception:
+            b_prime = g_even = d_prime = d_anchor = 0.5
         rng = np.random.default_rng(42)
-        self.beta = rng.normal(0, 0.1, self.beta.shape).astype(np.float32)
-        self.gamma = rng.normal(0, 0.1, self.gamma.shape).astype(np.float32)
-        self.delta = rng.normal(0, 0.1, self.delta.shape).astype(np.float32)
+        # Small noise around structured means (breaks symmetry, preserves prior direction)
+        self.beta = np.zeros(23, dtype=np.float32)
+        self.beta[0] = 0.0
+        for i in range(1, 23):
+            idx = i  # 1-indexed spectral idx = i (since beta[1]<>lambda1)
+            base = b_prime if idx in PRIME_INDICES else 0.0
+            self.beta[i] = np.float32(base + rng.normal(0, 0.02))
+        self.gamma = np.zeros(22, dtype=np.float32)
+        self.gamma[0] = 0.0
+        for i in range(1, 22):
+            idx = i
+            base = g_even if idx in EVEN_INDICES else 0.0
+            self.gamma[i] = np.float32(base + rng.normal(0, 0.02))
+        self.delta = np.zeros(23, dtype=np.float32)
+        self.delta[0] = 0.0
+        for i in range(1, 23):
+            idx = i
+            if idx == 2:
+                base = d_anchor
+            elif idx in PRIME_INDICES:
+                base = d_prime
+            else:
+                base = 0.0
+            self.delta[i] = np.float32(base + rng.normal(0, 0.02))
 
     def forward(self, features):
         """

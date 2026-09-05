@@ -436,7 +436,18 @@ REPORT_COHERENCE_PASS = True   # Run final coherence check on deep research repo
 
 # Optional dynamic endpoint balancing (default False)
 USE_DYNAMIC_ENDPOINT_BALANCING = False
-USE_PRIME_EVEN_GATE = True
+USE_PRIME_EVEN_GATE = os.environ.get("USE_PRIME_EVEN_GATE", "true").lower() == "true"
+# Prime-even gate structured init + hyperparams (manuscript §7.2-7.3, generic, env-overridable)
+GATE_STRUCTURED_INIT = os.environ.get("GATE_STRUCTURED_INIT", "true").lower() == "true"
+GATE_BETA_PRIME = float(os.environ.get("GATE_BETA_PRIME", "0.5"))
+GATE_GAMMA_EVEN = float(os.environ.get("GATE_GAMMA_EVEN", "0.5"))
+GATE_DELTA_PRIME = float(os.environ.get("GATE_DELTA_PRIME", "0.5"))
+GATE_DELTA_ANCHOR = float(os.environ.get("GATE_DELTA_ANCHOR", "0.5"))
+GATE_LAM1 = float(os.environ.get("GATE_LAM1", "0.01"))
+GATE_LAM2 = float(os.environ.get("GATE_LAM2", "0.1"))
+GATE_LAM3 = float(os.environ.get("GATE_LAM3", "0.1"))
+GATE_LAM4 = float(os.environ.get("GATE_LAM4", "0.05"))
+GATE_LR = float(os.environ.get("GATE_LR", "0.01"))
 
 USE_HYPERBOLIC_RETRIEVAL = True
 USE_GATED_VERIFICATION = True

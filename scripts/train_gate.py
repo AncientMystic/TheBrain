@@ -43,12 +43,17 @@ def train():
         perm = np.random.permutation(len(X_train))
         X_train = X_train[perm]
         y_train = y_train[perm]
-        batch_size = 32
+        batch_size = int(getattr(config, "GATE_BATCH_SIZE", 32))
+        _lr = float(getattr(config, "GATE_LR", 0.01))
+        _lam1 = float(getattr(config, "GATE_LAM1", 0.01))
+        _lam2 = float(getattr(config, "GATE_LAM2", 0.1))
+        _lam3 = float(getattr(config, "GATE_LAM3", 0.1))
+        _lam4 = float(getattr(config, "GATE_LAM4", 0.05))
         total_loss = 0.0
         for i in range(0, len(X_train), batch_size):
             xb = X_train[i:i+batch_size]
             yb = y_train[i:i+batch_size]
-            loss = gate.train_step(xb, yb, lr=0.01)
+            loss = gate.train_step(xb, yb, lr=_lr, lam1=_lam1, lam2=_lam2, lam3=_lam3, lam4=_lam4)
             total_loss += loss * len(xb)
         avg_loss = total_loss / len(X_train)
 
