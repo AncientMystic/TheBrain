@@ -22,13 +22,25 @@ def cosine_similarity(a, b):
 
 
 def validate_source_span(source_span: str, full_text: str) -> bool:
-    """Check if source_span appears in full_text (fuzzy)."""
+    """Check if source_span appears in full_text (exact, then fuzzy)."""
     if not source_span:
         return False
+    if source_span in (full_text or ""):
+        return True
     # Remove '...' and spaces for simple containment
     normalized_span = normalise_text(source_span.replace('...', ' ')).lower()
     normalized_full = normalise_text(full_text).lower()
     return normalized_span in normalized_full
+
+
+def validate_source_span_detailed(fact_text: str, source_span: str, chunk_text: str,
+                                  start_char=None, end_char=None):
+    """Detailed check via span_validation helper (exact/offsets/fallback + reason)."""
+    try:
+        from core.span_validation import validate_span
+        return validate_span(fact_text, source_span, chunk_text, start_char, end_char)
+    except Exception:
+        return validate_source_span(source_span, chunk_text or ""), source_span, "legacy"
 
 
 def validate_embedding_similarity(entity_text: str, chunk_text: str, threshold: float = 0.35) -> bool:
@@ -43,15 +55,23 @@ def validate_embedding_similarity(entity_text: str, chunk_text: str, threshold: 
 
 def validate_item(item: dict, chunk_text: str, full_text: str) -> bool:
     """
-    Perform basic validation on a single extracted item.
+    Perform validation on a single extracted item (span grounded + optional sem check).
+    Corrects correctable spans in place when fallback is grounded in source.
     Returns True if item passes, else False.
     """
+    fact_text = item.get("fact_text") or item.get("entity_name") or ""
     source_span = item.get("source_span", "")
-    if not validate_source_span(source_span, full_text):
-        return False
-    # Optional embedding check if available
-    # if "entity_name" in item or "fact_text" in item:
-    #     text_to_check = item.get("entity_name") or item.get("fact_text")
-    #     if text_to_check and not validate_embedding_similarity(text_to_check, chunk_text):
-    #         return False
-    return True
+    valid, corrected, _reason = validate_source_span_detailed(
+        fact_text, source_span, chunk_text or full_text or "",
+        item.get("start_char"), item.get("end_char"))
+    if valid:
+        return True
+    # Accept grounded fallback correction (still in source, verifier will weight it)
+    if corrected and corrected in (chunk_text or full_text or ""):
+        try:
+            item["source_span"] = corrected
+            item["span_corrected"] = True
+        except Exception:
+            pass
+        return True
+    return validate_source_span(source_span, full_text)
