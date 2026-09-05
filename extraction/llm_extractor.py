@@ -633,6 +633,25 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
             pass
 
     for i in range(len(results)):
+        # Ground spans against chunk text before cleaning (no fabrication beyond source)
+        try:
+            from core.span_validation import validate_span as _vs
+            _ct = batch_chunks[i] if i < len(batch_chunks) else ""
+            for f in results[i].get("facts", []) or []:
+                if not isinstance(f, dict):
+                    continue
+                try:
+                    ok, sp, why = _vs(f.get("fact_text", ""), f.get("source_span", ""), _ct,
+                                      f.get("start_char"), f.get("end_char"))
+                    if ok and sp and sp != f.get("source_span"):
+                        f["source_span"] = sp
+                    f["span_check"] = why
+                    if not ok and why == "invalid":
+                        f["span_missing"] = True
+                except Exception:
+                    continue
+        except Exception:
+            pass
         results[i]["facts"] = _clean_facts(results[i]["facts"])
         results[i]["entities"] = _clean_entities(results[i]["entities"])
         results[i]["relationships"] = _clean_relationships(results[i].get("relationships", []))
