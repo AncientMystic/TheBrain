@@ -3,7 +3,7 @@ from reasoning.decompose import decompose_query
 from reasoning.agents import MindMapAgent, KGQueryAgent, SourceCheckerAgent, ContradictionDetectorAgent, LogicVerifierAgent
 from reasoning.verify import verify_claim
 from reasoning.governance import compute_confidence, store_provenance
-from chat.query_analyzer import analyze_query
+from core.query_analyzer import analyze_query
 from chat.retriever import retrieve_from_graph, fallback_to_chunks
 from chat.context_builder import build_context
 from core.llm import call_model, call_model_json
@@ -121,8 +121,11 @@ def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
             break
         all_facts.extend(new_facts)
 
-    all_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
-    return all_facts[:100]
+        all_facts.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    # Content dedupe post-sort keeps the best-confidence copy of each claim
+    # (converging multi-hop paths must not multiply the same fact).
+    from graph.expansion import dedupe_facts_content
+    return dedupe_facts_content(all_facts)[:100]
 
 
 def adaptive_reasoning(query, kg=None, max_rounds=3):
@@ -137,6 +140,27 @@ def adaptive_reasoning(query, kg=None, max_rounds=3):
 
     # Expand via graph
     expanded_facts = expand_facts_via_graph(initial_facts, kg)
+
+    # Typed handoff check: build + validate the evidence contract before reasoning
+    # consumes it. Violations log loudly and fall through to the untyped dicts —
+    # a contract bug must never break answers, only flag them for repair.
+    try:
+        from retrieval.evidence_contract import build_contract, validate_contract
+        _handoff = build_contract(query, analysis, expanded_facts)
+        _problems = validate_contract(_handoff)
+        if _problems:
+            logger.warning("Evidence contract violations: %s", "; ".join(_problems[:5]))
+            try:
+                from core.metrics import inc_counter as _inc
+                _inc("evidence_contract_violations_total", len(_problems))
+            except Exception:
+                pass
+        elif config.DEBUG_VERBOSE:
+            print(f"    (Evidence handoff: {len(_handoff.get('claims', []))} claims, "
+                  f"{len(_handoff.get('anchors', []))} anchors)")
+    except Exception as e:
+        if config.DEBUG_VERBOSE:
+            print(f"    (Evidence handoff skipped: {e})")
 
     # Retrieve chunks only if needed (single shared budget for both passes)
     try:

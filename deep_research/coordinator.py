@@ -6,7 +6,8 @@ import uuid
 import json
 from core import db
 from core.llm import call_model_json
-from chat import analyze_query, retrieve_from_graph, fallback_to_chunks
+from core.query_analyzer import analyze_query
+from chat import retrieve_from_graph, fallback_to_chunks
 from graph.expansion import expand_facts_via_multi_hop
 from deep_research.mindmap import init_mindmap_db, add_research_node, add_research_edge, get_mindmap_text
 from deep_research.report_generator import generate_report
@@ -19,6 +20,9 @@ class DeepResearchCoordinator:
         init_mindmap_db()
         self.facts = []
         self.chunks = []
+        # Per-run expansion accounting (pre/post dedupe, collapsed), surfaced
+        # by the WebUI research terminal. Empty when run is trivially small.
+        self.expansion_diagnostics = {}
 
     def run(self, query):
         """Run deep research on a topic."""
@@ -34,7 +38,8 @@ class DeepResearchCoordinator:
             initial_facts = retrieve_from_graph(analysis, top_k=50, max_depth=2)
         self.facts.extend(initial_facts)
         # Expand via multi-hop
-        expanded = expand_facts_via_multi_hop(initial_facts, max_depth=config.DEEP_RESEARCH_MAX_DEPTH, max_facts=200)
+        expanded = expand_facts_via_multi_hop(initial_facts, max_depth=config.DEEP_RESEARCH_MAX_DEPTH, max_facts=200,
+                                            diagnostics=self.expansion_diagnostics)
         self.facts = expanded
         # Get relevant chunks
         chunks = fallback_to_chunks(query, top_k=10)

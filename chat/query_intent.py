@@ -1,16 +1,8 @@
-"""Lightweight query intent detection."""
-import re
+"""Backward-compat shim: query intent now lives in core/ (no chat dependency).
 
-def detect_intent(query):
-    q = query.lower()
-    if any(w in q for w in ["compare", "versus", "vs", "difference"]):
-        return "comparative"
-    if any(w in q for w in ["summarize", "summary", "sum up"]):
-        return "summary"
-    if any(w in q for w in ["why", "cause", "reason"]):
-        return "causal"
-    if any(w in q for w in ["before", "after", "timeline", "when did"]):
-        return "temporal"
-    if any(w in q for w in ["what", "who", "where", "which", "how many"]):
-        return "factual"
-    return "general"
+Breaks the former chat<->retrieval import fragility: lower layers import from
+core, chat re-exports for existing callers.
+"""
+from core.query_intent import detect_intent
+
+__all__ = ["detect_intent"]

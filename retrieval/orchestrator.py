@@ -15,7 +15,7 @@ from chat.retriever import retrieve_from_graph, fallback_to_chunks
 from core.recoll_client import RecollClient
 from retrieval.ranking import get_ranker
 from graph.graph_queries import get_facts_by_keyword
-from chat.query_analyzer import analyze_query
+from core.query_analyzer import analyze_query
 from core.metrics import inc_counter, Timer
 import logging
 logger = logging.getLogger(__name__)
