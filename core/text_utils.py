@@ -47,6 +47,18 @@ STOPWORDS = {
 }
 
 
+def dehyphenate(text: str) -> str:
+    """Join PDF line-break artifacts like 'man- tle' -> 'mantle'.
+
+    Only joins when a lowercase letter follows the break (line-wrap split).
+    Intentional compounds before uppercase/digits keep their hyphen.
+    Generic, no document-specific word lists.
+    """
+    if not isinstance(text, str) or "-" not in text:
+        return text
+    return re.sub(r"(\w)-\s+([a-zà-öø-ÿ])", r"\1\2", text)
+
+
 def normalise_text(text: str) -> str:
     """Collapse whitespace and strip leading/trailing spaces. Handles None/dict/list."""
     if text is None:
@@ -57,6 +69,7 @@ def normalise_text(text: str) -> str:
         except Exception:
             logger.warning("Unexpected exception occurred", exc_info=True)
             return ""
+    text = dehyphenate(text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
