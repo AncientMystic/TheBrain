@@ -21,7 +21,8 @@ class RecallIndex:
     def __init__(self):
         self.standards = []  # [{statement, negation, confidence, embedding}]
         self.topic_centroids = []  # [(cluster_id, centroid np array)]
-        self.alias_map = {}  # lower -> canonical
+        self.alias_map = {}  # lower -> canonical (first wins, backward compat)
+        self.alias_ambiguity = {}  # lower -> list[canon] (cap 5, preserves ambiguity)
         self.alias_automaton = None
         self.date_anchors = set()  # normalized date strings + years
         self.event_triggers = set()
@@ -116,11 +117,17 @@ class RecallIndex:
             except Exception:
                 pass
         import json as _json
+        # Ambiguity-preserving map: term_lower -> list[canon] (cap 5, insertion order).
+        # Single-canon alias_map kept for backward compat (first canon wins).
+        self.alias_ambiguity = {}
         for r in rows:
             try:
                 canon = r["canonical_name"]
                 if canon:
-                    self.alias_map[canon.lower()] = canon
+                    self.alias_map.setdefault(canon.lower(), canon)
+                    _lst = self.alias_ambiguity.setdefault(canon.lower(), [])
+                    if canon not in _lst and len(_lst) < 5:
+                        _lst.append(canon)
                 aj = r["aliases_json"] if "aliases_json" in r.keys() else None
                 if aj:
                     try:
@@ -129,16 +136,19 @@ class RecallIndex:
                             for a in aliases:
                                 if isinstance(a, str) and a:
                                     self.alias_map.setdefault(a.lower(), canon)
+                                    _lst = self.alias_ambiguity.setdefault(a.lower(), [])
+                                    if canon not in _lst and len(_lst) < 5:
+                                        _lst.append(canon)
                     except Exception:
                         pass
             except Exception:
                 continue
-        # Build Aho-Corasick for fast exact matching when available
+        # Build Aho-Corasick with ambiguity lists as values (generic, capped)
         try:
             import ahocorasick
             A = ahocorasick.Automaton()
-            for term_lower, canon in list(self.alias_map.items())[:20000]:
-                A.add_word(term_lower, (canon, term_lower))
+            for term_lower, canons in list(self.alias_ambiguity.items())[:20000]:
+                A.add_word(term_lower, (list(canons), term_lower))
             A.make_automaton()
             self.alias_automaton = A
         except Exception:

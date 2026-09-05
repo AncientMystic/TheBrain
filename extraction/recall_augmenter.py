@@ -81,20 +81,53 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
             for i, ch in enumerate(chunks):
                 try:
                     low = ch.lower()
-                    seen = {}
-                    for end_idx, (canon, term_lower) in A.iter(low):
+                    # mention -> list[canon] (ambiguity preserved); single-canon legacy shape supported
+                    mentions = {}
+                    for end_idx, (canon_val, term_lower) in A.iter(low):
                         try:
                             start_idx = end_idx - len(term_lower) + 1
                             if start_idx > 0 and ch[start_idx - 1].isalnum():
                                 continue
                             if end_idx + 1 < len(ch) and ch[end_idx + 1].isalnum():
                                 continue
-                            if canon not in seen:
-                                seen[canon] = term_lower
-                            if len(seen) >= 20:
+                            canons = canon_val if isinstance(canon_val, list) else [canon_val]
+                            key = (start_idx, end_idx)
+                            if key not in mentions:
+                                mentions[key] = []
+                            for _c in canons:
+                                if _c not in mentions[key] and len(mentions[key]) < 5:
+                                    mentions[key].append(_c)
+                            if len(mentions) >= 20:
                                 break
                         except Exception:
                             continue
+                    # Collective choice per chunk across ambiguous mentions (generic coherence)
+                    cands = []
+                    try:
+                        if mentions and any(len(v) > 1 for v in mentions.values()):
+                            from core.entity_linking import collective_link as _cl2
+                            _mkeys = list(mentions.keys())
+                            _mnames = [f"m{k}" for k in _mkeys]
+                            _cands_fn = lambda m, _mk=_mkeys, _mn=_mnames, _mm=mentions: (
+                                [(c, None) for c in _mm[_mk[_mn.index(m)]]] if m in _mn else [])
+                            _res = _cl2(_mnames, _cands_fn)
+                            for mk, mn in zip(_mkeys, _mnames):
+                                _chosen = _res.get(mn) if isinstance(_res, dict) else None
+                                if _chosen:
+                                    cands.append(_chosen)
+                                else:
+                                    cands.extend(mentions[mk][:1])
+                        else:
+                            for v in mentions.values():
+                                cands.extend(v[:1])
+                    except Exception:
+                        for v in mentions.values():
+                            cands.extend(v[:1])
+                    # Dedup preserve order, cap 20
+                    seen = {}
+                    for _c in cands:
+                        if _c not in seen and len(seen) < 20:
+                            seen[_c] = True
                     cands = list(seen.keys())[:20]
                     linked[i] = cands
                     _all_cands.extend(cands)
