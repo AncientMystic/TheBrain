@@ -181,6 +181,11 @@ class RetrievalOrchestrator:
         fact_map = {}
         fact_conf_map = {}
         chunk_map = {}
+        try:
+            import config as _cfg_o
+            _exp_dim = int(getattr(_cfg_o, "EMBEDDING_DIM", 1024))
+        except Exception:
+            _exp_dim = 1024
         conn_emb = db.db_connect("embeddings")
         conn_kf = db.db_connect("key_facts")
         try:
@@ -193,7 +198,13 @@ class RetrievalOrchestrator:
                 cur_kf.execute(f"SELECT fact_id, fact_embedding, confidence FROM key_facts WHERE fact_id IN ({ph})", ch)
                 for r in cur_kf.fetchall():
                     if r[1] is not None:
-                        fact_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+                        try:
+                            _arr = np.frombuffer(r[1], dtype=np.float32)
+                            if len(_arr) != _exp_dim:
+                                continue
+                            fact_map[r[0]] = _arr.copy()
+                        except Exception:
+                            continue
                     if r[2] is not None:
                         fact_conf_map[r[0]] = r[2]
             cur_emb = conn_emb.cursor()
@@ -205,7 +216,13 @@ class RetrievalOrchestrator:
                 cur_emb.execute(f"SELECT chunk_id, embedding FROM chunk_embeddings WHERE chunk_id IN ({ph})", ch)
                 for r in cur_emb.fetchall():
                     if r[1] is not None:
-                        chunk_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+                        try:
+                            _arr = np.frombuffer(r[1], dtype=np.float32)
+                            if len(_arr) != _exp_dim:
+                                continue
+                            chunk_map[r[0]] = _arr.copy()
+                        except Exception:
+                            continue
         finally:
             try:
                 conn_emb.close()

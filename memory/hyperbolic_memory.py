@@ -21,7 +21,13 @@ def _memory_embeddings(session_id=None):
     memories = []
     for row in rows:
         if row["embedding"] is not None:
-            emb = np.frombuffer(row["embedding"], dtype=np.float32)
+            try:
+                from core.embeddings import decode_embedding_blob as _dec2
+                emb = _dec2(row["embedding"], context="hyperbolic_memory")
+                if emb is None:
+                    continue
+            except Exception:
+                emb = np.frombuffer(row["embedding"], dtype=np.float32)
             memories.append((row["memory_id"], row["content"], emb))
     return memories
 

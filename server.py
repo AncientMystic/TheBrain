@@ -27,6 +27,17 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def _validate_embeddings_on_startup():
+    try:
+        from core.embeddings import validate_embedding_config
+        ok, warns = validate_embedding_config(probe=True)
+        if warns:
+            logger.warning(f"Embedding alignment: {len(ok)} ok, {len(warns)} warnings (poison prevention active)")
+    except Exception as e:
+        logger.warning(f"Embedding validation on startup skipped: {e}")
+
+
 async def require_auth(authorization: Optional[str] = Header(None, alias="Authorization")):
     expected = getattr(config, "SERVER_AUTH_TOKEN", "")
     if not expected:

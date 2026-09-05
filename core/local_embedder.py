@@ -50,9 +50,20 @@ class LocalEmbedder:
                     print("No tokenizer.json found; cannot tokenize.")
                     return
 
-            # Create ONNX Runtime session
+            # Create ONNX Runtime session (threads/arena/ALL, same as NER — no quality change)
+            import os as _os_le
+            so = ort.SessionOptions()
+            try:
+                so.intra_op_num_threads = int(getattr(config, "ONNX_INTRA_THREADS", _os_le.cpu_count() or 4))
+                so.inter_op_num_threads = int(getattr(config, "ONNX_INTER_THREADS", 2))
+                so.enable_mem_pattern = True
+                so.enable_cpu_mem_arena = True
+                so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                so.log_severity_level = 3
+            except Exception:
+                pass
             providers = ["DmlExecutionProvider", "CPUExecutionProvider"] if "DmlExecutionProvider" in ort.get_available_providers() else ["CPUExecutionProvider"]
-            self.session = ort.InferenceSession(str(onnx_path), providers=providers)
+            self.session = ort.InferenceSession(str(onnx_path), sess_options=so, providers=providers)
             self.input_names = [inp.name for inp in self.session.get_inputs()]
             self.available = True
             print(f"Local embedder loaded via ONNX Runtime with providers {providers}.")

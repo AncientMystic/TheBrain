@@ -31,6 +31,9 @@ BACKEND_CONFIG_ERROR = False
 LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "lfm2.5-vl-3b-absolute-heresy-i1")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "smcleod/text-embedding-mxbai-embed-large-v1")
+# Alignment contract: all embedding endpoints + stored blobs must be this dim (mxbai/1024).
+# Changing dims without full re-embed + reindex POISONS cache/index (quarantined, never mixed).
+EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "1024"))
 
 # Unified backend configuration
 BACKENDS = []

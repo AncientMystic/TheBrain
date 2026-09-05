@@ -81,6 +81,11 @@ class LinearRanker:
         conn_emb = db.db_connect("embeddings")
         conn_kf = db.db_connect("key_facts")
         try:
+            try:
+                import config as _cfg_r
+                _exp_dim = int(getattr(_cfg_r, "EMBEDDING_DIM", 1024))
+            except Exception:
+                _exp_dim = 1024
             cur_kf = conn_kf.cursor()
             for s in range(0, len(fact_ids), 400):
                 ch = fact_ids[s:s+400]
@@ -90,7 +95,13 @@ class LinearRanker:
                 cur_kf.execute(f"SELECT fact_id, fact_embedding FROM key_facts WHERE fact_id IN ({ph})", ch)
                 for r in cur_kf.fetchall():
                     if r[1] is not None:
-                        fact_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+                        try:
+                            _arr = np.frombuffer(r[1], dtype=np.float32)
+                            if len(_arr) != _exp_dim:
+                                continue
+                            fact_map[r[0]] = _arr.copy()
+                        except Exception:
+                            continue
             cur_emb = conn_emb.cursor()
             for s in range(0, len(chunk_ids), 400):
                 ch = chunk_ids[s:s+400]
@@ -100,7 +111,13 @@ class LinearRanker:
                 cur_emb.execute(f"SELECT chunk_id, embedding FROM chunk_embeddings WHERE chunk_id IN ({ph})", ch)
                 for r in cur_emb.fetchall():
                     if r[1] is not None:
-                        chunk_map[r[0]] = np.frombuffer(r[1], dtype=np.float32).copy()
+                        try:
+                            _arr = np.frombuffer(r[1], dtype=np.float32)
+                            if len(_arr) != _exp_dim:
+                                continue
+                            chunk_map[r[0]] = _arr.copy()
+                        except Exception:
+                            continue
         finally:
             try:
                 conn_emb.close()

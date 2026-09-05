@@ -13,6 +13,20 @@ def validate_config():
     if not config.LLM_ENDPOINTS:
         print("Error: No LLM endpoints configured.")
         sys.exit(1)
+    # Embedding alignment guard (fast; skipped for --help/--dry-run to keep CLI snappy).
+    # Warns loudly when new endpoint dims != EMBEDDING_DIM (mxbai/1024) — poison prevention.
+    try:
+        _argv = sys.argv[1:] if len(sys.argv) > 1 else []
+        _needs_emb = any(a in _argv for a in ("--guided-learning", "--chat", "--server", "--recoll-fast", "--recoll", "--audit", "--logic"))
+        if _needs_emb and "--help" not in _argv and "--dry-run" not in _argv:
+            from core.embeddings import validate_embedding_config
+            _ok, _warns = validate_embedding_config(probe=True)
+            if _warns and getattr(config, "DEBUG_VERBOSE", False):
+                print(f"  (Embedding validation: {len(_ok)} ok endpoints, {len(_warns)} warnings)")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"  (Embedding validation skipped: {e})")
     if config.USE_PROGRESS_BARS:
         try:
                         config.TQDM_AVAILABLE = True

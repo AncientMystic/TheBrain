@@ -96,7 +96,13 @@ class ExactVectorStore:
         self.ids = []
         self.points = []
         self.tree = None
-        self._index_path = str(Path(db_path).parent / f"{Path(table_name).name}_balltree.npz")
+        try:
+            import config as _cfg_vs
+            _dim = int(getattr(_cfg_vs, "EMBEDDING_DIM", 1024))
+        except Exception:
+            _dim = 1024
+        # Index key includes dim (never mix dims across model switches = poison prevention)
+        self._index_path = str(Path(db_path).parent / f"{Path(table_name).name}_d{_dim}_balltree.npz")
         self._load()
 
     def _db_mtime(self):
@@ -145,6 +151,25 @@ class ExactVectorStore:
                 conn.close()
             except Exception:
                 pass
+        if not ids:
+            return
+        # Dim guard: filter foreign-dim points (never mix into BallTree matrix)
+        try:
+            from core.embeddings import decode_embedding_blob as _dec
+            _fids, _fpts = [], []
+            for _id, _pt in zip(ids, pts):
+                try:
+                    import numpy as _npv
+                    # pts already arrays; re-validate length
+                    if len(_pt) != int(getattr(__import__("config"), "EMBEDDING_DIM", 1024)):
+                        continue
+                    _fids.append(_id)
+                    _fpts.append(_pt)
+                except Exception:
+                    continue
+            ids, pts = _fids, _fpts
+        except Exception:
+            pass
         if not ids:
             return
         self.ids = ids

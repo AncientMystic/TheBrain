@@ -178,7 +178,20 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
         )
         rows_all = cur.fetchall()
         cache_map = {}
+        _exp_dim = int(getattr(config, "EMBEDDING_DIM", 1024))
         for row in rows_all:
+            try:
+                _blob = row["embedding"]
+                if _blob is not None and (len(_blob) // 4) != _exp_dim:
+                    logger.warning(f"Embedding dim mismatch for model={model}: got {len(_blob)//4}, expected {_exp_dim}. Quarantined (not mixed) — poison risk if endpoint changed. Row text len={len(row['text'])}.")
+                    try:
+                        from core.metrics import inc_counter as _inc3
+                        _inc3("embedding_dim_mismatch_total")
+                    except Exception:
+                        pass
+                    continue
+            except Exception:
+                pass
             if row["space"] == space:
                 cache_map[row["text"]] = row["embedding"]
             elif space == 'hyperbolic' and row["space"] == 'euclidean':
@@ -328,6 +341,104 @@ def load_embedding_from_db(text, model=None):
     if row:
         return np.frombuffer(row[0], dtype=np.float32).tolist()
     return None
+
+
+def decode_embedding_blob(blob, context=""):
+    """Decode float32 blob to np array with dim guard (quarantine foreign dims, never mix).
+
+    Returns np array or None (with warning + metric on mismatch). Generic.
+    """
+    if blob is None:
+        return None
+    try:
+        import numpy as _npd
+        exp_dim = int(getattr(config, "EMBEDDING_DIM", 1024))
+        arr = _npd.frombuffer(blob, dtype=_npd.float32)
+        if len(arr) != exp_dim:
+            logger.warning(f"Embedding dim mismatch {context}: got {len(arr)}, expected {exp_dim}. Quarantined.")
+            try:
+                from core.metrics import inc_counter as _inc4
+                _inc4("embedding_dim_mismatch_total")
+            except Exception:
+                pass
+            return None
+        return arr.copy()
+    except Exception:
+        return None
+
+
+def validate_embedding_config(probe=True):
+    """Validate embedding endpoints align to EMBEDDING_DIM (default 1024 mxbai).
+
+    Probes each configured embedding endpoint with one short text (single batch,
+    no quality impact), asserts dim matches contract, EXCLUDES mismatched endpoints
+    from rotation (never mixes dims = poison prevention), and scans stored blobs
+    for foreign dims with loud warnings. Returns (ok_endpoints, warnings).
+    Generic, no doc-specific logic.
+    """
+    import warnings as _w
+    exp_dim = int(getattr(config, "EMBEDDING_DIM", 1024))
+    ok = []
+    warns = []
+    # 1. Stored-blob audit (cheap COUNT + sample, not full scan)
+    try:
+        conn = db.db_connect("embeddings")
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT embedding, model FROM embedding_cache LIMIT 200")
+            foreign = {}
+            for r in cur.fetchall():
+                try:
+                    d = (len(r["embedding"]) // 4) if r["embedding"] else 0
+                    if d and d != exp_dim:
+                        foreign[r["model"]] = foreign.get(r["model"], 0) + 1
+                except Exception:
+                    continue
+            for m, c in foreign.items():
+                msg = (f"POISON RISK: embedding_cache holds {c}/200 sampled rows with dim != {exp_dim} "
+                       f"(model={m}). New endpoint with different dims will NOT reuse these rows "
+                       f"(quarantined per-row), but re-embedding everything is required for full alignment. "
+                       f"Do NOT switch EMBEDDING_MODEL lightly.")
+                logger.warning(msg)
+                warns.append(msg)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception as e:
+        warns.append(f"Stored-blob audit skipped: {e}")
+    # 2. Live endpoint probe (single text, parallel via existing batch fan-out)
+    if probe:
+        try:
+            eps = getattr(config, "EMBEDDING_ENDPOINTS", [])
+            for ep in list(eps):
+                try:
+                    from core.backends import create_backend
+                    prov = create_backend(ep)
+                    vecs = prov.embeddings(["alignment probe"], model=ep.get("model"))
+                    d = len(vecs[0]) if vecs and vecs[0] is not None else 0
+                    if d != exp_dim:
+                        msg = (f"POISON RISK: endpoint {ep.get('url')}:{ep.get('model')} returned dim={d}, "
+                               f"expected {exp_dim} (mxbai/1024 contract). EXCLUDED from rotation — "
+                               f"fix BACKEND_EMBEDDINGS_MODEL or run full re-embed migration.")
+                        logger.warning(msg)
+                        warns.append(msg)
+                        try:
+                            eps.remove(ep)
+                        except Exception:
+                            pass
+                    else:
+                        ok.append(ep)
+                except Exception as e:
+                    warns.append(f"Endpoint probe failed for {ep.get('url')}: {e}")
+            for w in warns:
+                print(f"  [EMBEDDING WARNING] {w}")
+        except Exception as e:
+            warns.append(f"Probe loop failed: {e}")
+    else:
+        ok = list(getattr(config, "EMBEDDING_ENDPOINTS", []))
+    return ok, warns
 
 
 def store_embedding_to_cache(text, embedding, model=None):
