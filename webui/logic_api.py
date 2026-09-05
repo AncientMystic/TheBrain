@@ -60,6 +60,18 @@ def register_logic_routes(app, require_auth):
         return {"items": [{"session": r["session_id"], "entries": r["n"],
                            "last_active": r["last_active"]} for r in rows]}
 
+    @app.post("/api/jobs/logic-learn", dependencies=[Depends(require_auth)])
+    async def start_logic_learn(payload: dict = None):
+        from webui import jobs as _jobs
+        jid = _jobs.create_job("logic-learn", payload or {})
+        return {"job_id": jid}
+
+    @app.post("/api/jobs/consolidate", dependencies=[Depends(require_auth)])
+    async def start_consolidate():
+        from webui import jobs as _jobs
+        jid = _jobs.create_job("consolidate", {})
+        return {"job_id": jid}
+
     @app.get("/api/memory/entries", dependencies=[Depends(require_auth)])
     async def memory_entries(session: str = "", limit: int = 30):
         limit = max(1, min(int(limit or 30), 100))

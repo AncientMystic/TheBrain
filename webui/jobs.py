@@ -38,6 +38,10 @@ def create_job(kind, params=None):
         target = _run_audit_real
     elif kind == "research":
         target = _run_research_real
+    elif kind == "logic-learn":
+        target = _run_logic_real
+    elif kind == "consolidate":
+        target = _run_consolidate_real
     t = threading.Thread(target=target, args=(job,), daemon=True)
     job["thread"] = t
     t.start()
@@ -269,6 +273,109 @@ def _run_research_real(job):
         _emit(job, {"type": "report", "path": str(report_path)})
     except Exception as e:
         _emit(job, {"type": "log", "level": "error", "msg": f"Research failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "progress", "done": 1, "total": 1})
+    _emit(job, {"type": "done", "ok": True})
+    job["done"] = True
+
+
+def _run_logic_real(job):
+    """Learn logic modules per file in a folder (same function as CLI --logic --input).
+
+    Sequential with per-file events; cancel checked between files. Emits log,
+    document (modules count in facts field), progress, done.
+    """
+    from pathlib import Path as _P
+    params = job.get("params", {})
+    raw_inp = str(params.get("input", ""))
+    try:
+        limit = params.get("limit")
+        limit = int(limit) if limit not in (None, "") else None
+    except Exception:
+        limit = None
+    dry = bool(params.get("dry"))
+    try:
+        inp = str(_P(raw_inp).expanduser().resolve())
+    except Exception as e:
+        _emit(job, {"type": "error", "msg": f"Invalid input path: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    import os as _os
+    _allowed = [r.strip() for r in _os.environ.get("THEBRAIN_ALLOWED_ROOTS", "").split(",") if r.strip()]
+    if _allowed and not any(inp.startswith(str(_P(r).expanduser().resolve())) for r in _allowed) and not params.get("allow_outside_root"):
+        _emit(job, {"type": "error", "msg": "Input outside THEBRAIN_ALLOWED_ROOTS"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    try:
+        from ingestion.scanner import scan_files
+        files = scan_files(inp)
+    except Exception:
+        try:
+            files = [p for p in _P(inp).rglob("*") if p.is_file()]
+        except Exception as e:
+            _emit(job, {"type": "error", "msg": f"Scan failed: {e}"})
+            _emit(job, {"type": "done", "ok": False})
+            job["done"] = True
+            return
+    if limit is not None:
+        files = files[:limit]
+    if dry:
+        for f in files:
+            _emit(job, {"type": "log", "level": "info", "msg": f"[DRY-RUN] Would learn: {getattr(f, 'name', f)}"})
+        _emit(job, {"type": "done", "ok": True})
+        job["done"] = True
+        return
+    if not files:
+        _emit(job, {"type": "log", "level": "warn", "msg": "No files found"})
+        _emit(job, {"type": "done", "ok": True})
+        job["done"] = True
+        return
+    try:
+        from logic.learn import learn_logic_from_file
+    except Exception as e:
+        _emit(job, {"type": "error", "msg": f"Import failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    done = 0
+    total = len(files)
+    for f in files:
+        if job["cancel"].is_set():
+            _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled (finishing current file safely)"})
+            break
+        fname = getattr(f, "name", str(f))
+        _emit(job, {"type": "log", "level": "info", "msg": f"Learning logic from {fname}"})
+        try:
+            ids = learn_logic_from_file(f) or []
+            _emit(job, {"type": "document", "name": fname, "chunks": -1, "facts": len(ids), "status": "done"})
+        except Exception as e:
+            _emit(job, {"type": "log", "level": "error", "msg": f"Failed {fname}: {e}"})
+            _emit(job, {"type": "document", "name": fname, "chunks": -1, "facts": -1, "status": "failed"})
+        done += 1
+        _emit(job, {"type": "progress", "done": done, "total": total})
+    _emit(job, {"type": "done", "ok": not job["cancel"].is_set()})
+    job["done"] = True
+
+
+def _run_consolidate_real(job):
+    """Run memory consolidation (same function as maintenance). Single call with events."""
+    if job["cancel"].is_set():
+        _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled before consolidation started"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info", "msg": "Starting memory consolidation"})
+    _emit(job, {"type": "progress", "done": 0, "total": 1})
+    try:
+        from scripts.consolidate_memories import consolidate
+        consolidate()
+        _emit(job, {"type": "log", "level": "info", "msg": "Consolidation finished"})
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Consolidation failed: {e}"})
         _emit(job, {"type": "done", "ok": False})
         job["done"] = True
         return

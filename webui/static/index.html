@@ -76,8 +76,13 @@ h2{margin:0 0 10px;font-size:16px}label{font-size:12px;color:var(--mut)}input,se
 </div>
 <div class="tab card" data-tab="Logic"><h2>🧠 Logic &amp; Memory</h2>
 <div class="row"><div><label>Module search</label><input id="l-q" placeholder="name, category or summary"></div><div><label>Session filter (blank = all)</label><input id="l-session" placeholder="session id"></div></div>
-<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="loadModules()">Modules</button><button class="btn ghost" onclick="loadSessions()">Sessions</button><button class="btn ghost" onclick="loadMemories()">Memories</button></div>
+<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" onclick="loadModules()">Modules</button><button class="btn ghost" onclick="loadSessions()">Sessions</button><button class="btn ghost" onclick="loadMemories()">Memories</button><button class="btn ghost" onclick="startConsolidate()">Consolidate memories</button></div>
 <div class="term" id="l-term" style="height:110px;margin-top:8px"></div><div id="l-list" style="margin-top:8px;display:grid;gap:6px"></div>
+<hr style="border-color:var(--line);margin:14px 0">
+<h2>📚 Learn from folder</h2>
+<div class="row"><div><label>Input folder</label><input id="ll-input" value="A:/logic_examples"></div><div><label>Limit (blank = all)</label><input id="ll-limit" placeholder=""></div></div>
+<div style="margin-top:8px;display:flex;gap:8px"><button class="btn" onclick="startLogicLearn()">Start learning</button><button class="btn ghost" onclick="cancelLogic()">Cancel</button><label style="align-self:center"><input type="checkbox" id="ll-dry"> Dry run</label></div>
+<div class="term" id="ll-term" style="height:130px;margin-top:8px"></div><div class="bar"><i id="ll-bar"></i></div><div class="docs" id="ll-docs"></div>
 </div>
 <div class="tab card" data-tab="More"><h2>📦 More (next batches)</h2><p style="color:var(--mut)">Remaining polish: learning jobs and consolidation runs reusing Guided job patterns.</p></div>
 </div>
@@ -124,6 +129,9 @@ function logicShow(rows,kind){const box=document.getElementById("l-list");box.in
 async function loadModules(){try{const q=document.getElementById("l-q").value||"";const r=await fetch(`/api/logic/modules?search=${encodeURIComponent(q)}&limit=50`,{headers:auth()});const j=await r.json();log("l-term",`modules: ${(j.items||[]).length}`);logicShow(j.items,"mod")}catch(e){log("l-term","modules failed")}}
 async function loadSessions(){try{const r=await fetch("/api/memory/sessions?limit=50",{headers:auth()});const j=await r.json();log("l-term",`sessions: ${(j.items||[]).length}`);logicShow(j.items,"ses")}catch(e){log("l-term","sessions failed")}}
 async function loadMemories(){try{const s=document.getElementById("l-session").value||"";const r=await fetch(`/api/memory/entries?session=${encodeURIComponent(s)}&limit=30`,{headers:auth()});const j=await r.json();log("l-term",`memories: ${(j.items||[]).length}`);logicShow(j.items,"mem")}catch(e){log("l-term","memories failed")}}
+let lljob=null;async function startLogicLearn(){const payload={input:document.getElementById("ll-input").value,limit:document.getElementById("ll-limit").value,dry:document.getElementById("ll-dry").checked};document.getElementById("ll-docs").innerHTML="";document.getElementById("ll-bar").style.width="0";try{const r=await fetch("/api/jobs/logic-learn",{method:"POST",headers:{...auth(),"Content-Type":"application/json"},body:JSON.stringify(payload)});const j=await r.json();lljob=j.job_id;log("ll-term","job "+lljob);const es=new EventSource(`/api/jobs/${lljob}/stream`);es.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==="log")log("ll-term",m.msg);if(m.type==="progress")document.getElementById("ll-bar").style.width=(100*m.done/Math.max(1,m.total))+"%";if(m.type==="document"){const d=document.createElement("div");d.className="doc";d.innerHTML=`<span>${m.name}</span><span style="color:var(--mut)">${m.facts} modules</span><span>${m.status==="done"?"✅":"❌"}</span>`;document.getElementById("ll-docs").appendChild(d)}if(m.type==="done"){log("ll-term","done ok="+m.ok);es.close()}};es.onerror=()=>es.close()}catch(e){log("ll-term","failed — check token")}}
+async function cancelLogic(){if(!lljob)return;await fetch(`/api/jobs/${lljob}/cancel`,{method:"POST",headers:auth()});log("ll-term","cancel sent")}
+async function startConsolidate(){try{const r=await fetch("/api/jobs/consolidate",{method:"POST",headers:auth()});const j=await r.json();log("l-term","consolidation job "+j.job_id+" (watch server log for progress)")}catch(e){log("l-term","consolidation failed")}}
 show("Guided");health();loadSchema();
 </script>
 </body>
