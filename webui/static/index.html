@@ -84,12 +84,11 @@ h2{margin:0 0 10px;font-size:16px}label{font-size:12px;color:var(--mut)}input,se
 <div style="margin-top:8px;display:flex;gap:8px"><button class="btn" onclick="startLogicLearn()">Start learning</button><button class="btn ghost" onclick="cancelLogic()">Cancel</button><label style="align-self:center"><input type="checkbox" id="ll-dry"> Dry run</label></div>
 <div class="term" id="ll-term" style="height:130px;margin-top:8px"></div><div class="bar"><i id="ll-bar"></i></div><div class="docs" id="ll-docs"></div>
 </div>
-<div class="tab card" data-tab="More"><h2>📦 More (next batches)</h2><p style="color:var(--mut)">Remaining polish: learning jobs and consolidation runs reusing Guided job patterns.</p></div>
 </div>
 <script>
-const TABS=["Guided","Config","Chat","Graph","Recoll","Audit","Server","Research","Logic","More"];let cur="Guided",token="",job=null,schema=null,ajob=null,rsjob=null;
+const TABS=["Guided","Config","Chat","Graph","Recoll","Audit","Server","Research","Logic"];let cur="Guided",token="",job=null,schema=null,ajob=null,rsjob=null;
 const rail=document.getElementById("rail");
-TABS.forEach(t=>{const b=document.createElement("button");b.textContent={Guided:"🧭",Config:"⚙️",Chat:"💬",Graph:"🕸️",Recoll:"🔎",Audit:"🛡️",Server:"🖥️",Research:"🔬",Logic:"🧠",More:"📦"}[t];b.title=t;b.onclick=()=>show(t);b.dataset.t=t;rail.appendChild(b)});
+TABS.forEach(t=>{const b=document.createElement("button");b.textContent={Guided:"🧭",Config:"⚙️",Chat:"💬",Graph:"🕸️",Recoll:"🔎",Audit:"🛡️",Server:"🖥️",Research:"🔬",Logic:"🧠"}[t];b.title=t;b.onclick=()=>show(t);b.dataset.t=t;rail.appendChild(b)});
 function show(t){cur=t;document.querySelectorAll(".rail button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));document.querySelectorAll(".tab").forEach(d=>d.classList.toggle("on",d.dataset.tab===t));if(t==="Config")renderConfig()}
 function saveToken(){token=document.getElementById("token").value;log("g-term","token kept in memory only")}
 function auth(){return token?{"Authorization":"Bearer "+token}:{}}
