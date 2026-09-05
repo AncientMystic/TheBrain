@@ -71,23 +71,94 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
         except Exception:
             chunk_entity_texts.append([])
 
-    # Entity linking via automaton (single pass per chunk, no DB)
+    # Entity linking via automaton with word boundaries + collective coherence prune.
+    # Single batched embedding fetch for all candidates (no per-chunk HTTP storm).
     linked = [[] for _ in range(n)]
+    _all_cands = []
     try:
         A = idx.alias_automaton
         if A is not None:
             for i, ch in enumerate(chunks):
                 try:
                     low = ch.lower()
-                    seen = set()
-                    for _, (canon, _) in A.iter(low):
-                        if canon not in seen:
-                            seen.add(canon)
-                            linked[i].append(canon)
-                            if len(linked[i]) >= 10:
+                    seen = {}
+                    for end_idx, (canon, term_lower) in A.iter(low):
+                        try:
+                            start_idx = end_idx - len(term_lower) + 1
+                            if start_idx > 0 and ch[start_idx - 1].isalnum():
+                                continue
+                            if end_idx + 1 < len(ch) and ch[end_idx + 1].isalnum():
+                                continue
+                            if canon not in seen:
+                                seen[canon] = term_lower
+                            if len(seen) >= 20:
                                 break
+                        except Exception:
+                            continue
+                    cands = list(seen.keys())[:20]
+                    linked[i] = cands
+                    _all_cands.extend(cands)
                 except Exception:
                     continue
+            # Single batch for all unique candidates
+            _uniq = list(dict.fromkeys(_all_cands))
+            _emap = {}
+            if _uniq:
+                try:
+                    from core.embeddings import get_embeddings_dict as _ged
+                    _emap = _ged(_uniq, space='hyperbolic')
+                except Exception:
+                    _emap = {}
+            # Per-chunk coherence prune using cached vectors (no HTTP in loop)
+            try:
+                from core.hyperbolic import ensure_hyperbolic as _eh, hyperbolic_distance_matrix as _dm
+                import numpy as _np3
+                for i in range(n):
+                    cands = linked[i]
+                    if len(cands) <= 4:
+                        continue
+                    vecs = []
+                    valid = []
+                    for c in cands:
+                        e = _emap.get(c)
+                        if e is None:
+                            valid.append(False)
+                        else:
+                            try:
+                                vecs.append(_eh(_np3.asarray(e, dtype=_np3.float32), space='hyperbolic'))
+                                valid.append(True)
+                            except Exception:
+                                valid.append(False)
+                    if sum(valid) < 3 or not vecs:
+                        linked[i] = cands[:10]
+                        continue
+                    try:
+                        pmat = _np3.stack(vecs)
+                        dmat = _dm(pmat, pmat)
+                        sims = 1.0 / (1.0 + dmat)
+                        _np3.fill_diagonal(sims, 0.0)
+                        means = sims.mean(axis=1)
+                        med = float(_np3.median(means))
+                        kept = []
+                        vi = 0
+                        for c, v in zip(cands, valid):
+                            if not v:
+                                kept.append(c)
+                                continue
+                            try:
+                                if float(means[vi]) >= med:
+                                    kept.append(c)
+                                vi += 1
+                            except Exception:
+                                vi += 1
+                                kept.append(c)
+                        if len(kept) < 4:
+                            kept = cands[:4]
+                        linked[i] = kept[:10]
+                    except Exception:
+                        linked[i] = cands[:10]
+            except Exception:
+                pass
     except Exception:
         pass
 
