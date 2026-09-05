@@ -113,14 +113,32 @@ class ExactVectorStore:
 
     def _load(self):
         import config as _cfg
-        # Try persisted index if fresh (no rebuild every 300s from scratch)
+        # Try persisted index if fresh (no rebuild every 300s from scratch).
+        # Metadata-validated (dim/table/cols must match; renamed/copied files never load silently).
         try:
             if Path(self._index_path).is_file() and Path(self._index_path).stat().st_mtime >= self._db_mtime():
-                data = np.load(self._index_path, mmap_mode='r')
+                data = np.load(self._index_path, mmap_mode='r', allow_pickle=True)
+                try:
+                    _meta = data["meta"].item() if "meta" in data else {}
+                    _exp_dim = int(getattr(_cfg, "EMBEDDING_DIM", 1024))
+                    if int(_meta.get("dim", _exp_dim)) != _exp_dim:
+                        raise ValueError("dim mismatch")
+                    if str(_meta.get("table", self.table_name)) != self.table_name:
+                        raise ValueError("table mismatch")
+                except Exception:
+                    raise ValueError("metadata mismatch")
                 self.ids = data['ids'].tolist()
                 pts = data['points']
-                # pts mmap read-only; copy only if needed for tree (tree stores np.array copy once)
                 self.points = [np.asarray(p, dtype=np.float32) for p in pts]
+                # Validate point dims before building tree (never mix foreign dims)
+                try:
+                    _exp2 = int(getattr(_cfg, "EMBEDDING_DIM", 1024))
+                    if any(len(p) != _exp2 for p in self.points):
+                        raise ValueError("point dim mismatch")
+                    if len(self.ids) != len(self.points):
+                        raise ValueError("ids/points length mismatch")
+                except Exception:
+                    raise ValueError("point validation failed")
                 leaf = int(getattr(_cfg, "BALL_TREE_LEAF_SIZE", 64))
                 self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=leaf)
                 print(f"Hyperbolic ball tree loaded from cache with {len(self.ids)} points.")
@@ -180,7 +198,10 @@ class ExactVectorStore:
             self.tree = HyperbolicBallTree(self.points, self.ids, leaf_size=leaf)
             print(f"Hyperbolic ball tree built with {len(self.ids)} points.")
             try:
-                np.savez_compressed(self._index_path, ids=np.array(self.ids), points=np.stack(self.points))
+                _meta = {"dim": int(getattr(_cfg2, "EMBEDDING_DIM", 1024)), "table": self.table_name,
+                         "id_col": self.id_col, "emb_col": self.emb_col, "leaf_size": leaf}
+                np.savez_compressed(self._index_path, ids=np.array(self.ids), points=np.stack(self.points),
+                                    meta=np.array(_meta, dtype=object))
             except Exception:
                 pass
 
