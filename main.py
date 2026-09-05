@@ -1614,6 +1614,13 @@ Return only JSON."""
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)
         print(f"\nGuided learning complete. Processed {tracker.processed_count} files.")
+        # Post-bulk optimize (online, cheap): updates query planner stats after bulk inserts.
+        # Same indexes/rows, faster subsequent retrieval. Never fails ingestion.
+        try:
+            from core.maintenance import optimize_databases
+            optimize_databases()
+        except Exception:
+            pass
         return
 
     print("No mode specified.")
