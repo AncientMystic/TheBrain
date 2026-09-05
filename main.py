@@ -17,7 +17,7 @@ def validate_config():
     # Warns loudly when new endpoint dims != EMBEDDING_DIM (mxbai/1024) — poison prevention.
     try:
         _argv = sys.argv[1:] if len(sys.argv) > 1 else []
-        _needs_emb = any(a in _argv for a in ("--guided-learning", "--chat", "--server", "--recoll-fast", "--recoll", "--audit", "--logic"))
+        _needs_emb = any(a in _argv for a in ("--guided-learning", "--chat", "--server", "--webui", "--recoll-fast", "--recoll", "--audit", "--logic"))
         if _needs_emb and "--help" not in _argv and "--dry-run" not in _argv:
             from core.embeddings import validate_embedding_config
             _ok, _warns = validate_embedding_config(probe=True)
@@ -1006,6 +1006,7 @@ def main():
         config.DEBUG_VERBOSE = True
 
     server_mode = "--server" in sys.argv
+    webui_mode = "--webui" in sys.argv
     guided = "--guided-learning" in sys.argv
     chat_mode = "--chat" in sys.argv
     audit_mode = "--audit" in sys.argv
@@ -1224,6 +1225,24 @@ def main():
                     time.sleep(1)
             except KeyboardInterrupt:
                 print("Exiting maintenance mode.")
+        return
+
+    if webui_mode:
+        import uvicorn
+        import webbrowser
+        import threading as _th
+        from server import app as server_app
+        try:
+            from webui.app import mount_webui
+            mount_webui(server_app)
+        except Exception as e:
+            print(f"  (WebUI mount skipped: {e})")
+        url = f"http://{'localhost' if config.SERVER_HOST in ('0.0.0.0', '') else config.SERVER_HOST}:{config.SERVER_PORT}/ui"
+        print(f"Starting TheBrain WebUI for everyone at {url}")
+        print("No setup needed — leave this window open, your browser opens automatically.")
+        if "--no-browser" not in sys.argv:
+            _th.Timer(1.5, lambda: webbrowser.open(url)).start()
+        uvicorn.run(server_app, host=config.SERVER_HOST, port=config.SERVER_PORT)
         return
 
     if server_mode:
