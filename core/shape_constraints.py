@@ -84,6 +84,34 @@ def edgeworth_clip(theta_grid):
     return g.astype(np.float32)
 
 
+def project_dominance(theta_p, theta_q, max_sweeps=50, tol=1e-6):
+    """Project pair (p,q) so slopes of p dominate q per interval.
+
+    Constraint per t: (p[t+1]-p[t]) - (q[t+1]-q[t]) >= 0.
+    Closed-form half-space step with a=[-1,+1,+1,-1], ||a||^2=4, iterated sweeps
+    until feasible (shared endpoints couple intervals; single sweep insufficient).
+    Generic, no doc-specific logic. Returns (p_out, q_out) copies.
+    """
+    p = np.asarray(theta_p, dtype=np.float64).copy()
+    q = np.asarray(theta_q, dtype=np.float64).copy()
+    m = min(len(p), len(q))
+    for _ in range(max_sweeps):
+        worst = 0.0
+        for t in range(m - 1):
+            gap = (p[t + 1] - p[t]) - (q[t + 1] - q[t])
+            if gap < worst:
+                worst = gap
+            if gap < 0:
+                adj = -gap / 4.0
+                p[t] -= adj
+                p[t + 1] += adj
+                q[t] += adj
+                q[t + 1] -= adj
+        if worst >= -tol:
+            break
+    return p.astype(np.float32), q.astype(np.float32)
+
+
 def trapezoid_clip(theta_vec, lower, upper):
     """Interval clipping per parameter: Lt <= theta <= Ut. 1 nnz/row."""
     t = np.asarray(theta_vec, dtype=np.float64)
