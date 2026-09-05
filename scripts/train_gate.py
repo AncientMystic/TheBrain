@@ -60,7 +60,13 @@ def train():
         val_outputs = np.array([gate.forward(f) for f in X_val])
         val_loss = -np.mean(y_val * np.log(val_outputs + 1e-8) + (1-y_val) * np.log(1-val_outputs + 1e-8))
         if epoch % 10 == 0:
-            print(f"Epoch {epoch}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}")
+            try:
+                from core.regime_audit import loading_fingerprint
+                fp = loading_fingerprint(gate)
+                print(f"Epoch {epoch}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}, "
+                      f"prime={fp['prime_support']:.2f} even={fp['even_support']:.2f} anchor={fp['anchor_coherence']:.2f}")
+            except Exception:
+                print(f"Epoch {epoch}: train_loss={avg_loss:.4f}, val_loss={val_loss:.4f}")
         if val_loss < best_loss - 1e-4:
             best_loss = val_loss
             no_improve = 0
