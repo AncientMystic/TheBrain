@@ -344,6 +344,27 @@ class VerificationManager:
             if vfact["verification_status"] in ("verified", "partially_verified"):
                 self.accepted_facts.append(vfact)
             results.append(vfact)
+        # Shape calibration (Phase 2.1): monotone confidence in verification strength
+        # (more layers passed -> >= confidence), trapezoidal [0,1]. Adjusts, never overwrites status.
+        try:
+            if getattr(config, "SHAPE_CALIBRATION_ENABLED", True) and len(results) >= 2:
+                from core.shape_constraints import calibrate_confidences
+                import numpy as _np
+                strengths = [sum(1 for v in r.get("verification_layers", []) if v.get("verified")) for r in results]
+                order = sorted(range(len(results)), key=lambda i: (strengths[i], results[i].get("confidence_final", 0.0)))
+                confs = [float(results[i].get("confidence_final", 0.0)) for i in order]
+                cal = calibrate_confidences(confs, monotone_idx=list(range(len(confs))),
+                                            trapezoid_bounds=([0.0] * len(confs), [1.0] * len(confs)))
+                for rank, i in enumerate(order):
+                    # Blend 50/50 to preserve original signal while enforcing shape (no hard overwrite)
+                    try:
+                        orig = float(results[i].get("confidence_final", 0.0))
+                        results[i]["confidence_final"] = float(0.5 * orig + 0.5 * float(cal[rank]))
+                        results[i]["shape_calibrated"] = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         return results
 
     def verify_single_online(self, fact: Dict, accepted_facts: List[Dict] = None) -> Dict:
