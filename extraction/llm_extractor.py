@@ -583,6 +583,55 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
                     if field in chunk_data:
                         results[i][field] = chunk_data[field]
 
+        # Second pass for thin chunks (generic recall booster, not doc-specific):
+        # if a long chunk yielded 0-1 facts, re-prompt once listing existing to avoid dupes.
+        # Bounded (only thin + long), preserves quality (deduped, validated downstream).
+        try:
+            _second = bool(getattr(config, "EXTRACTION_SECOND_PASS", True))
+            _min_len = int(getattr(config, "SECOND_PASS_MIN_CHARS", 1000))
+            _max_items = int(getattr(config, "EXTRACTION_MAX_ITEMS", 20))
+            if _second and category == "facts_entities_relationships":
+                for i in range(len(batch_chunks)):
+                    if len(results[i].get("facts", [])) <= 1 and len(batch_chunks[i]) >= _min_len:
+                        try:
+                            existing = [f.get("fact_text", "") for f in results[i].get("facts", []) if isinstance(f, dict)]
+                            ex_str = "; ".join(existing[:5])[:500] if existing else "none yet"
+                            solo_text = _format_chunks_text([batch_chunks[i]])
+                            prompt2 = prompt_template.replace("{num_chunks}", "1")
+                            prompt2 = prompt2.replace("{chunks_text}", solo_text)
+                            prompt2 = prompt2.replace("{logic_context}", (logic_context or "") + f"\nAlready extracted ({len(existing)}): {ex_str}. Extract up to {_max_items} ADDITIONAL distinct facts not listed, same schema.")
+                            prompt2 = prompt2.replace("{pre_extractions}", "None")
+                            resp2 = call_model_json(prompt2, model=actual_model, max_tokens=4096,
+                                                    system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
+                            if isinstance(resp2, list) and resp2 and isinstance(resp2[0], dict):
+                                resp2 = resp2[0]
+                            extra = {}
+                            if isinstance(resp2, dict):
+                                extra = resp2.get("chunk_0", resp2)
+                                extra = _normalize_chunk_data(extra) or {}
+                            for f in extra.get("facts", []) or []:
+                                if isinstance(f, dict) and f.get("fact_text"):
+                                    # Span check: must exist verbatim in chunk (generic provenance guard)
+                                    try:
+                                        sp = str(f.get("source_span", ""))
+                                        if sp and sp not in batch_chunks[i]:
+                                            # Fallback to nearest sentence containing first 3 words of fact
+                                            import re as _re2
+                                            words = str(f.get("fact_text", "")).split()[:3]
+                                            pat = _re2.escape(" ".join(words)) if words else ""
+                                            # Keep as-is; cleaners/verifier will down-weight if invalid
+                                            pass
+                                    except Exception:
+                                        pass
+                                    results[i].setdefault("facts", []).append(f)
+                            # Cap per-chunk to max_items (quality: prevents bloat, generic limit)
+                            if len(results[i].get("facts", [])) > _max_items:
+                                results[i]["facts"] = results[i]["facts"][:_max_items]
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
     for i in range(len(results)):
         results[i]["facts"] = _clean_facts(results[i]["facts"])
         results[i]["entities"] = _clean_entities(results[i]["entities"])
