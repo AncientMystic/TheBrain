@@ -15,7 +15,22 @@ from deep_research.coordinator import DeepResearchCoordinator
 import logging
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="TheBrain OpenAI-Compatible API")
+from contextlib import asynccontextmanager as _lifespan_cm
+
+
+@_lifespan_cm
+async def _lifespan(app_ref):
+    try:
+        from core.embeddings import validate_embedding_config
+        ok, warns = validate_embedding_config(probe=True)
+        if warns:
+            logger.warning(f"Embedding alignment: {len(ok)} ok, {len(warns)} warnings (poison prevention active)")
+    except Exception as e:
+        logger.warning(f"Embedding validation on startup skipped: {e}")
+    yield
+
+
+app = FastAPI(title="TheBrain OpenAI-Compatible API", lifespan=_lifespan)
 
 _cors_origins = getattr(config, "CORS_ORIGINS", [])
 app.add_middleware(
@@ -25,17 +40,6 @@ app.add_middleware(
     allow_methods=["*"] if _cors_origins else ["GET", "POST"],
     allow_headers=["*"] if _cors_origins else ["Content-Type", "Authorization"],
 )
-
-
-@app.on_event("startup")
-async def _validate_embeddings_on_startup():
-    try:
-        from core.embeddings import validate_embedding_config
-        ok, warns = validate_embedding_config(probe=True)
-        if warns:
-            logger.warning(f"Embedding alignment: {len(ok)} ok, {len(warns)} warnings (poison prevention active)")
-    except Exception as e:
-        logger.warning(f"Embedding validation on startup skipped: {e}")
 
 
 async def require_auth(authorization: Optional[str] = Header(None, alias="Authorization")):
