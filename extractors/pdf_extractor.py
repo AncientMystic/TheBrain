@@ -54,7 +54,7 @@ def ocr_pdf_pages(pdf_path, max_pages=None, dpi=None, title_pages=None, title_dp
     title_pages = min(title_pages, pages_to_process)
 
     print(f"    (Rendering and OCR'ing {pages_to_process} pages in batches of {config.OCR_BATCH_SIZE}...)", flush=True)
-    max_workers = min(os.cpu_count() or 4, 8)
+    max_workers = int(getattr(config, "OCR_WORKERS", min(os.cpu_count() or 4, 8)))
     full_text = []
     batch_size = getattr(config, "OCR_BATCH_SIZE", 64)
     for batch_start in range(0, pages_to_process, batch_size):

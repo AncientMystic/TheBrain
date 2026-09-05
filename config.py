@@ -175,6 +175,7 @@ TITLE_PAGE_DPI = 100
 TITLE_PAGE_COUNT = 3
 MIN_TEXT_CHARS_FOR_OCR_SKIP = 200
 OCR_BATCH_SIZE = int(os.environ.get("OCR_BATCH_SIZE", "64"))  # Pages per OCR batch
+OCR_WORKERS = int(os.environ.get("OCR_WORKERS", str(min(os.cpu_count() or 4, 8))))
 
 CHUNK_SIZE = 2000   # ~500 tokens, fits within 4KB context for most models
 CHUNK_OVERLAP = 200
