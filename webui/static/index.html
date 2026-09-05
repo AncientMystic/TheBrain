@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TheBrain WebUI (skeleton)</title>
+<style>
+:root{--bg1:#0b1026;--bg2:#2b1055;--glass:rgba(255,255,255,.08);--line:rgba(255,255,255,.14);--txt:#f2f5ff;--mut:#aab4d4;--acc1:#22d3ee;--acc2:#a78bfa;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 Inter,system-ui;color:var(--txt);background:radial-gradient(1200px 800px at 20% 10%,#1b2a6b,transparent),radial-gradient(1000px 700px at 85% 20%,#5b21b6,transparent),linear-gradient(160deg,var(--bg1),var(--bg2));min-height:100vh}
+.rail{position:fixed;left:0;top:0;bottom:0;width:64px;display:flex;flex-direction:column;gap:8px;align-items:center;padding:12px 0;background:rgba(0,0,0,.25);backdrop-filter:blur(18px);border-right:1px solid var(--line)}
+.rail button{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--glass);color:var(--txt);cursor:pointer;font-size:18px}
+.rail button.on{background:linear-gradient(135deg,var(--acc1),var(--acc2));color:#06121f;border:none}
+.main{margin-left:64px;padding:18px;max-width:1200px}
+.top{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.pill{padding:6px 12px;border-radius:999px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(18px);font-size:12px;color:var(--mut)}
+.card{background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:16px;backdrop-filter:blur(18px);box-shadow:0 8px 32px rgba(0,0,0,.35);margin-bottom:14px}
+h2{margin:0 0 10px;font-size:16px}label{font-size:12px;color:var(--mut)}input,select,textarea{width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--txt)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.btn{padding:9px 14px;border-radius:12px;border:none;cursor:pointer;background:linear-gradient(135deg,var(--acc1),var(--acc2));color:#06121f;font-weight:700}
+.btn.ghost{background:var(--glass);color:var(--txt);border:1px solid var(--line)}
+.term{background:rgba(0,0,0,.55);border:1px solid var(--line);border-radius:12px;padding:10px;height:220px;overflow:auto;font:12px/1.5 ui-monospace,Consolas;white-space:pre-wrap}
+.bar{height:10px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:8px}.bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc1),var(--acc2))}
+.docs{margin-top:10px;display:grid;gap:6px}.doc{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(0,0,0,.25);font-size:12px}
+.cfg-group{margin-bottom:12px}.cfg-item{display:grid;grid-template-columns:220px 1fr;gap:10px;padding:8px;border-bottom:1px solid var(--line);align-items:center}.cfg-item small{color:var(--mut);display:block}
+.tab{display:none}.tab.on{display:block}
+</style>
+</head>
+<body>
+<div class="rail" id="rail"></div>
+<div class="main">
+<div class="top"><span class="pill" id="health">health…</span><input id="token" placeholder="Bearer token (memory only)" style="max-width:260px"><button class="btn ghost" onclick="saveToken()">Use token</button><input id="q" placeholder="Search config…" style="max-width:220px" oninput="renderConfig()"></div>
+
+<div class="tab card" data-tab="Guided"><h2>🧭 Guided Learning</h2>
+<div class="row"><div><label>Input folder (server path)</label><input id="g-input" value="A:/pdfs"></div><div><label>Limit files (empty = all)</label><input id="g-limit" placeholder=""></div></div>
+<div class="row3" style="margin-top:8px"><label><input type="checkbox" id="g-verified"> Verified folder</label><label><input type="checkbox" id="g-logic"> Use logic modules</label><label><input type="checkbox" id="g-dry"> Dry run</label></div>
+<div style="margin-top:10px;display:flex;gap:8px"><button class="btn" onclick="startGuided()">Start</button><button class="btn ghost" onclick="cancelJob()">Cancel</button></div>
+<div class="term" id="g-term"></div><div class="bar"><i id="g-bar"></i></div><div class="docs" id="g-docs"></div>
+</div>
+
+<div class="tab card" data-tab="Config"><h2>⚙️ Full Config (every option + what it does)</h2><div id="cfg"></div></div>
+<div class="tab card" data-tab="Chat"><h2>💬 Chat (next batch)</h2><p style="color:var(--mut)">Skeleton batch 1 ships Guided + Config. Chat streams in batch 2.</p></div>
+<div class="tab card" data-tab="Graph"><h2>🕸️ Deep Graph (next batch)</h2><p style="color:var(--mut)">Mindmap canvas + log + right-click Deep research / Recoll fast / Recoll search lands in batch 3.</p></div>
+<div class="tab card" data-tab="Recoll"><h2>🔎 Recoll (next batch)</h2><p style="color:var(--mut)">Guided / Fast / Index builder with same terminal + progress component.</p></div>
+<div class="tab card" data-tab="More"><h2>📦 Audit · Logic · Research · Server (next batches)</h2><p style="color:var(--mut)">Each gets folder inputs + settings + terminal + progress, reusing Guided components.</p></div>
+</div>
+<script>
+const TABS=["Guided","Config","Chat","Graph","Recoll","More"];let cur="Guided",token="",job=null,schema=null;
+const rail=document.getElementById("rail");
+TABS.forEach(t=>{const b=document.createElement("button");b.textContent={Guided:"🧭",Config:"⚙️",Chat:"💬",Graph:"🕸️",Recoll:"🔎",More:"📦"}[t];b.title=t;b.onclick=()=>show(t);b.dataset.t=t;rail.appendChild(b)});
+function show(t){cur=t;document.querySelectorAll(".rail button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));document.querySelectorAll(".tab").forEach(d=>d.classList.toggle("on",d.dataset.tab===t));if(t==="Config")renderConfig()}
+function saveToken(){token=document.getElementById("token").value;log("g-term","token kept in memory only")}
+function auth(){return token?{"Authorization":"Bearer "+token}:{}}
+function log(id,m){const e=document.getElementById(id);e.textContent+=m+"\n";e.scrollTop=e.scrollHeight}
+async function health(){try{const r=await fetch("/api/health/summary");const j=await r.json();document.getElementById("health").textContent=`endpoints ${j.llm_endpoints} · ${j.embedding_model} ${j.embedding_dim}d`}catch(e){document.getElementById("health").textContent="backend offline (UI skeleton still works)"}}
+async function loadSchema(){try{const r=await fetch("/api/config/schema",{headers:auth()});if(!r.ok)throw 0;schema=await r.json();renderConfig()}catch(e){document.getElementById("cfg").innerHTML="<p style='color:var(--mut)'>Set token above if auth is on, then reopen Config.</p>"}}
+function renderConfig(){if(!schema)return;const q=(document.getElementById("q").value||"").toLowerCase();const box=document.getElementById("cfg");box.innerHTML="";schema.groups.forEach(g=>{const items=schema.items.filter(it=>it.group===g&&(!q||it.key.toLowerCase().includes(q)||it.doc.toLowerCase().includes(q)));if(!items.length)return;const d=document.createElement("div");d.className="cfg-group";d.innerHTML=`<h2>${g}</h2>`;items.forEach(it=>{const row=document.createElement("div");row.className="cfg-item";let ctrl="";if(it.kind==="bool"){ctrl=`<input type="checkbox" ${it.value?"checked":""} disabled title="editable in batch 2">`}else{ctrl=`<input value="${String(it.value??"").slice(0,120)}" disabled title="editable in batch 2">`}row.innerHTML=`<div><b>${it.key}</b><small>${it.doc}</small></div><div>${ctrl}</div>`;d.appendChild(row)});box.appendChild(d)})}
+async function startGuided(){const payload={input:document.getElementById("g-input").value,limit:document.getElementById("g-limit").value,verified:document.getElementById("g-verified").checked,logic:document.getElementById("g-logic").checked,dry:document.getElementById("g-dry").checked};document.getElementById("g-docs").innerHTML="";document.getElementById("g-bar").style.width="0";try{const r=await fetch("/api/jobs/guided",{method:"POST",headers:{...auth(),"Content-Type":"application/json"},body:JSON.stringify(payload)});const j=await r.json();job=j.job_id;log("g-term","job "+job);stream()}catch(e){log("g-term","backend offline — skeleton stream unavailable")}}
+async function stream(){if(!job)return;const es=new EventSource(`/api/jobs/${job}/stream`);es.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==="log")log("g-term",m.msg);if(m.type==="progress")document.getElementById("g-bar").style.width=(100*m.done/m.total)+"%";if(m.type==="document"){const d=document.createElement("div");d.className="doc";d.innerHTML=`<span>${m.name}</span><span>${m.chunks} chunks</span><span>${m.facts} facts</span><span>✅</span>`;document.getElementById("g-docs").appendChild(d)}if(m.type==="done"){log("g-term","done ok="+m.ok);es.close()}};es.onerror=()=>es.close()}
+async function cancelJob(){if(!job)return;await fetch(`/api/jobs/${job}/cancel`,{method:"POST",headers:auth()});log("g-term","cancel sent")}
+show("Guided");health();loadSchema();
+</script>
+</body>
+</html>
