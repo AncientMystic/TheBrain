@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EvidenceAnswer",
+  "description": "Typed Anchor -> Normalize -> Propose handoff for retrieval-to-reasoning. Every claim carries anchors, normalized form, evidence refs, truth class, confidence, and policy/explanation status. Generic, no document-specific fields.",
+  "type": "object",
+  "required": ["contract", "query", "anchors", "claims"],
+  "properties": {
+    "contract": {"const": "evidence-answer/v1"},
+    "query": {"type": "string", "minLength": 1},
+    "anchors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["anchor_id", "kind", "text"],
+        "properties": {
+          "anchor_id": {"type": "string"},
+          "kind": {"enum": ["keyword", "entity", "date", "topic", "chunk"]},
+          "text": {"type": "string"},
+          "source": {"type": "string"}
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "statement", "truth_class", "confidence", "anchor_ids", "evidence"],
+        "properties": {
+          "claim_id": {"type": "string"},
+          "statement": {"type": "string", "minLength": 1},
+          "truth_class": {"enum": ["OBSERVED", "ASSERTED", "INFERRED", "REPUTED"]},
+          "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+          "anchor_ids": {"type": "array", "items": {"type": "string"}},
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["doc", "span"],
+              "properties": {
+                "doc": {"type": "string"},
+                "span": {"type": "string"},
+                "chunk_id": {"type": ["integer", "null"]}
+              }
+            }
+          },
+          "explanation_status": {"enum": ["grounded", "partial", "ungrounded"]},
+          "policy_status": {"enum": ["admitted", "review", "blocked"]}
+        }
+      }
+    },
+    "vector_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chunk_id", "similarity"],
+        "properties": {
+          "chunk_id": {"type": "integer"},
+          "similarity": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+        }
+      }
+    }
+  }
+}

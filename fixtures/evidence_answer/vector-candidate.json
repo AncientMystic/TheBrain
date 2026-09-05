@@ -1,0 +1,13 @@
+{
+  "contract": "evidence-answer/v1",
+  "query": "Which trough separates Zealandia from Australia?",
+  "anchors": [
+    {"anchor_id": "a1", "kind": "entity", "text": "Zealandia", "source": "query"},
+    {"anchor_id": "a2", "kind": "entity", "text": "Australia", "source": "query"}
+  ],
+  "claims": [],
+  "vector_candidates": [
+    {"chunk_id": 4, "similarity": 0.77},
+    {"chunk_id": 9, "similarity": 0.71}
+  ]
+}

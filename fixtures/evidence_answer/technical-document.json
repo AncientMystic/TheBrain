@@ -1,0 +1,21 @@
+{
+  "contract": "evidence-answer/v1",
+  "query": "What elevation defines Zealandia?",
+  "anchors": [
+    {"anchor_id": "a1", "kind": "entity", "text": "Zealandia", "source": "query"},
+    {"anchor_id": "a2", "kind": "keyword", "text": "elevation", "source": "query"}
+  ],
+  "claims": [
+    {
+      "claim_id": "c1",
+      "statement": "Zealandia has a modal elevation of -1100 m.",
+      "truth_class": "OBSERVED",
+      "confidence": 0.9,
+      "anchor_ids": ["a1", "a2"],
+      "evidence": [{"doc": "zealandia.pdf", "span": "modal elevation of -1100 m", "chunk_id": 1}],
+      "explanation_status": "grounded",
+      "policy_status": "admitted"
+    }
+  ],
+  "vector_candidates": [{"chunk_id": 1, "similarity": 0.82}]
+}
