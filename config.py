@@ -280,9 +280,12 @@ USE_LOCAL_EMBEDDER = True
 LOCAL_EMBED_QUEUE_SIZE = int(os.environ.get('LOCAL_EMBED_QUEUE_SIZE', '100'))
 
 
-# --- Parallel processing ---
-PARALLEL_PROCESSING_ENABLED = False
-PARALLEL_WORKERS = 3
+# --- Parallel processing (safe defaults: 2 workers, per-file independent, WAL + pooled) ---
+PARALLEL_PROCESSING_ENABLED = os.environ.get("PARALLEL_PROCESSING_ENABLED", "true").lower() == "true"
+PARALLEL_WORKERS = int(os.environ.get("PARALLEL_WORKERS", "2"))
+PREFETCH_DEPTH = int(os.environ.get("PREFETCH_DEPTH", "1"))
+GC_EVERY_N_FILES = int(os.environ.get("GC_EVERY_N_FILES", "25"))
+GC_MEM_MB = int(os.environ.get("GC_MEM_MB", "500"))
 
 # --- Graph optimization ---
 BATCH_GLOBAL_NODE_LOOKUPS = True  # use in-memory map for exact matches
@@ -417,8 +420,6 @@ MEMORY_DECAY_ENABLED = True
 MEMORY_DECAY_FACTOR = 0.0001   # ~7h half-life, empirically chosen for balanced recall  # decay per second (approx half-life ~2h)
 FTS_ENABLED = True
 USE_LLM_HTTP_SESSION = True
-PARALLEL_PROCESSING_ENABLED = False
-PARALLEL_WORKERS = 2
 ADAPTIVE_VERIFICATION = True
 VERIFICATION_ESCALATION_THRESHOLD = 0.6
 AUTO_RESOLVE_CONTRADICTIONS = False

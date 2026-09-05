@@ -137,7 +137,7 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
         print(f"  Extracted {len(text)} chars")
         conn = db.db_connect("index")
         store_document(conn, file_hash, str(filepath), filepath.name, file_format, text, metadata,
-                       ocr_used=result.get("ocr_used", False), page_count=None)
+                       ocr_used=ocr_used, page_count=None)
         conn.commit()
         if preloaded is None:
             # Check if chunks already exist for this document (cache)
@@ -158,12 +158,30 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
 
             print("  Generating embeddings...")
             chunk_embs = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+        else:
+            # Preloaded path (fixed): persist chunks not yet stored, reuse embeddings.
+            try:
+                conn_idx = db.db_connect("index")
+                cur_idx = conn_idx.cursor()
+                cur_idx.execute("SELECT COUNT(*) AS n FROM document_chunks WHERE doc_hash=?", (file_hash,))
+                _nrow = cur_idx.fetchone()
+                _n = _nrow["n"] if _nrow else 0
+                conn_idx.close()
+            except Exception:
+                _n = 0
+            if not _n:
+                print(f"  Created {len(chunks)} chunks (prefetched)")
+                store_chunks(conn, file_hash, chunks)
+            conn.commit()
+            conn.close()
+            print("  (Reusing prefetched embeddings)")
         # Compute document embedding as hyperbolic Frechet mean of chunk embeddings
+        # (chunk_embs already hyperbolic; single ensure, no double exp_map)
         if chunk_embs:
             valid_embs = [np.array(emb, dtype=np.float32) for emb in chunk_embs if emb is not None]
             if valid_embs:
-                from core.hyperbolic import exp_map, frechet_mean
-                hyperbolic_points = [exp_map(emb) for emb in valid_embs]
+                from core.hyperbolic import ensure_hyperbolic, frechet_mean
+                hyperbolic_points = [ensure_hyperbolic(emb, space='hyperbolic') for emb in valid_embs]
                 doc_emb_hyper = frechet_mean(hyperbolic_points)
                 blob = sqlite3.Binary(doc_emb_hyper.tobytes())
                 conn_emb = db.db_connect("embeddings")
@@ -1443,11 +1461,17 @@ Return only JSON."""
 
                 def process_one(f):
                     nonlocal processed_count
+                    # Single extraction per file (no double parse/OCR): prepare once,
+                    # reuse text for logic decision + pass preloaded into process_file.
+                    try:
+                        _prep = prepare_next_file(f)
+                    except Exception as e:
+                        print(f"  (Prepare error for {getattr(f, 'name', f)}: {e})")
+                        _prep = None
                     logic_context = ""
-                    if logic_mode:
+                    if logic_mode and _prep and _prep.get("text"):
                         try:
-                            result = extract_text_from_file(f)
-                            first_text = result["text"][:1000]
+                            first_text = _prep["text"][:1000]
                             logic_ids = decide_logic_modules(first_text, context=first_text)
                             if logic_ids:
                                 conn = db.db_connect("logic")
@@ -1466,13 +1490,19 @@ Return only JSON."""
                             promote_verified_file(file_hash, f.name, source_file=f)
                             tracker.processed_count += 1
                             return None
-                    success = process_file(f, tracker, logic_context=logic_context)
+                    success = process_file(f, tracker, logic_context=logic_context, preloaded=_prep)
                     with tracker_lock:
                         tracker.processed_count += 1
                         if success and verified_flag:
                             file_hash = get_file_hash(f)
                             promote_verified_file(file_hash, f.name, source_file=f)
-                    gc.collect()
+                        # Smart GC: every N files only (no per-file stall, no sleep)
+                        try:
+                            _every = int(getattr(config, "GC_EVERY_N_FILES", 25))
+                            if tracker.processed_count % max(1, _every) == 0:
+                                gc.collect()
+                        except Exception:
+                            pass
                     return None
 
                 if limit_files is not None:
@@ -1495,13 +1525,34 @@ Return only JSON."""
                     if dry_run:
                         print(f"[DRY-RUN] Would process: {f.name}")
                         continue
-                    # sequential code preserved as before
+                    # Use prefetched data if available (resolved-path identity, not object identity)
+                    preloaded = None
+                    try:
+                        from pathlib import Path as _P
+                        _cur_res = str(_P(f).expanduser().resolve())
+                    except Exception:
+                        _cur_res = str(f)
+                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and prefetched_data:
+                        try:
+                            from pathlib import Path as _P2
+                            _pre_res = str(_P2(prefetched_data.get("file", "")).expanduser().resolve())
+                        except Exception:
+                            _pre_res = str(prefetched_data.get("file", ""))
+                        if _pre_res == _cur_res:
+                            preloaded = prefetched_data
+                            prefetched_data = None
+                            print("  (Using prefetched data)")
+                    # sequential logic reuses prefetched/preloaded text (no double parse/OCR)
                     logic_context = ""
                     if logic_mode:
                         try:
-                            result = extract_text_from_file(f)
-                            first_text = result["text"][:1000]
-                            logic_ids = decide_logic_modules(first_text, context=first_text)
+                            _ltext = None
+                            if preloaded and preloaded.get("text"):
+                                _ltext = preloaded["text"][:1000]
+                            else:
+                                _lr = extract_text_from_file(f)
+                                _ltext = _lr["text"][:1000]
+                            logic_ids = decide_logic_modules(_ltext, context=_ltext)
                             if logic_ids:
                                 conn = db.db_connect("logic")
                                 cur = conn.cursor()
@@ -1517,15 +1568,13 @@ Return only JSON."""
                     if tracker.is_processed(file_hash) and verified_flag:
                         promote_verified_file(file_hash, f.name, source_file=f)
                         tracker.processed_count += 1
-                        gc.collect()
-                        time.sleep(0.1)
+                        try:
+                            _every0 = int(getattr(config, "GC_EVERY_N_FILES", 25))
+                            if tracker.processed_count % max(1, _every0) == 0:
+                                gc.collect()
+                        except Exception:
+                            pass
                         continue
-                    # Use prefetched data if available
-                    preloaded = None
-                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and prefetched_data and prefetched_data["file"] == f:
-                        preloaded = prefetched_data
-                        prefetched_data = None
-                        print("  (Using prefetched data)")
                     # Spawn prefetch for next file
                     if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and idx + 1 < len(files):
                         next_file = files[idx + 1]
@@ -1541,8 +1590,12 @@ Return only JSON."""
                     if success and verified_flag:
                         file_hash = get_file_hash(f)
                         promote_verified_file(file_hash, f.name, source_file=f)
-                    gc.collect()
-                    time.sleep(0.1)
+                    try:
+                        _every1 = int(getattr(config, "GC_EVERY_N_FILES", 25))
+                        if tracker.processed_count % max(1, _every1) == 0:
+                            gc.collect()
+                    except Exception:
+                        pass
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)
