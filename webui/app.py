@@ -29,6 +29,11 @@ def mount_webui(app):
         register_chat_routes(app, _auth)
     except Exception as e:
         print(f"  (Chat routes skipped: {e})")
+    try:
+        from webui.config_api import register_config_routes
+        register_config_routes(app, _auth)
+    except Exception as e:
+        print(f"  (Config routes skipped: {e})")
 
     @app.get("/api/health/summary")
     async def health_summary():
