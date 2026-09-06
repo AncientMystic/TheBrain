@@ -81,7 +81,11 @@ def mount_webui(app):
         return {"job_id": jid}
 
     @app.get("/api/jobs/{jid}/stream")
-    async def job_stream(jid: str):
+    async def job_stream(jid: str, token: str = None):
+        # SSE: EventSource cannot send headers, so auth uses ?token= when enabled.
+        _expected = str(getattr(config, "SERVER_AUTH_TOKEN", "") or "")
+        if _expected and token != _expected:
+            raise HTTPException(401, "Invalid auth token")
         # SSE with mocked buffered events (skeleton: drain current queue, then done hint)
         from fastapi.responses import StreamingResponse
         import asyncio

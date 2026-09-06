@@ -7,7 +7,7 @@ each toggle does. Safe to extend: add entries to DOCS for new keys.
 import config as _cfg
 
 GROUPS = {
-    "server": ["SERVER_HOST", "SERVER_PORT", "SERVER_AUTH_TOKEN", "CORS_ORIGINS"],
+    "server": ["SERVER_HOST", "SERVER_PORT", "SERVER_AUTH_TOKEN", "REQUIRE_AUTH", "CORS_ORIGINS"],
     "backends": ["BACKEND_TYPE", "BACKEND_URL", "BACKEND_MODEL", "BACKEND_EMBEDDINGS_MODEL", "BACKEND_API_KEY", "BACKEND_CONFIG_JSON"],
     "chunking": ["CHUNK_SIZE", "CHUNK_OVERLAP", "LLM_BATCH_CHUNKS", "LLM_BATCH_SMALL", "LLM_BATCH_LARGE", "LLM_BATCH_MAX", "CHUNK_EXTRACTION_WORKERS"],
     "embeddings": ["EMBEDDING_MODEL", "EMBEDDING_DIM", "EMBEDDING_BATCH_SIZE", "EMBEDDING_CACHE_TTL", "EMBEDDING_CACHE_MAXSIZE", "EMBEDDING_QUANT", "LOCAL_EMBEDDER_MODEL_REPO"],
@@ -24,7 +24,8 @@ GROUPS = {
 DOCS = {
     "SERVER_HOST": "Bind address (127.0.0.1 local only, 0.0.0.0 LAN).",
     "SERVER_PORT": "API port.",
-    "SERVER_AUTH_TOKEN": "Bearer token required for /v1/* and /api/* (empty = open, warning on LAN).",
+    "SERVER_AUTH_TOKEN": "Bearer token for /v1/* and /api/* (empty = open/disabled by default, warning on LAN; SSE streams use ?token=).",
+    "REQUIRE_AUTH": "Fail-fast at startup if true with no token (default false). Setting a token alone enables auth.",
     "CORS_ORIGINS": "Allowed browser origins, comma-separated (empty = none).",
     "BACKEND_TYPE": "Provider: lmstudio, ollama, koboldcpp, openai_compatible.",
     "BACKEND_URL": "Base URL of main backend.",
