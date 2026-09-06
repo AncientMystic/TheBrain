@@ -51,6 +51,91 @@ def register_server_routes(app, require_auth):
         except Exception as e:
             return {"metrics": "", "error": str(e)[:200]}
 
+    @app.get("/api/server/overview", dependencies=[Depends(require_auth)])
+    async def server_overview():
+        """Single-call dashboard payload: health, endpoints, DB sizes,
+        corpus counts (cheap COUNTs only) + parsed metric stats.
+
+        Powers the futuristic dashboard tab with one round-trip; every
+        source below reuses existing helpers (no duplicated logic).
+        """
+        import config as _cfg
+        out = {"ok": True}
+        try:
+            out["llm_endpoints"] = len(getattr(_cfg, "LLM_ENDPOINTS", []))
+            out["embedding_model"] = str(getattr(_cfg, "EMBEDDING_MODEL", ""))
+            out["embedding_dim"] = int(getattr(_cfg, "EMBEDDING_DIM", 1024))
+        except Exception:
+            out["llm_endpoints"] = 0
+        # Corpus counts (indexed COUNTs, no content reads)
+        counts = {}
+        try:
+            from core import db as _db
+            for _alias, _sql in (
+                ("facts", "SELECT COUNT(*) AS n FROM key_facts"),
+                ("chunks", "SELECT COUNT(*) AS n FROM document_chunks"),
+                ("docs", "SELECT COUNT(*) AS n FROM documents"),
+                ("memories", "SELECT COUNT(*) AS n FROM memory_entries"),
+                ("logic_modules", "SELECT COUNT(*) AS n FROM logic_modules"),
+            ):
+                try:
+                    _c = _db.db_connect("key_facts" if _alias == "facts" else
+                                        "index" if _alias in ("chunks", "docs") else
+                                        "memories" if _alias == "memories" else "logic")
+                    _row = _c.execute(_sql).fetchone()
+                    counts[_alias] = int(_row["n"]) if _row else 0
+                    _c.close()
+                except Exception:
+                    counts[_alias] = 0
+        except Exception:
+            pass
+        out["counts"] = counts
+        # Metric stats: counters raw + histogram count/avg/p95 (capped)
+        stats = {"counters": {}, "timings": {}}
+        try:
+            from core.metrics import get_all_metrics
+            _cur = None
+            for _line in (get_all_metrics() or "").splitlines():
+                _line = _line.strip()
+                if not _line or _line.startswith("#"):
+                    continue
+                _parts = _line.split()
+                if len(_parts) != 2:
+                    continue
+                _name, _val = _parts
+                try:
+                    _f = float(_val)
+                except Exception:
+                    continue
+                if _name.endswith("_bucket") or _name.endswith("_sum"):
+                    continue
+                stats["counters"][_name] = _f
+            # Derive timing summaries from known histogram families
+            try:
+                from core.metrics import get_histogram
+                import math as _math
+                for _h in ("extraction_duration_seconds", "chat_duration_seconds",
+                           "retrieval_duration_seconds", "embedding_duration_seconds"):
+                    try:
+                        _vals = sorted(get_histogram(_h))
+                    except Exception:
+                        continue
+                    if not _vals:
+                        continue
+                    _vals = _vals[-500:]
+                    _n = len(_vals)
+                    stats["timings"][_h] = {
+                        "n": _n, "avg": round(sum(_vals) / _n, 2),
+                        "p95": round(_vals[min(_n - 1, int(_n * 0.95))], 2),
+                        "max": round(_vals[-1], 2),
+                    }
+            except Exception:
+                pass
+        except Exception as e:
+            stats["error"] = str(e)[:200]
+        out["metrics"] = stats
+        return out
+
     @app.get("/api/server/dbs", dependencies=[Depends(require_auth)])
     async def server_dbs():
         import os as _os
