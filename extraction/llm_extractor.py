@@ -727,15 +727,21 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             if kept_pts and skipped_idx:
                 try:
                     kmat = _npf.stack([ensure_hyperbolic(_npf.asarray(e, dtype=_npf.float32), space='hyperbolic') for e in kept_pts])
-                    scores = []
+                    # One batched matrix for all skipped (was one call per chunk):
+                    # same min-distance scores, O(1) Python/FFI round-trips.
+                    qrows, qidx = [], []
                     for i in skipped_idx:
                         emb = chunk_embeddings[i]
                         if emb is None:
-                            scores.append((float('inf'), i))
                             continue
-                        qh = ensure_hyperbolic(_npf.asarray(emb, dtype=_npf.float32), space='hyperbolic')[None, :]
-                        d = float(_npf.min(hyperbolic_distance_matrix(qh, kmat)[0]))
-                        scores.append((d, i))
+                        qrows.append(ensure_hyperbolic(_npf.asarray(emb, dtype=_npf.float32), space='hyperbolic'))
+                        qidx.append(i)
+                    scores = [(float('inf'), i) for i in skipped_idx if chunk_embeddings[i] is None]
+                    if qrows:
+                        qmat = _npf.stack(qrows)
+                        dmat = hyperbolic_distance_matrix(qmat, kmat)
+                        for row, i in zip(dmat, qidx):
+                            scores.append((float(_npf.min(row)), i))
                     scores.sort(reverse=True)
                     need = min_keep - kept
                     for _, i in scores[:need]:
@@ -760,9 +766,29 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             if _fast_extractor_instance is None:
                 _fast_extractor_instance = FastExtractor()
             fast_extractor = _fast_extractor_instance
-            fast_pre_results = []
-            for chunk in chunks:
-                fast_pre_results.append(fast_extractor.extract(chunk))
+            # Threaded pre-pass: extract() is stateless and the ONNX session
+            # is read-only after init (session.run is thread-safe). executor.map
+            # preserves chunk order, so downstream indexing is unchanged.
+            import concurrent.futures as _cf_pre
+            _pre_workers = max(1, int(getattr(config, "FAST_EXTRACTOR_WORKERS", 4)))
+            # Thread only on CPU-provider sessions: DML/CUDA EPs crash on
+            # concurrent Run (0xC0000005 observed with DmlExecutionProvider).
+            _thread_safe_ep = True
+            try:
+                _onnx = getattr(fast_extractor, "onnx_extractor", None)
+                _sess = getattr(_onnx, "session", None) if _onnx is not None else None
+                if _sess is not None:
+                    _provs = [str(p) for p in (_sess.get_providers() or [])]
+                    _thread_safe_ep = _provs == ["CPUExecutionProvider"]
+            except Exception:
+                _thread_safe_ep = False
+            if len(chunks) > 1 and _pre_workers > 1 and _thread_safe_ep:
+                with _cf_pre.ThreadPoolExecutor(max_workers=min(_pre_workers, len(chunks))) as _ex:
+                    fast_pre_results = list(_ex.map(fast_extractor.extract, chunks))
+            else:
+                if len(chunks) > 1 and _pre_workers > 1 and not _thread_safe_ep:
+                    print("    (Pre-pass serial: non-CPU ONNX provider is not thread-safe)")
+                fast_pre_results = [fast_extractor.extract(c) for c in chunks]
         except Exception as e:
             print(f"    (Fast extractor error: {e}); falling back to full LLM extraction.")
             fast_pre_results = None
