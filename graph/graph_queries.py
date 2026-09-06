@@ -58,12 +58,22 @@ def get_facts_by_keyword(keyword, limit=50):
 
     collected = {}
 
-    # FTS prefix search
+    # FTS prefix search (sanitized: raw user text with FTS5 syntax chars
+    # like . , : ( ) * would otherwise raise "syntax error near ...").
+    def _fts_prefix_or(_text):
+        import re as _re2
+        _toks = _re2.findall(r"[A-Za-z0-9_]+", _text or "")
+        if not _toks:
+            return ""
+        return " OR ".join(f'"{_t}"*' for _t in _toks[:10])
+
     if config.FTS_ENABLED:
         conn = db.db_connect("key_facts")
         cur = conn.cursor()
         for v in variants:
-            fts_query = v.replace('"', '""') + "*"
+            fts_query = _fts_prefix_or(v)
+            if not fts_query:
+                continue
             try:
                 cur.execute("""
                     SELECT f.fact_id, f.doc_hash, f.doc_name, f.fact_type, f.fact_text,

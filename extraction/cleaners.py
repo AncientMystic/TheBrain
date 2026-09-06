@@ -1,6 +1,12 @@
 RELAXED_MODE = False
 """Utility functions for cleaning extracted data."""
 import re
+
+try:
+    from core.text_utils import repair_mojibake as _repair_mojibake
+except Exception:
+    def _repair_mojibake(s):
+        return s
 __all__ = [
     '_truncate', '_safe_str', '_normalize_text_for_compare', '_is_verbatim_copy',
     '_shorten_source_span', '_normalize_name_text', '_is_redundant_span',
@@ -22,6 +28,12 @@ def _safe_str(value, max_len):
         return ""
     if not isinstance(value, str):
         value = str(value)
+    # Repair UTF-8-as-latin-1 mojibake before truncation (every cleaned
+    # text field flows through here: facts, entities, spans, names).
+    try:
+        value = _repair_mojibake(value)
+    except Exception:
+        pass
     return _truncate(value, max_len)
 
 def _normalize_text_for_compare(text):
