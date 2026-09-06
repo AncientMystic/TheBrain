@@ -13,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from retrieval.orchestrator import RetrievalOrchestrator
-from chat.query_analyzer import analyze_query
+from core.query_analyzer import analyze_query
+import logging
+logger = logging.getLogger(__name__)
 
 
 def load_eval_data(filepath):
@@ -31,6 +33,7 @@ def run_retrieval(query):
             try:
                 fact_ids.append(int(dp['id'].split(':')[1]))
             except (ValueError, IndexError):
+                logger.warning("Unexpected exception occurred", exc_info=True)
                 continue
     return fact_ids
 
