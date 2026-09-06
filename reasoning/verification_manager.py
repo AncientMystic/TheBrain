@@ -82,7 +82,14 @@ class VerificationManager:
         return {"layer": "symstep", "verified": ok, "confidence": 1.0 if ok else 0.0}
 
     def _vericot(self, fact: Dict) -> Dict:
-        ok = verify_vericot(fact.get("fact_text", ""), "", self.kg)
+        # fact already carries subject/predicate/object merged by _verify_single
+        # (from the shared batch triple) — hand them over so vericot skips its
+        # own duplicate extraction + LLM fallback for the same triple.
+        _t = None
+        if fact.get("subject") and fact.get("predicate"):
+            _t = {"subject": fact.get("subject"), "predicate": fact.get("predicate"),
+                  "object": fact.get("object", "")}
+        ok = verify_vericot(fact.get("fact_text", ""), "", self.kg, triple=_t)
         return {"layer": "vericot", "verified": ok, "confidence": 0.8 if ok else 0.0}
 
     def _rcot(self, fact: Dict) -> Dict:

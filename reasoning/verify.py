@@ -117,8 +117,12 @@ Return only JSON.
     return None
 
 
-def verify_vericot(step_text: str, context: str, kg) -> bool:
-    triple = extract_triple_from_text(step_text)
+def verify_vericot(step_text: str, context: str, kg, triple=None) -> bool:
+    # Reuse a caller-provided triple when complete: the batch path already
+    # paid for extraction (regex + one batched LLM call), so re-extracting
+    # here would cost a second LLM round-trip per fact for identical output.
+    if not (isinstance(triple, dict) and triple.get("subject") and triple.get("predicate")):
+        triple = extract_triple_from_text(step_text)
     if not triple:
         return False
 
