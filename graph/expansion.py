@@ -1,6 +1,7 @@
 """
 Multi-hop graph expansion and embedding-based retrieval enhancements.
 """
+import re
 import numpy as np
 from core import db
 from core.embeddings import get_embedding
@@ -10,6 +11,28 @@ import config
 # Simple adjacency cache
 _adj_cache = {}
 _adj_cache_ttl = 300  # seconds
+
+
+def dedupe_facts_content(facts):
+    """Collapse same-claim facts from converging paths (diamond A->B->D, A->C->D).
+
+    Normalized fact_text decides identity; first occurrence wins so shorter-hop
+    (earlier-discovered) copies survive. Empty-text rows carry no claim and are
+    dropped. Deterministic, never merges distinct claims.
+    """
+    seen, out = set(), []
+    for f in facts or []:
+        try:
+            key = re.sub(r"\s+", " ", str(f.get("fact_text", "")).lower()).strip()
+        except Exception:
+            continue
+        if not key:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+    return out
 
 
 def pre_select_candidates(query_context: str, kg=None, top_k: int = 10):
@@ -48,11 +71,22 @@ def pre_select_candidates(query_context: str, kg=None, top_k: int = 10):
     return candidate_facts[:top_k]
 
 
-def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
+def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200, diagnostics=None):
     """
     Expand a list of facts by exploring related entities in the external graph.
     Uses both keyword co-occurrence and global node edges.
+
+    diagnostics (optional dict, filled in place): pre/post dedupe counts per
+    depth plus collapsed-duplicate totals. Default off: zero behavior change.
+    An outage here is recorded, never a quiet fewer.
     """
+    def _note(key, amount=1):
+        try:
+            if diagnostics is not None:
+                diagnostics[key] = int(diagnostics.get(key, 0)) + amount
+        except Exception:
+            pass
+
     all_facts = list(initial_facts)
     seen_ids = {f.get("fact_id") for f in all_facts if f.get("fact_id")}
     current_frontier = initial_facts[:50]  # limit initial expansion
@@ -142,11 +176,27 @@ def expand_facts_via_multi_hop(initial_facts, max_depth=2, max_facts=200):
 
         if not new_facts:
             break
+        _note("discovered")
+        _note("discovered_count", len(new_facts))
         all_facts.extend(new_facts)
         current_frontier = new_facts[:50]
         if len(all_facts) >= max_facts:
             break
-    return all_facts[:max_facts]
+    if diagnostics is not None:
+        try:
+            diagnostics["pre_dedupe"] = len(all_facts)
+        except Exception:
+            pass
+    # Content dedupe in BFS discovery order: shorter-hop copies win ties,
+    # so diamond paths (A->B->D, A->C->D) converge to a single D.
+    out = dedupe_facts_content(all_facts)[:max_facts]
+    if diagnostics is not None:
+        try:
+            diagnostics["post_dedupe"] = len(out)
+            diagnostics["collapsed"] = max(0, len(all_facts) - len(out))
+        except Exception:
+            pass
+    return out
 
 
 def embed_based_retrieval(query, top_k=20):
