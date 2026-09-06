@@ -288,6 +288,18 @@ def _run_research_real(job):
         from deep_research.coordinator import DeepResearchCoordinator
         coordinator = DeepResearchCoordinator(session_id)
         report_path = coordinator.run(query)
+        try:
+            diag = dict(getattr(coordinator, "expansion_diagnostics", {}) or {})
+            _emit(job, {"type": "log", "level": "info",
+                        "msg": (f"Retrieval: {len(coordinator.facts)} facts, "
+                                f"{len(coordinator.chunks)} chunks")})
+            if diag:
+                _emit(job, {"type": "log", "level": "info",
+                            "msg": (f"Expansion accounting: pre-dedupe={diag.get('pre_dedupe', '?')}, "
+                                    f"post-dedupe={diag.get('post_dedupe', '?')}, "
+                                    f"collapsed duplicates={diag.get('collapsed', 0)}")})
+        except Exception:
+            pass
         _emit(job, {"type": "log", "level": "info", "msg": f"Report generated: {report_path}"})
         _emit(job, {"type": "report", "path": str(report_path)})
     except Exception as e:
