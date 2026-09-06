@@ -1,0 +1,49 @@
+# Trust surface declaration: every local authority this project exercises.
+# Principle: no invisible authority. Anything starting processes, opening
+# sockets, storing credentials, or launching browsers must be listed here with
+# its guard. The validator (scripts/validate_trust_surface.py) checks the tree
+# against this file. Generic inventory, no secrets stored here.
+version: 1
+
+processes:
+  - name: recollq search binary
+    sites: [core/recoll_client.py]
+    guards: [resolved-via-PATH-or-absolute, allow-listed-query-caps, shell-never-true, timeouts]
+  - name: tesseract OCR subprocesses
+    sites: [extractors/pdf_extractor.py]
+    guards: [ProcessPoolExecutor-bounded-workers, order-preserving, cached-by-hash, timeouts]
+  - name: import helper subprocesses
+    sites: [import_data.py]
+    guards: [list-form-argv, interpreter-plus-script-path-only, shell-never-true]
+  - name: python -m spacy download (operator-run only)
+    sites: [requirements.txt comment]
+    guards: [never-auto-run-by-app, explicit-operator-command]
+
+sockets_listen:
+  - name: FastAPI server
+    sites: [main.py, server.py]
+    guards: [binds-loopback-by-default, Bearer-auth-gate, CORS-allowlist-not-wildcard-with-credentials]
+
+sockets dial-out:
+  - name: LLM and embedding backends
+    sites: [core/llm.py, core/backends/*, core/model_context.py]
+    guards: [pooled-keepalive-sessions, per-endpoint-timeouts, retry-budgets, no-credential-logging]
+  - name: model downloads (first setup only)
+    sites: [fast_extractor/model_download.py, scripts/download_models.py]
+    guards: [pinned-repos, operator-invoked, hashed-cache-dirs]
+
+credentials_stored:
+  - name: backend API keys
+    sites: [config.py BACKEND_API_KEY/BACKEND_CONFIG_JSON]
+    guards: [env-only, masked-in-schema-and-logs, never-committed]
+  - name: server auth token
+    sites: [config.py SERVER_AUTH_TOKEN]
+    guards: [env-only, open-server-warns-when-empty-on-LAN]
+
+browsers_launched:
+  - name: auto-open WebUI URL
+    sites: [main.py --webui]
+    guards: [opt-out-flag-no-browser, localhost-URL-only, delayed-timer]
+
+containers_launched: []
+credential_files_written: []
