@@ -7,7 +7,7 @@ from core.text_utils import tokenize
 from graph.graph_queries import get_related_keywords, get_facts_by_keyword, get_global_node_edges
 from graph.expansion import expand_facts_via_multi_hop
 from logic.retrieve import retrieve_logic_modules
-from memory.retrieve import retrieve_memories
+from memory.bus import retrieve as retrieve_memories
 import config
 from fuzzywuzzy import fuzz
 

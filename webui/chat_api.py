@@ -27,7 +27,7 @@ def register_chat_routes(app, require_auth):
         # remember: prefix stores memory via existing path (same as CLI)
         if q.lower().startswith("remember:"):
             try:
-                from memory import store_memory as _store
+                from memory.bus import store as _store
                 _store(body.session_id or f"webui_{int(time.time())}", q[len("remember:"):].strip(), memory_type="user_note")
                 return {"answer": "Memory stored.", "facts": [], "ms": 0}
             except Exception as e:
@@ -50,7 +50,9 @@ def register_chat_routes(app, require_auth):
                 if isinstance(f, dict):
                     clean.append({"fact_text": str(f.get("fact_text", ""))[:300],
                                   "confidence": f.get("confidence", 0),
-                                  "doc": f.get("doc_name", f.get("doc_hash", ""))})
+                                  "doc": f.get("doc_name", f.get("doc_hash", "")),
+                                  "truth_class": f.get("truth_class", ""),
+                                  "verification_status": f.get("verification_status", "")})
             return {"answer": answer, "facts": clean, "ms": int((time.time() - t0) * 1000), "served": _served}
         except Exception as e:
             return {"answer": f"Chat failed: {e}", "facts": [], "ms": int((time.time() - t0) * 1000)}

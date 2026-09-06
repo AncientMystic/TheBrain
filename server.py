@@ -1,12 +1,12 @@
 import time, uuid, json
 from typing import List, Optional, Any
-from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi import FastAPI, Depends, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import config
 from chat import analyze_query, retrieve_from_graph, fallback_to_chunks, build_context, generate_answer
-from memory.retrieve import retrieve_memories
+from memory.bus import retrieve as retrieve_memories
 from logic.decision import decide_logic_modules
 from core.embeddings import get_embeddings_batch
 from core import db
@@ -20,6 +20,14 @@ from contextlib import asynccontextmanager as _lifespan_cm
 
 @_lifespan_cm
 async def _lifespan(app_ref):
+    # Auth sanity: explicit opt-in without a token is a misconfig — fail fast
+    # rather than serve open while the operator thinks they are protected.
+    if getattr(config, "REQUIRE_AUTH", False) and not getattr(config, "SERVER_AUTH_TOKEN", ""):
+        raise RuntimeError("REQUIRE_AUTH=true but SERVER_AUTH_TOKEN is empty; refusing to start open.")
+    if not getattr(config, "SERVER_AUTH_TOKEN", ""):
+        _host = str(getattr(config, "SERVER_HOST", "127.0.0.1"))
+        if _host not in ("127.0.0.1", "localhost", "::1"):
+            logger.warning(f"Auth disabled (no SERVER_AUTH_TOKEN) and SERVER_HOST={_host}: open LAN server.")
     try:
         from core.embeddings import validate_embedding_config
         ok, warns = validate_embedding_config(probe=True)
@@ -42,15 +50,25 @@ app.add_middleware(
 )
 
 
-async def require_auth(authorization: Optional[str] = Header(None, alias="Authorization")):
+async def require_auth(authorization: Optional[str] = Header(None, alias="Authorization"),
+                     token: Optional[str] = Query(None)):
+    """Shared guard: disabled by default (no SERVER_AUTH_TOKEN = open server).
+
+    Accepts `Authorization: Bearer <token>` or `?token=<token>` — the query
+    fallback exists for EventSource/SSE streams, which cannot send headers.
+    """
     expected = getattr(config, "SERVER_AUTH_TOKEN", "")
     if not expected:
         if getattr(config, "DEBUG_VERBOSE", False):
             logger.debug("Auth check skipped: no SERVER_AUTH_TOKEN configured")
         return True
-    if not authorization or not authorization.startswith("Bearer "):
+    if authorization and authorization.startswith("Bearer "):
+        provided = authorization[len("Bearer "):]
+    elif token:
+        provided = token
+    else:
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    if authorization[len("Bearer "):] != expected:
+    if provided != expected:
         raise HTTPException(status_code=401, detail="Invalid auth token")
     return True
 

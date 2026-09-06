@@ -49,7 +49,7 @@ from graph.hypergraph_builder import build_hypergraph
 from graph.external_graph_builder import build_external_graph
 from audit.auditor import audit_all
 from scripts.init_schemas import init_all
-from memory import retrieve_memories, store_memory
+from memory.bus import retrieve as retrieve_memories, store as store_memory
 from logic import decide_logic_modules
 from reasoning.orchestrator import orchestrate_reasoning
 from deep_research.recoll_guided_learning import run_recoll_guided_learning
@@ -573,6 +573,17 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
         print("  Building hypergraph...")
         with Timer('graph_build_duration_seconds'):
             build_hypergraph(file_hash, all_extracted, {})
+            # Static code graph for Python sources (deterministic AST, best-effort).
+            try:
+                if file_format == "source" and str(metadata.get("language", "")) == "python":
+                    from graph.code_graph import parse_code_graph, store_code_graph
+                    _cg = parse_code_graph(text)
+                    if _cg.get("functions") or _cg.get("calls"):
+                        _n = store_code_graph(file_hash, _cg, filepath.name)
+                        print(f"  (Code graph: {_n} nodes)")
+            except Exception as e:
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Code graph skipped: {e})")
             print("  Building external graph...")
             build_external_graph(file_hash, all_extracted, {})
         print("  Generating summary...")
