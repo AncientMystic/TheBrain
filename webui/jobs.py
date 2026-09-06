@@ -153,6 +153,19 @@ def _run_guided_real(job):
             _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled by user (finishing current file safely)"})
             break
         fname = getattr(f, "name", str(f))
+        # Skip BEFORE prepare: embedding a file just to skip it is pure waste
+        # (prepare = extract + chunk + full embedding pass per file).
+        try:
+            from core.file_utils import get_file_hash as _gfh
+            if tracker.is_processed(_gfh(f)):
+                _emit(job, {"type": "log", "level": "info", "msg": f"Skipping already processed: {fname}"})
+                tracker.processed_count += 1
+                done += 1
+                _emit(job, {"type": "document", "name": fname, "chunks": 0, "facts": 0, "status": "skipped"})
+                _emit(job, {"type": "progress", "done": done, "total": total})
+                continue
+        except Exception:
+            pass
         _emit(job, {"type": "log", "level": "info", "msg": f"Processing {fname}"})
         try:
             _prep = prepare_next_file(f)

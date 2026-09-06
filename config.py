@@ -164,6 +164,9 @@ API_RETRY_BACKOFF = 2.0
 BREAKER_ENABLED = os.environ.get("BREAKER_ENABLED", "true").lower() == "true"
 BREAKER_FAILURE_THRESHOLD = int(os.environ.get("BREAKER_FAILURE_THRESHOLD", "3"))
 BREAKER_COOLDOWN_SECONDS = float(os.environ.get("BREAKER_COOLDOWN_SECONDS", "300"))
+# Bounded retry queue (solo + second-pass re-prompts queue instead of fanning out)
+RETRY_QUEUE_MAX = int(os.environ.get("RETRY_QUEUE_MAX", "64"))
+RETRY_WORKERS = int(os.environ.get("RETRY_WORKERS", "2"))
 API_TIMEOUT = 480
 EMBEDDING_TIMEOUT = 240
 

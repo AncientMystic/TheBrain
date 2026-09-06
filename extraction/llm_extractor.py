@@ -472,7 +472,76 @@ def _format_pre_extractions_for_prompt(pre_list):
                         lines.append(f"    - {text} (conf: {conf:.2f})")
     return "\n".join(lines)
 
-def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, actual_model=None, batch_pre_extractions=None):
+def _drain_retry_jobs(jobs):
+    """Run collected retry prompts, priority-first, bounded parallelism.
+
+    jobs: list of dicts {id, prompt, max_tokens, category, endpoint,
+    actual_model, prio}. Returns {id: parsed-dict-response}. Same prompts as
+    the old inline retries — only scheduling changed. Parallel only when 2+
+    endpoints are healthy (breaker-aware); single-endpoint hosts drain
+    serially in original order, byte-identical to the old inline path.
+    """
+    out = {}
+    if not jobs:
+        return out
+    try:
+        _max = max(1, int(getattr(config, "RETRY_QUEUE_MAX", 64)))
+    except Exception:
+        _max = 64
+    ordered = sorted(jobs, key=lambda j: (not bool(j.get("prio")), j.get("seq", 0)))
+    if len(ordered) > _max:
+        try:
+            from core.metrics import inc_counter as _incq
+            _incq("retry_queue_dropped_total", len(ordered) - _max)
+        except Exception:
+            pass
+        print(f"    (Retry queue full ({_max}); dropping {len(ordered) - _max} lowest-priority retries)")
+        ordered = ordered[:_max]
+    try:
+        _workers = max(1, int(getattr(config, "RETRY_WORKERS", 2)))
+    except Exception:
+        _workers = 2
+    try:
+        from core.breaker import is_open as _brk_open
+        _healthy = 0
+        for _ep in (getattr(config, "LLM_ENDPOINTS", []) or []):
+            try:
+                if not _brk_open(_ep):
+                    _healthy += 1
+            except Exception:
+                _healthy += 1
+        if _healthy < 2:
+            _workers = 1
+    except Exception:
+        pass
+    _workers = min(_workers, len(ordered))
+
+    def _run(job):
+        try:
+            r = call_model_json(job["prompt"], model=job.get("actual_model"),
+                                max_tokens=job.get("max_tokens", 2048),
+                                system=SYSTEM_PROMPT, unwrap_list=False,
+                                endpoint=job.get("endpoint"),
+                                endpoint_type=_get_extraction_endpoint_type(job.get("category", "")))
+            if isinstance(r, list) and r and isinstance(r[0], dict):
+                r = r[0]
+            return job["id"], (r if isinstance(r, dict) else {})
+        except Exception:
+            return job["id"], {}
+
+    if _workers <= 1:
+        for job in ordered:
+            jid, r = _run(job)
+            out[jid] = r
+        return out
+    import concurrent.futures as _cf_q
+    with _cf_q.ThreadPoolExecutor(max_workers=_workers) as _ex:
+        for jid, r in _ex.map(_run, ordered):
+            out[jid] = r
+    return out
+
+
+def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, actual_model=None, batch_pre_extractions=None, batch_prio=None):
     if actual_model is None:
         actual_model = model
 
@@ -535,32 +604,42 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
             if not isinstance(resp, dict):
                 resp = {}
 
-            for idx, original_idx in enumerate(uncached_indices):
+            # Solo retries queue instead of running inline: same prompts, same
+            # bound (1 retry), but priority-first and parallel across healthy
+            # endpoints instead of serially blocking the batch.
+            _solo_jobs = []
+            _solo_base = {}
+            for seq, (idx, original_idx) in enumerate([(i, u) for i, u in enumerate(uncached_indices)]):
                 key = f"chunk_{idx}"
                 chunk_data = resp.get(key, {}) if isinstance(resp, dict) else {}
                 chunk_data = _normalize_chunk_data(chunk_data)
+                _solo_base[original_idx] = chunk_data
                 if not chunk_data or not any(chunk_data.get(k) for k in field_keys):
-                    # Solo retry: one poison chunk shouldn't kill batch of N (full-doc guarantee).
-                    # Single-chunk prompt is smaller, fits small-model context, bounded to 1 retry.
+                    solo_text = _format_chunks_text([batch_chunks[original_idx]])
+                    solo_prompt = prompt_template.replace("{num_chunks}", "1")
+                    solo_prompt = solo_prompt.replace("{chunks_text}", solo_text)
+                    solo_prompt = solo_prompt.replace("{logic_context}", logic_context if logic_context else "")
                     try:
-                        solo_text = _format_chunks_text([batch_chunks[original_idx]])
-                        solo_prompt = prompt_template.replace("{num_chunks}", "1")
-                        solo_prompt = solo_prompt.replace("{chunks_text}", solo_text)
-                        solo_prompt = solo_prompt.replace("{logic_context}", logic_context if logic_context else "")
-                        # Pre-extractions for solo (single item to avoid cross-chunk confusion)
-                        try:
-                            solo_pre = batch_pre_extractions[original_idx] if batch_pre_extractions else None
-                            solo_pre_str = _format_pre_extractions_for_prompt([solo_pre]) if solo_pre else "None"
-                        except Exception:
-                            solo_pre_str = "None"
-                        solo_prompt = solo_prompt.replace("{pre_extractions}", solo_pre_str)
-                        solo_resp = call_model_json(solo_prompt, model=actual_model, max_tokens=4096 if category=="facts_entities_relationships" else 2048,
-                                                    system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
-                        if isinstance(solo_resp, list) and solo_resp and isinstance(solo_resp[0], dict):
-                            solo_resp = solo_resp[0]
+                        solo_pre = batch_pre_extractions[original_idx] if batch_pre_extractions else None
+                        solo_pre_str = _format_pre_extractions_for_prompt([solo_pre]) if solo_pre else "None"
+                    except Exception:
+                        solo_pre_str = "None"
+                    solo_prompt = solo_prompt.replace("{pre_extractions}", solo_pre_str)
+                    _solo_jobs.append({
+                        "id": original_idx, "seq": seq,
+                        "prio": bool((batch_prio or {}).get(original_idx)) if isinstance(batch_prio, dict) else False,
+                        "prompt": solo_prompt,
+                        "max_tokens": 4096 if category == "facts_entities_relationships" else 2048,
+                        "category": category, "endpoint": endpoint, "actual_model": actual_model,
+                    })
+            _solo_out = _drain_retry_jobs(_solo_jobs)
+            for original_idx, chunk_data in _solo_base.items():
+                try:
+                    if original_idx in _solo_out:
                         solo_data = {}
-                        if isinstance(solo_resp, dict):
-                            solo_data = solo_resp.get("chunk_0", solo_resp)
+                        _sr = _solo_out[original_idx]
+                        if isinstance(_sr, dict):
+                            solo_data = _sr.get("chunk_0", _sr)
                             solo_data = _normalize_chunk_data(solo_data) or {}
                         if solo_data and any(solo_data.get(k) for k in field_keys):
                             chunk_data = solo_data
@@ -568,8 +647,8 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
                                 print(f"    (Solo retry recovered chunk {original_idx} for {category})")
                         else:
                             chunk_data = chunk_data or {}
-                    except Exception:
-                        chunk_data = chunk_data or {}
+                except Exception:
+                    chunk_data = chunk_data or {}
                 if not chunk_data:
                     chunk_data = {}
                 chunk_hash = _hash_text(batch_chunks[original_idx])
@@ -591,44 +670,47 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
             _min_len = int(getattr(config, "SECOND_PASS_MIN_CHARS", 1000))
             _max_items = int(getattr(config, "EXTRACTION_MAX_ITEMS", 20))
             if _second and category == "facts_entities_relationships":
-                for i in range(len(batch_chunks)):
+                # Collect second-pass jobs (snapshot existing facts now: drain
+                # order must not change what each re-prompt sees), then merge.
+                _sp_jobs = []
+                for seq, i in enumerate(range(len(batch_chunks))):
                     if len(results[i].get("facts", [])) <= 1 and len(batch_chunks[i]) >= _min_len:
-                        try:
-                            existing = [f.get("fact_text", "") for f in results[i].get("facts", []) if isinstance(f, dict)]
-                            ex_str = "; ".join(existing[:5])[:500] if existing else "none yet"
-                            solo_text = _format_chunks_text([batch_chunks[i]])
-                            prompt2 = prompt_template.replace("{num_chunks}", "1")
-                            prompt2 = prompt2.replace("{chunks_text}", solo_text)
-                            prompt2 = prompt2.replace("{logic_context}", (logic_context or "") + f"\nAlready extracted ({len(existing)}): {ex_str}. Extract up to {_max_items} ADDITIONAL distinct facts not listed, same schema.")
-                            prompt2 = prompt2.replace("{pre_extractions}", "None")
-                            resp2 = call_model_json(prompt2, model=actual_model, max_tokens=4096,
-                                                    system=SYSTEM_PROMPT, unwrap_list=False, endpoint=endpoint, endpoint_type=_get_extraction_endpoint_type(category))
-                            if isinstance(resp2, list) and resp2 and isinstance(resp2[0], dict):
-                                resp2 = resp2[0]
-                            extra = {}
-                            if isinstance(resp2, dict):
-                                extra = resp2.get("chunk_0", resp2)
-                                extra = _normalize_chunk_data(extra) or {}
-                            for f in extra.get("facts", []) or []:
-                                if isinstance(f, dict) and f.get("fact_text"):
-                                    # Span check: must exist verbatim in chunk (generic provenance guard)
-                                    try:
-                                        sp = str(f.get("source_span", ""))
-                                        if sp and sp not in batch_chunks[i]:
-                                            # Fallback to nearest sentence containing first 3 words of fact
-                                            import re as _re2
-                                            words = str(f.get("fact_text", "")).split()[:3]
-                                            pat = _re2.escape(" ".join(words)) if words else ""
-                                            # Keep as-is; cleaners/verifier will down-weight if invalid
-                                            pass
-                                    except Exception:
+                        existing = [f.get("fact_text", "") for f in results[i].get("facts", []) if isinstance(f, dict)]
+                        ex_str = "; ".join(existing[:5])[:500] if existing else "none yet"
+                        solo_text = _format_chunks_text([batch_chunks[i]])
+                        prompt2 = prompt_template.replace("{num_chunks}", "1")
+                        prompt2 = prompt2.replace("{chunks_text}", solo_text)
+                        prompt2 = prompt2.replace("{logic_context}", (logic_context or "") + f"\nAlready extracted ({len(existing)}): {ex_str}. Extract up to {_max_items} ADDITIONAL distinct facts not listed, same schema.")
+                        prompt2 = prompt2.replace("{pre_extractions}", "None")
+                        _sp_jobs.append({
+                            "id": i, "seq": seq,
+                            "prio": bool((batch_prio or {}).get(i)) if isinstance(batch_prio, dict) else False,
+                            "prompt": prompt2, "max_tokens": 4096,
+                            "category": category, "endpoint": endpoint, "actual_model": actual_model,
+                        })
+                _sp_out = _drain_retry_jobs(_sp_jobs)
+                for i, resp2 in _sp_out.items():
+                    try:
+                        extra = {}
+                        if isinstance(resp2, dict):
+                            extra = resp2.get("chunk_0", resp2)
+                            extra = _normalize_chunk_data(extra) or {}
+                        for f in extra.get("facts", []) or []:
+                            if isinstance(f, dict) and f.get("fact_text"):
+                                try:
+                                    sp = str(f.get("source_span", ""))
+                                    if sp and sp not in batch_chunks[i]:
+                                        import re as _re2
+                                        words = str(f.get("fact_text", "")).split()[:3]
+                                        pat = _re2.escape(" ".join(words)) if words else ""
                                         pass
-                                    results[i].setdefault("facts", []).append(f)
-                            # Cap per-chunk to max_items (quality: prevents bloat, generic limit)
-                            if len(results[i].get("facts", [])) > _max_items:
-                                results[i]["facts"] = results[i]["facts"][:_max_items]
-                        except Exception:
-                            continue
+                                except Exception:
+                                    pass
+                                results[i].setdefault("facts", []).append(f)
+                        if len(results[i].get("facts", [])) > _max_items:
+                            results[i]["facts"] = results[i]["facts"][:_max_items]
+                    except Exception:
+                        continue
         except Exception:
             pass
 
@@ -1104,6 +1186,7 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                             endpoint=ep,
                             actual_model=actual_model,
                             batch_pre_extractions=batch_pre,
+                            batch_prio={k: bool(v) for k, v in enumerate(batch_prio)},
                         )
                         # Tag priority facts for downstream protection/escalation (must-verify)
                         try:

@@ -986,6 +986,19 @@ def _load_or_chunk(file_hash, text):
     return chunk_document(text)
 
 
+def is_file_processed(filepath, tracker):
+    """Cheap skip check (hash + tracker lookup) BEFORE any prepare work.
+
+    prepare_next_file extracts + chunks + embeds every file it touches, so
+    calling it first turns every already-processed skip into a full embedding
+    pass. Check this first in every ingestion loop.
+    """
+    try:
+        return bool(tracker.is_processed(get_file_hash(filepath)))
+    except Exception:
+        return False
+
+
 def prepare_next_file(filepath):
     """Extract text, chunk, and embed for a file (CPU/IO bound). Single canonical implementation."""
     file_hash = get_file_hash(filepath)
@@ -1505,6 +1518,15 @@ Return only JSON."""
 
                 def process_one(f):
                     nonlocal processed_count
+                    # Skip BEFORE prepare: embedding a file just to skip it is pure waste.
+                    try:
+                        if is_file_processed(f, tracker):
+                            print(f"Skipping already processed: {getattr(f, 'name', f)}")
+                            with tracker_lock:
+                                tracker.processed_count += 1
+                            return None
+                    except Exception:
+                        pass
                     # Single extraction per file (no double parse/OCR): prepare once,
                     # reuse text for logic decision + pass preloaded into process_file.
                     try:
@@ -1569,6 +1591,16 @@ Return only JSON."""
                     if dry_run:
                         print(f"[DRY-RUN] Would process: {f.name}")
                         continue
+                    # Skip BEFORE any prepare/logic work (embedding just to skip is waste).
+                    try:
+                        if is_file_processed(f, tracker):
+                            print(f"Skipping already processed: {f.name}")
+                            if verified_flag:
+                                promote_verified_file(get_file_hash(f), f.name, source_file=f)
+                            tracker.processed_count += 1
+                            continue
+                    except Exception:
+                        pass
                     # Use prefetched data if available (resolved-path identity, not object identity)
                     preloaded = None
                     try:
@@ -1626,6 +1658,11 @@ Return only JSON."""
                             nonlocal prefetched_data
                             with prefetch_lock:
                                 if prefetched_data is None:
+                                    try:
+                                        if is_file_processed(next_file, tracker):
+                                            return
+                                    except Exception:
+                                        pass
                                     prefetched_data = prepare_next_file(next_file)
                         t = threading.Thread(target=do_prefetch, daemon=True)
                         t.start()
