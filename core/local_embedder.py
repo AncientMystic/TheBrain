@@ -96,7 +96,8 @@ class LocalEmbedder:
                 token_type_ids = encodings.get("token_type_ids", np.zeros_like(input_ids))
                 onnx_inputs["token_type_ids"] = token_type_ids.astype(np.int64)
 
-            outputs = self.session.run(None, onnx_inputs)
+            from core.onnx_lock import run as _ort_run
+            outputs = _ort_run(self.session, None, onnx_inputs)
             hidden = outputs[0]  # shape (batch, seq, hidden)
             if len(hidden.shape) == 3:
                 # Mean pooling

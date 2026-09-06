@@ -117,7 +117,8 @@ class OnnxNERExtractor:
         try:
             inputs = self.tokenizer(text, return_tensors="np", truncation=True, padding=True)
             ort_inputs = {name: inputs[name] for name in inputs}
-            outputs = self.session.run(None, ort_inputs)
+            from core.onnx_lock import run as _ort_run
+            outputs = _ort_run(self.session, None, ort_inputs)
             # Assuming first output is logits [batch, seq_len, num_labels]
             logits = outputs[0][0]  # first batch
             preds = np.argmax(logits, axis=-1)

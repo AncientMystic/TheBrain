@@ -8,6 +8,48 @@ import hashlib
 from core.logger import get_logger
 logger = get_logger(__name__)
 
+def _install_crash_diagnostics():
+    """Never die silently: faulthandler dumps native-crash tracebacks, and
+    excepthooks log any uncaught error (including worker-thread deaths that
+    previously looked like silent exits) before the process goes down."""
+    try:
+        import faulthandler as _fh
+        _fh.enable()
+    except Exception:
+        pass
+
+    def _log_uncaught(exc_type, exc, tb):
+        try:
+            logger.critical("Uncaught exception (process exiting): %s: %s",
+                            getattr(exc_type, "__name__", exc_type), exc, exc_info=(exc_type, exc, tb))
+        except Exception:
+            pass
+        try:
+            print(f"FATAL: uncaught {getattr(exc_type, '__name__', exc_type)}: {exc}", flush=True)
+            traceback.print_exception(exc_type, exc, tb)
+        except Exception:
+            pass
+
+    try:
+        sys.excepthook = _log_uncaught
+    except Exception:
+        pass
+    try:
+        import threading as _th
+
+        def _thread_hook(args):
+            try:
+                _log_uncaught(args.exc_type, args.exc_value, args.exc_traceback)
+            except Exception:
+                pass
+
+        _th.excepthook = _thread_hook
+    except Exception:
+        pass
+
+
+_install_crash_diagnostics()
+
 def validate_config():
     """Check basic requirements and optionally progress bar availability."""
     if not config.LLM_ENDPOINTS:

@@ -858,7 +858,9 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             print("  (No chunk embeddings provided; computing embeddings for novelty gating...)")
             chunk_embeddings = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
 
+    print(f"  (Stage: novelty gating over {len(chunks)} chunks...)", flush=True)
     flags = _compute_novelty_flags(chunks, chunk_embeddings)
+    print(f"  (Stage: novelty done, {sum(1 for f in flags if f)}/{len(chunks)} kept)", flush=True)
     # Safety floor (generic, config-driven): never skip so aggressively that coverage collapses.
     # Keeps most-distant skipped chunks (diversity, not prefix) up to floor.
     try:
@@ -935,19 +937,23 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
                     fast_pre_results = list(_ex.map(fast_extractor.extract, chunks))
             else:
                 if len(chunks) > 1 and _pre_workers > 1 and not _thread_safe_ep:
-                    print("    (Pre-pass serial: non-CPU ONNX provider is not thread-safe)")
+                    if getattr(config, "DEBUG_VERBOSE", False):
+                        print("    (Pre-pass serial: non-CPU ONNX provider is not thread-safe)")
                 fast_pre_results = [fast_extractor.extract(c) for c in chunks]
         except Exception as e:
             print(f"    (Fast extractor error: {e}); falling back to full LLM extraction.")
             fast_pre_results = None
+    print(f"  (Stage: pre-pass done, {len(fast_pre_results) if fast_pre_results else 0}/{len(chunks)} chunks)", flush=True)
 
     # DB-aware recall (fast-pass scans DBs for topics/dates/refs/events, flags priority).
     # Priority = must-extract + must-verify, never must-believe. Generic, no hardcoding.
     recall_list = [None] * len(chunks)
     if getattr(config, "RECALL_AUGMENT_ENABLED", True):
+        print("  (Stage: recall augmenter...)", flush=True)
         try:
             from extraction.recall_augmenter import augment_batch
             recall_list = augment_batch(chunks, fast_pres=fast_pre_results, chunk_embs=chunk_embeddings)
+            print("  (Stage: recall done)", flush=True)
             n_prio = sum(1 for r in recall_list if r and r.get("priority"))
             if n_prio:
                 print(f"  (Recall: {n_prio}/{len(chunks)} priority chunks flagged for guaranteed extraction)")
@@ -1140,8 +1146,12 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
     pbar = None
     if config.USE_PROGRESS_BARS and config.TQDM_AVAILABLE:
         try:
+            import sys as _sys_pb
             from tqdm import tqdm
-            pbar = tqdm(total=len(batches), desc="  Extracting chunks", unit="batch")
+            # stdout, not stderr: log harnesses capturing only stdout
+            # otherwise lose the bar entirely (looks like a hang).
+            pbar = tqdm(total=len(batches), desc="  Extracting chunks", unit="batch",
+                        file=_sys_pb.stdout)
         except ImportError:
             pbar = None
 
