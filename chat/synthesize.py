@@ -123,6 +123,27 @@ def synthesize_answer(question, context, model=None, endpoint=None, endpoint_typ
     return clean_answer(raw)
 
 
+def synthesize_answer_stream(question, context, model=None, endpoint=None, endpoint_type="chat",
+                             intent=None, max_tokens=None):
+    """Streaming twin of synthesize_answer: same prompt/funnel, yields events.
+
+    Yields {"t": "tok", "x": delta} per cleaned delta, then a final
+    {"t": "done", "answer": cleaned_full}. The done answer is authoritative
+    (same clean_answer as the blocking path); tokens are progressive paint.
+    """
+    from core.llm import call_model_stream
+    from chat.responder import clean_answer
+    prompt, _ = build_prompt(question, context, intent)
+    _type = endpoint_type if (model is None and endpoint is None) else None
+    parts = []
+    for delta in call_model_stream(prompt, model=model, max_tokens=max_tokens or answer_max_tokens(),
+                                   endpoint=endpoint, endpoint_type=_type):
+        if delta:
+            parts.append(delta)
+            yield {"t": "tok", "x": delta}
+    yield {"t": "done", "answer": clean_answer("".join(parts))}
+
+
 def synthesize_cautious(question, context):
     """Short uncertainty answer sharing the tag citation law."""
     from core.llm import call_model

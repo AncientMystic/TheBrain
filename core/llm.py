@@ -176,6 +176,107 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
     return ""
 
 
+def _filter_thinking_tail(buf):
+    """Split buffer into (safe_to_emit, hold_back).
+
+    Complete <thinking>/<reasoning> blocks are dropped (same law as the
+    blocking path); an incomplete trailing tag is held until it completes
+    or proves to be plain text, so streamed output never flashes tags.
+    Loops so a completed block never causes the remainder (possibly
+    containing a second, still-open block) to be emitted wholesale.
+    """
+    safe = []
+    rest = buf
+    while True:
+        m = re.search(r"<(thinking|reasoning)\b[^>]*>", rest)
+        if not m:
+            break
+        safe.append(rest[:m.start()])
+        close = re.search(r"</(thinking|reasoning)>", rest[m.end():])
+        if not close:
+            return "".join(safe), rest[m.start():]
+        rest = rest[m.end():][close.end():]
+    # No open tags left: hold any trailing "<" without a closing ">" — it
+    # may start a tag (plain "< 2" math is delayed one chunk at most and
+    # always released by the end-of-stream flush below).
+    i = rest.rfind("<")
+    if i != -1 and ">" not in rest[i:]:
+        return "".join(safe) + rest[:i], rest[i:]
+    return "".join(safe) + rest, ""
+
+
+def call_model_stream(prompt, model=None, max_tokens=1024, temperature=None,
+                      system="You are a helpful assistant.", endpoint=None, endpoint_type=None):
+    """Yield cleaned text deltas for one chat completion.
+
+    Same endpoint resolution + breaker discipline as call_model; yields
+    nothing when the endpoint is unavailable (caller falls back).
+    """
+    if endpoint is None:
+        selected = _select_endpoint_by_type(endpoint_type)
+        if selected:
+            endpoint = selected
+            model = endpoint["model"]
+        elif model:
+            for ep in config.LLM_ENDPOINTS:
+                if ep["model"] == model:
+                    endpoint = ep
+                    break
+            if not endpoint:
+                endpoint = config.LLM_ENDPOINTS[0]
+        else:
+            endpoint = _get_next_llm_endpoint()
+            model = endpoint["model"]
+    else:
+        model = endpoint["model"]
+
+    if temperature is None:
+        temperature = 0.0
+
+    try:
+        from core.breaker import is_open as _brk_open, record_success as _brk_ok, record_failure as _brk_fail
+        if _brk_open(endpoint):
+            return
+    except Exception:
+        _brk_ok = _brk_fail = None
+
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+    backend_provider = create_backend(endpoint)
+    buf, got = "", False
+    try:
+        for delta in backend_provider.chat_stream(
+                messages, model=model, max_tokens=max_tokens,
+                temperature=temperature, system=system):
+            if not delta:
+                continue
+            got = True
+            buf += delta
+            emit, buf = _filter_thinking_tail(buf)
+            if emit:
+                yield emit
+        if buf:
+            rest = re.sub(r'<thinking>.*?</thinking>', '', buf, flags=re.DOTALL)
+            rest = re.sub(r'<reasoning>.*?</reasoning>', '', rest, flags=re.DOTALL)
+            rest = re.sub(r'<(thinking|reasoning)\b[^>]*>.*$', '', rest, flags=re.DOTALL)
+            # Drop only tag-like trailing fragments; keep plain "< 2" math.
+            if re.search(r"<$", rest):
+                rest = rest[:-1]
+            else:
+                rest = re.sub(r"</?[A-Za-z][^>]*$", "", rest)
+            if rest:
+                yield rest
+    except Exception as e:
+        if config.DEBUG_VERBOSE:
+            logger.exception(f"LLM stream exception: {e}")
+    try:
+        if got and _brk_ok is not None:
+            _brk_ok(endpoint)
+        elif not got and _brk_fail is not None:
+            _brk_fail(endpoint)
+    except Exception:
+        pass
+
+
 def repair_json(raw: str) -> str:
     """Repair common JSON malformations from LLM outputs."""
     raw = raw.strip()

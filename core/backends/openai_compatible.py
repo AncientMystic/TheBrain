@@ -22,6 +22,24 @@ class Provider(BackendProvider):
         data = resp.json()
         return data["choices"][0]["message"]["content"].strip()
 
+    def chat_stream(self, messages, model=None, max_tokens=1024, temperature=0.0, system=None):
+        """True token streaming over OpenAI-compatible SSE."""
+        from core.backends.base import stream_openai_sse
+        url = f"{self.url}/chat/completions"
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+        try:
+            yield from stream_openai_sse(url, payload, self._headers())
+        except Exception as e:
+            logger.warning(f"Stream failed, falling back to blocking chat: {e}")
+            yield self.chat(messages, model=model, max_tokens=max_tokens,
+                            temperature=temperature, system=system)
+
     def embeddings(self, texts, model=None):
         url = f"{self.url}/embeddings"
         payload = {
