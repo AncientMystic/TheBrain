@@ -32,6 +32,11 @@ def _memory_embeddings(session_id=None):
     return memories
 
 def store_memory_hyperbolic(session_id, content, memory_type="fact", importance=0.5):
+    try:
+        from core.pii import redact
+        content, _hits = redact(content)
+    except Exception:
+        pass
     emb = get_embedding(content)
     if emb is None:
         return None

@@ -14,6 +14,11 @@ def store_memories_batched(items):
     """
     if not items:
         return []
+    try:
+        from core.pii import redact as _redact
+        items = [(_s, _redact(_c)[0], _t, _i) for _s, _c, _t, _i in items]
+    except Exception:
+        pass
     if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
         from memory.hyperbolic_memory import store_memory_hyperbolic
         # Hyperbolic path already single-embed per item; batch via dict to avoid N HTTP
@@ -50,6 +55,11 @@ def store_memories_batched(items):
 
 
 def store_memory(session_id, content, memory_type="fact", importance=0.5):
+    try:
+        from core.pii import redact
+        content, _hits = redact(content)
+    except Exception:
+        pass
     if getattr(config, "USE_HYPERBOLIC_MEMORY", True):
         from memory.hyperbolic_memory import store_memory_hyperbolic
         return store_memory_hyperbolic(session_id, content, memory_type, importance)
