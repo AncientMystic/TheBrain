@@ -13,8 +13,8 @@ It also ships a **glassmorphism WebUI** (`python main.py --webui`, or double-cli
 
 <table>
 <tr>
-<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/Screenshots/guided-learning-tab.JPG?raw=true" alt="Guided Learning tab" width="100%"><br><em>Guided Learning tab — folders, terminal log, per-document progress</em></td>
-<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/Screenshots/deep-graph-tab.JPG?raw=true" alt="Deep Graph tab" width="100%"><br><em>Deep Graph tab — mindmap with right-click research actions</em></td>
+<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/ScreenShots/Dashboard.JPG?raw=true" alt="Dashboard tab" width="100%"><br><em>Guided Learning tab — folders, terminal log, per-document progress</em></td>
+<td width="50%" align="center"><img src="https://github.com/AncientMystic/TheBrain/blob/main/ScreenShots/DeepGraph.JPG?raw=true" alt="Deep Graph tab" width="100%"><br><em>Deep Graph tab — mindmap with right-click research actions</em></td>
 </tr>
 </table>
 
