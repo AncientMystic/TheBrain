@@ -160,6 +160,10 @@ for idx, _ep in enumerate(LLM_ENDPOINTS):
 
 API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF = 2.0
+# Circuit breaker (fail fast on dead endpoints, auto-recover; timeouts untouched)
+BREAKER_ENABLED = os.environ.get("BREAKER_ENABLED", "true").lower() == "true"
+BREAKER_FAILURE_THRESHOLD = int(os.environ.get("BREAKER_FAILURE_THRESHOLD", "3"))
+BREAKER_COOLDOWN_SECONDS = float(os.environ.get("BREAKER_COOLDOWN_SECONDS", "300"))
 API_TIMEOUT = 480
 EMBEDDING_TIMEOUT = 240
 

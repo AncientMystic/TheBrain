@@ -76,6 +76,16 @@ def _get_next_llm_endpoint():
             _llm_cycle_len = current_len
             if config.DEBUG_VERBOSE:
                 print(f"    [LLM cycle] endpoints order: {[ep.get('url') + ':' + ep.get('model', '') for ep in config.LLM_ENDPOINTS]}")
+        # Skip open-circuit endpoints (bounded: try each once, then take next
+        # anyway rather than spin when everything is down).
+        for _ in range(max(1, current_len)):
+            cand = next(_llm_cycle)
+            try:
+                from core.breaker import is_open as _brk_open
+                if not _brk_open(cand):
+                    return cand
+            except Exception:
+                return cand
         return next(_llm_cycle)
 
 def call_model(prompt, model=None, max_tokens=1024, temperature=None,
@@ -118,6 +128,18 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
     if config.USE_JSON_MODE:
         payload["response_format"] = {"type": "json_object"}
 
+    # Circuit breaker: an endpoint that already proved itself dead fails
+    # fast instead of burning full retries + backoff per batch. No timeout
+    # values changed anywhere; this only skips the wait.
+    try:
+        from core.breaker import is_open as _brk_open, record_success as _brk_ok, record_failure as _brk_fail
+        if _brk_open(endpoint):
+            if config.DEBUG_VERBOSE:
+                print(f"    (Breaker open, skipping {endpoint.get('url')} model={endpoint.get('model', '')})")
+            return ""
+    except Exception:
+        _brk_ok = _brk_fail = None
+
     # Build backend provider once for this endpoint
     backend_provider = create_backend(endpoint)
     for attempt in range(config.API_RETRY_ATTEMPTS):
@@ -132,6 +154,11 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
             if output:
                 cleaned = re.sub(r'<thinking>.*?</thinking>', '', output, flags=re.DOTALL)
                 cleaned = re.sub(r'<reasoning>.*?</reasoning>', '', cleaned, flags=re.DOTALL)
+                try:
+                    if _brk_ok is not None:
+                        _brk_ok(endpoint)
+                except Exception:
+                    pass
                 return cleaned.strip()
             else:
                 print(f"    (Empty model response, attempt {attempt+1})")
@@ -141,6 +168,11 @@ def call_model(prompt, model=None, max_tokens=1024, temperature=None,
             if config.DEBUG_VERBOSE:
                 logger.exception(f"LLM exception: {e}")
         time.sleep(config.API_RETRY_BACKOFF * (2 ** attempt) + random.uniform(0, 0.5))
+    try:
+        if _brk_fail is not None:
+            _brk_fail(endpoint)
+    except Exception:
+        pass
     return ""
 
 
