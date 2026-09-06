@@ -62,7 +62,8 @@ class LocalEmbedder:
                 so.log_severity_level = 3
             except Exception:
                 pass
-            providers = ["DmlExecutionProvider", "CPUExecutionProvider"] if "DmlExecutionProvider" in ort.get_available_providers() else ["CPUExecutionProvider"]
+            from core.onnx_lock import resolve_providers
+            providers = resolve_providers()
             self.session = ort.InferenceSession(str(onnx_path), sess_options=so, providers=providers)
             self.input_names = [inp.name for inp in self.session.get_inputs()]
             self.available = True

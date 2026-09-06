@@ -277,7 +277,15 @@ FAST_EXTRACTOR_LOW_CONFIDENCE_RATIO = 0.2   # max ratio of items to send to LLM
 # Pre-pass threads sharing one ONNX session (session.run is thread-safe;
 # extract() is stateless). Small: NER is ms-scale, threads hide tokenizer GIL.
 FAST_EXTRACTOR_WORKERS = int(os.environ.get("FAST_EXTRACTOR_WORKERS", "4"))
-ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "directml")  # "auto", "cpu", "cuda", "directml"
+# GLiNER zero-shot NER (replaces bert-base-NER when enabled; bert stays fallback)
+GLINER_ENABLED = os.environ.get("GLINER_ENABLED", "false").lower() == "true"
+GLINER_MODEL_DIR = str(BASE_DIR / "models" / "gliner_ner")
+GLINER_THRESHOLD = float(os.environ.get("GLINER_THRESHOLD", "0.35"))
+# CPU default: DML sessions corrupt the heap under multi-session/threaded use
+# (observed 0xc0000374 both concurrent AND isolated); CPU ORT is fast for
+# these small models and unlocks threaded pre-pass. Opt back in per machine
+# with ONNX_DEVICE=directml|cuda|auto. "auto" = try DML first (legacy).
+ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "cpu")  # "auto", "cpu", "cuda", "directml"
 
 # Performance
 RETRIEVAL_CACHE_ENABLED = True
@@ -328,6 +336,9 @@ EXTERNAL_GRAPH_CACHE_MAX_NODES = int(os.environ.get("EXTERNAL_GRAPH_CACHE_MAX_NO
 
 # Neural model configuration
 RERANKER_ENABLED = True
+RERANKER_BACKEND = os.environ.get("RERANKER_BACKEND", "onnx")  # onnx-first (exact parity), torch fallback
+RERANKER_QUANT = os.environ.get("RERANKER_QUANT", "fp32")  # fp32 exact, qint8 for weak machines
+GLINER_MODEL_REPO = os.environ.get("GLINER_MODEL_REPO", "onnx-community/gliner_small-v2.1")
 RERANKER_MODEL_REPO = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANKER_MODEL_DIR = str(BASE_DIR / "models" / "reranker")
 

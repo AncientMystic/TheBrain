@@ -31,29 +31,14 @@ class OnnxNERExtractor:
             print("No .onnx file found in model directory.")
             return
 
-        device = getattr(config, "ONNX_DEVICE", "auto").lower()
-
-        # Provider preference based on requested device.
-        if device == "cuda":
-            provider_sets = [
-                ["CUDAExecutionProvider", "CPUExecutionProvider"],
-                ["CPUExecutionProvider"],
-            ]
-        elif device == "directml":
-            provider_sets = [
-                ["DmlExecutionProvider", "CPUExecutionProvider"],
-                ["CPUExecutionProvider"],
-            ]
-        elif device == "auto":
-            # Try DirectML first on Windows, then CPU.
-            provider_sets = [
-                ["DmlExecutionProvider", "CPUExecutionProvider"],
-                ["CPUExecutionProvider"],
-            ]
-        else:  # cpu
-            provider_sets = [
-                ["CPUExecutionProvider"],
-            ]
+        # Single shared policy (core.onnx_lock.resolve_providers): CPU by
+        # default, DML/CUDA only on explicit opt-in. Local try/except keeps
+        # the CPU-only hard fallback even if the helper ever fails.
+        try:
+            from core.onnx_lock import resolve_providers as _res_prov
+            provider_sets = [list(_res_prov()), ["CPUExecutionProvider"]]
+        except Exception:
+            provider_sets = [["CPUExecutionProvider"]]
 
         import os as _os
         so = ort.SessionOptions()

@@ -21,3 +21,33 @@ def run(session, output_names, inputs):
     """Drop-in serialized replacement for `session.run(output_names, inputs)`."""
     with _lock:
         return session.run(output_names, inputs)
+
+
+def resolve_providers():
+    """One provider policy for every project-owned session.
+
+    CPU by default: DML sessions corrupt the heap under multi-session and
+    multi-threaded use (observed 0xc0000374 both concurrent AND isolated),
+    and CPU ORT is already fast for these small models — plus CPU unlocks
+    the threaded pre-pass. DML/CUDA only on explicit opt-in via
+    ONNX_DEVICE=directml|cuda|auto (auto = try DML first, legacy behavior).
+    """
+    try:
+        import onnxruntime as _ort
+        _avail = _ort.get_available_providers()
+    except Exception:
+        return ["CPUExecutionProvider"]
+    try:
+        import config as _cfg
+        _dev = str(getattr(_cfg, "ONNX_DEVICE", "cpu") or "cpu").lower()
+    except Exception:
+        _dev = "cpu"
+    if _dev in ("directml", "dml") and "DmlExecutionProvider" in _avail:
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    if _dev == "cuda" and "CUDAExecutionProvider" in _avail:
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if _dev == "auto":
+        if "DmlExecutionProvider" in _avail:
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]

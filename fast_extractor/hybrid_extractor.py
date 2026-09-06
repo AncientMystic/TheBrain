@@ -10,9 +10,23 @@ from fast_extractor.rule_extractor import extract_entities_rules
 class FastExtractor:
     def __init__(self):
         self.onnx_extractor = None
+        self.gliner_extractor = None
         if config.FAST_EXTRACTOR_ENABLED:
-            download_onnx_model()
-            self.onnx_extractor = OnnxNERExtractor()
+            # GLiNER first when enabled (zero-shot + confidences); bert stays fallback.
+            if getattr(config, "GLINER_ENABLED", False):
+                try:
+                    from fast_extractor.model_download import download_gliner_model
+                    download_gliner_model()
+                    from fast_extractor.gliner_onnx import GlinerONNXExtractor
+                    _gx = GlinerONNXExtractor()
+                    if _gx.available:
+                        self.gliner_extractor = _gx
+                        print("FastExtractor using GLiNER NER backend.")
+                except Exception as e:
+                    print(f"    (GLiNER init failed, falling back to bert NER: {e})")
+            if self.gliner_extractor is None:
+                download_onnx_model()
+                self.onnx_extractor = OnnxNERExtractor()
         self.entities = []
         self.dates = []
         self.locations = []
@@ -30,17 +44,20 @@ class FastExtractor:
         rule_entities = extract_entities_rules(text)
         for ent_type, ent_text, conf in rule_entities:
             entities.append({"type": ent_type, "text": ent_text, "confidence": conf, "source": "rule"})
-        # ONNX NER
-        if self.onnx_extractor:
-            onnx_entities = self.onnx_extractor.extract_entities(text)
+        # ONNX NER (GLiNER preferred: same (text, type, conf) shape + DATE/EVENT)
+        _ner = self.gliner_extractor if self.gliner_extractor is not None else self.onnx_extractor
+        if _ner:
+            onnx_entities = _ner.extract_entities(text)
             for ent_text, ent_type, conf in onnx_entities:
-                # Map types
+                # Map types (GLiNER emits DATE/EVENT natively — keep them)
                 if ent_type in ("PER", "PERSON"):
                     mapped_type = "PERSON"
                 elif ent_type in ("ORG", "ORGANIZATION"):
                     mapped_type = "ORG"
                 elif ent_type in ("LOC", "LOCATION", "GPE"):
                     mapped_type = "LOC"
+                elif ent_type in ("DATE", "EVENT"):
+                    mapped_type = ent_type
                 else:
                     mapped_type = "MISC"
                 entities.append({"type": mapped_type, "text": ent_text, "confidence": conf, "source": "onnx"})
