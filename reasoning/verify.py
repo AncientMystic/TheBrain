@@ -256,7 +256,15 @@ def verify_ares(reasoning_chain: List[Dict]) -> float:
     return sum(scores) / len(scores)
 
 
-def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> List[Dict]:
+def _claim_triple(claim: Dict):
+    """Triple already on the claim (merged by batch verification), if complete."""
+    if isinstance(claim, dict) and claim.get("subject") and claim.get("predicate"):
+        return {"subject": claim.get("subject"), "predicate": claim.get("predicate"),
+                "object": claim.get("object", "")}
+    return None
+
+
+def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None, triple=None) -> List[Dict]:
     results = []
 
     if source_text and claim.get("source_span"):
@@ -269,7 +277,8 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
     sym = verify_symstep(claim, claim.get("_prior_claims", []))
     results.append({"layer": "symstep", "verified": sym, "confidence": 1.0 if sym else 0.0})
 
-    vericot = verify_vericot(claim.get("text", ""), source_text, kg)
+    vericot = verify_vericot(claim.get("text", ""), source_text, kg,
+                             triple=triple if triple is not None else _claim_triple(claim))
     results.append({"layer": "vericot", "verified": vericot, "confidence": 0.8 if vericot else 0.0})
 
     fidelis = verify_fidelis(claim, kg)
@@ -281,7 +290,7 @@ def verify_claim(claim: Dict, source_text: Optional[str] = None, kg=None) -> Lis
     return results
 
 
-def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
+def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6, triple=None):
     results = []
     if source_text and claim.get("source_span"):
         results.append({
@@ -296,7 +305,8 @@ def verify_claim_adaptive(claim, source_text=None, kg=None, threshold=0.6):
     if initial_conf >= threshold:
         return results
 
-    vericot = verify_vericot(claim.get("text", ""), source_text, kg)
+    vericot = verify_vericot(claim.get("text", ""), source_text, kg,
+                             triple=triple if triple is not None else _claim_triple(claim))
     results.append({"layer": "vericot", "verified": vericot, "confidence": 0.8 if vericot else 0.0})
     fidelis = verify_fidelis(claim, kg)
     results.append({"layer": "fidelis", "verified": fidelis, "confidence": 0.9 if fidelis else 0.0})

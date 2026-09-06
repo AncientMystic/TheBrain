@@ -79,12 +79,38 @@ def _fetch_batch_with_endpoint(endpoint, batch_texts):
     if config.DEBUG_VERBOSE:
         logger.debug(f"Embedding batch -> {endpoint['url']} model={endpoint['model']} backend={endpoint.get('backend','lmstudio')}")
     try:
+        from core.breaker import is_open as _brk_open, record_success as _brk_ok, record_failure as _brk_fail
+        _brk = True
+    except Exception:
+        _brk = False
+    if _brk:
+        try:
+            if _brk_open(endpoint):
+                if config.DEBUG_VERBOSE:
+                    print(f"    (Embed breaker open, skipping {endpoint.get('url')})")
+                return results
+        except Exception:
+            pass
+    try:
         provider = create_backend(endpoint)
         embeddings = provider.embeddings(batch_texts, model=endpoint.get('model'))
         for i, emb in enumerate(embeddings):
             if emb is not None and i < len(batch_texts):
                 results.append((batch_texts[i], emb))
+        if _brk:
+            try:
+                if len(results) == len(batch_texts):
+                    _brk_ok(endpoint)
+                else:
+                    _brk_fail(endpoint)
+            except Exception:
+                pass
     except Exception as e:
+        if _brk:
+            try:
+                _brk_fail(endpoint)
+            except Exception:
+                pass
         if config.DEBUG_VERBOSE:
             logger.exception(f"Batch embedding exception: {e}")
     return results
@@ -239,9 +265,23 @@ def get_embeddings_batch(texts, model=None, batch_size=None, space='hyperbolic')
     if max_workers == 0:
         max_workers = 1
 
+    # Prefer breaker-closed endpoints; if all are open, distribute anyway
+    # (half-open probes must get through to allow recovery).
+    try:
+        from core.breaker import is_open as _brk_open2
+        _closed = []
+        for _ep in config.EMBEDDING_ENDPOINTS:
+            try:
+                if not _brk_open2(_ep):
+                    _closed.append(_ep)
+            except Exception:
+                _closed.append(_ep)
+        _pool = _closed or config.EMBEDDING_ENDPOINTS
+    except Exception:
+        _pool = config.EMBEDDING_ENDPOINTS
     batch_tasks = []
     for idx, batch in enumerate(batches):
-        endpoint = config.EMBEDDING_ENDPOINTS[idx % n_endpoints]
+        endpoint = _pool[idx % len(_pool)]
         batch_tasks.append((endpoint, batch))
 
     retrieved = {}

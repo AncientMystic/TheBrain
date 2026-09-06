@@ -1,7 +1,6 @@
 import json
 from reasoning.decompose import decompose_query
 from reasoning.agents import MindMapAgent, KGQueryAgent, SourceCheckerAgent, ContradictionDetectorAgent, LogicVerifierAgent
-from reasoning.verify import verify_claim
 from reasoning.governance import compute_confidence, store_provenance
 from core.query_analyzer import analyze_query
 from chat.retriever import retrieve_from_graph, fallback_to_chunks
@@ -43,19 +42,56 @@ def extract_keywords_from_fact(fact):
     return tokens[:5] + list(get_bigrams(tokens))[:3]
 
 
+def _analyze_many(texts, memo):
+    """analyze_query per unique text, memoized across expansion rounds.
+
+    Rounds re-scan all_facts[:20], so without memo the same fact pays ONNX
+    NER once per round (up to 3x per query). Misses run in a small pool on
+    CPU-provider sessions only (DML sessions crash on concurrent Run);
+    otherwise serial. Identical outputs either way.
+    """
+    missing = [t for t in dict.fromkeys(texts) if t not in memo]
+    if missing:
+        _workers = 1
+        try:
+            import config as _cfg
+            _w = max(1, int(getattr(_cfg, "FAST_EXTRACTOR_WORKERS", 4)))
+            from core.query_analyzer import _get_fast_extractor as _gfe
+            _fx = _gfe()
+            _sess = getattr(getattr(_fx, "onnx_extractor", None), "session", None)
+            _provs = [str(p) for p in (_sess.get_providers() or [])] if _sess is not None else []
+            if _w > 1 and _provs == ["CPUExecutionProvider"]:
+                _workers = min(_w, len(missing))
+        except Exception:
+            _workers = 1
+        if _workers > 1:
+            import concurrent.futures as _cf_a
+            with _cf_a.ThreadPoolExecutor(max_workers=_workers) as _ex:
+                for t, a in zip(missing, _ex.map(analyze_query, missing)):
+                    memo[t] = a
+        else:
+            for t in missing:
+                try:
+                    memo[t] = analyze_query(t)
+                except Exception:
+                    memo[t] = {"keywords": [], "entities": []}
+    return [memo.get(t, {"keywords": [], "entities": []}) for t in texts]
+
+
 def expand_facts_via_graph(initial_facts, kg, max_expansion_rounds=3):
     """Expand fact set by following graph connections and keyword co-occurrence (optimized)."""
     all_facts = list(initial_facts)
     seen_ids = {f.get("fact_id") for f in all_facts if f.get("fact_id")}
     from graph.expansion import batch_get_global_node_edges
+    _analysis_memo = {}
 
     for _ in range(max_expansion_rounds):
         new_facts = []
         # Collect entities from current facts for batch graph lookup
         entity_nodes = {}
-        for fact in all_facts[:20]:
-            fact_text = fact.get("fact_text", "")
-            analysis = analyze_query(fact_text)
+        _texts = [f.get("fact_text", "") for f in all_facts[:20]]
+        _analyses = _analyze_many(_texts, _analysis_memo)
+        for analysis in _analyses:
             entities = analysis.get("entities", [])
             for ent in entities:
                 ent_name = ent.get("text") if isinstance(ent, dict) else str(ent)

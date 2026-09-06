@@ -2,7 +2,6 @@ import json
 from core import db
 from reasoning.graph import query_kg_triples, create_reasoning_node, add_reasoning_edge, link_grounding
 from reasoning.governance import detect_contradictions, quality_gate, compute_confidence
-from reasoning.verify import verify_claim
 
 
 class MindMapAgent:

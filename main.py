@@ -356,42 +356,42 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
                 if config.DEBUG_VERBOSE:
                     print(f"    (Ingest rank error: {e})")
 
-        # Compute verification flags (advisory)
-        from reasoning.verify import verify_symstep
+        # Compute verification flags (advisory) with ONE proper verify_claim
+        # call per fact instead of three ad-hoc layer calls. Triples already
+        # merged by vm.verify_batch above are reused (no duplicate LLM
+        # extraction); extraction runs only when keys are absent.
+        from reasoning.verify import verify_claim
         for i, fact in enumerate(all_extracted["facts"]):
             prior = all_extracted["facts"][:i]
             sym_contradiction = 0
             formal_repr = None
             rcot_verified = 0
 
-            # SymStep advisory
             try:
-                sym_ok = verify_symstep(fact, prior)
-                if not sym_ok:
+                _ctext = fact.get("fact_text", "")
+                _claim = {"text": _ctext, "conclusion": _ctext,
+                          "source_span": fact.get("source_span", ""),
+                          "subject": fact.get("subject", ""),
+                          "predicate": fact.get("predicate", ""),
+                          "object": fact.get("object", fact.get("canonical_value", "")),
+                          "_prior_claims": prior}
+                _layers = verify_claim(_claim) or []
+                _by_layer = {l.get("layer"): l for l in _layers if isinstance(l, dict)}
+                if not _by_layer.get("symstep", {}).get("verified", True):
                     sym_contradiction = 1
+                if _by_layer.get("rcot", {}).get("verified"):
+                    rcot_verified = 1
+                _t = {k: fact.get(k, "") for k in ("subject", "predicate", "object")}
+                if _t.get("subject") and _t.get("predicate"):
+                    formal_repr = json.dumps(_t)
+                else:
+                    from reasoning.verify import extract_triple_from_text
+                    triple = extract_triple_from_text(_ctext)
+                    if triple and all(k in triple for k in ("subject", "predicate", "object")):
+                        formal_repr = json.dumps(triple)
             except Exception as e:
                 logger.warning(f"Handled exception: {e}", exc_info=True)
                 pass
-
-            # VeriCoT formal representation (if possible)
-            try:
-                from reasoning.verify import extract_triple_from_text
-                triple = extract_triple_from_text(fact.get("fact_text", ""))
-                if triple and all(k in triple for k in ("subject", "predicate", "object")):
-                    formal_repr = json.dumps(triple)
-            except Exception as e:
-                logger.warning(f"Handled exception: {e}", exc_info=True)
-                pass
-
-            # R-CoT verification for lower confidence facts
-            if fact.get("confidence", 0) < 0.7:
-                try:
-                    from reasoning.verify import verify_rcot
-                    if verify_rcot(fact.get("fact_text", ""), None):
-                        rcot_verified = 1
-                except Exception as e:
-                    logger.warning(f"Handled exception: {e}", exc_info=True)
-                    pass
 
             fact["_sym_contradiction"] = sym_contradiction
             fact["_formal_repr"] = formal_repr
