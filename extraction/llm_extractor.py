@@ -701,14 +701,80 @@ def _get_dynamic_capacities():
     _endpoint_capacities_cache = capacities
     return capacities
 
+def _fully_cached_indices(chunks):
+    """Indices whose all 3 categories are cached for some single endpoint model.
+
+    One batched SELECT for all chunks (never per-chunk/per-category round-trips).
+    A chunk counts only when one model covers every category, so the batch path
+    can serve it with zero LLM calls. Empty set when caching is off or no
+    endpoint models are configured.
+    """
+    try:
+        if not getattr(config, "LLM_EXTRACTION_CACHE", False):
+            return set()
+        models = [ep.get("model") for ep in (getattr(config, "LLM_ENDPOINTS", []) or []) if ep.get("model")]
+        if not models or not chunks:
+            return set()
+        cats = [
+            ("facts_entities_relationships", FACTS_ENTITIES_PROMPT_BATCH, 8192),
+            ("people_locations_dates", PEOPLE_LOCATIONS_DATES_PROMPT_BATCH, 4096),
+            ("events_discoveries_gems", EVENTS_DISCOVERIES_GEMS_PROMPT_BATCH, 4096),
+        ]
+        keys = {(c, _get_prompt_hash(t, c), m, mt) for (c, t, mt) in cats for m in models}
+        hashes = [_hash_text(t) for t in chunks]
+        conn = db.db_connect(config.LLM_CACHE_DB)
+        cur = conn.cursor()
+        ph = ",".join("?" for _ in hashes)
+        cur.execute(f"SELECT chunk_hash, category, model, max_tokens, prompt_hash FROM llm_extraction_cache WHERE chunk_hash IN ({ph})", hashes)
+        have = set()
+        for row in cur.fetchall():
+            try:
+                have.add((row[0], row[1], row[2], row[3], row[4]))
+            except Exception:
+                continue
+        conn.close()
+        # prompt_hash column may predate migration (DROP+recreate in _init_cache
+        # covers it), so match on the full key including prompt hash.
+        out = set()
+        for i in range(len(chunks)):
+            for m in models:
+                if all((hashes[i], c, m, mt, _get_prompt_hash(t, c)) in have for (c, t, mt) in cats):
+                    out.add(i)
+                    break
+        return out
+    except Exception:
+        return set()
+
+
 def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=None, logic_context="", doc_type=None):
     if max_workers is None:
         max_workers = config.CHUNK_EXTRACTION_WORKERS
     _init_cache()
 
+    # Embed-only-uncached: fully-cached chunks resolve from stored LLM output
+    # with zero embed + zero LLM cost. They rejoin with emb=None/flag=True and
+    # are served by _process_batch's cache path (recall/pre-pass tolerate None).
+    # Note: cached chunks bypass the spectral gate (None emb) and resolve from
+    # stored LLM output rather than the pre-only fallback — deterministic and
+    # strictly higher-quality than re-deriving.
+    _cached_idx = set()
+    if chunk_embeddings is None and getattr(config, "EXTRACT_SKIP_CACHED_EMBED", True):
+        _cached_idx = _fully_cached_indices(chunks)
+        if _cached_idx:
+            print(f"  (Cache fast-path: {len(_cached_idx)}/{len(chunks)} chunks fully cached, skipping embed)")
+
     if chunk_embeddings is None:
-        print("  (No chunk embeddings provided; computing embeddings for novelty gating...)")
-        chunk_embeddings = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
+        if _cached_idx and len(_cached_idx) < len(chunks):
+            _todo = [t for i, t in enumerate(chunks) if i not in _cached_idx]
+            print("  (No chunk embeddings provided; computing embeddings for novelty gating...)")
+            _got = get_embeddings_batch(_todo, batch_size=config.EMBEDDING_BATCH_SIZE)
+            _it = iter(_got)
+            chunk_embeddings = [None if i in _cached_idx else next(_it) for i in range(len(chunks))]
+        elif _cached_idx:
+            chunk_embeddings = [None] * len(chunks)
+        else:
+            print("  (No chunk embeddings provided; computing embeddings for novelty gating...)")
+            chunk_embeddings = get_embeddings_batch(chunks, batch_size=config.EMBEDDING_BATCH_SIZE)
 
     flags = _compute_novelty_flags(chunks, chunk_embeddings)
     # Safety floor (generic, config-driven): never skip so aggressively that coverage collapses.
