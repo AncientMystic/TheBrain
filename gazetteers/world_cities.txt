@@ -1,0 +1,387 @@
+New York
+Los Angeles
+Chicago
+Houston
+Phoenix
+Philadelphia
+San Antonio
+San Diego
+Dallas
+San Jose
+Austin
+Jacksonville
+San Francisco
+Seattle
+Denver
+Boston
+Portland
+Las Vegas
+Miami
+Atlanta
+Detroit
+Baltimore
+Minneapolis
+New Orleans
+Nashville
+Memphis
+London
+Paris
+Berlin
+Madrid
+Rome
+Milan
+Barcelona
+Amsterdam
+Vienna
+Prague
+Budapest
+Dublin
+Lisbon
+Athens
+Stockholm
+Oslo
+Copenhagen
+Helsinki
+Zurich
+Geneva
+Brussels
+Moscow
+Saint Petersburg
+Kyiv
+Istanbul
+Ankara
+Tokyo
+Osaka
+Kyoto
+Beijing
+Shanghai
+Hong Kong
+Seoul
+Bangkok
+Singapore
+Kuala Lumpur
+Jakarta
+Manila
+Mumbai
+Delhi
+New Delhi
+Bangalore
+Kolkata
+Chennai
+Karachi
+Dhaka
+Colombo
+Kathmandu
+Sydney
+Melbourne
+Brisbane
+Perth
+Adelaide
+Hobart
+Canberra
+Auckland
+Wellington
+Christchurch
+Hamilton
+Dunedin
+Queenstown
+Rotorua
+Waitangi
+Toronto
+Vancouver
+Montreal
+Ottawa
+Mexico City
+Guadalajara
+Monterrey
+Sao Paulo
+Rio de Janeiro
+Brasilia
+Buenos Aires
+Lima
+Bogota
+Santiago
+Quito
+Caracas
+Montevideo
+La Paz
+Cairo
+Alexandria
+Lagos
+Nairobi
+Johannesburg
+Cape Town
+Pretoria
+Casablanca
+Algiers
+Tunis
+Dubai
+Abu Dhabi
+Riyadh
+Doha
+Muscat
+Amman
+Beirut
+Jerusalem
+Tel Aviv
+Baghdad
+Tehran
+Krakow
+Bucharest
+Sofia
+Belgrade
+Zagreb
+Bratislava
+Ljubljana
+Tallinn
+Riga
+Vilnius
+Reykjavik
+Luxembourg City
+Monaco
+Andorra la Vella
+San Marino
+Vaduz
+Valletta
+Nicosia
+Tbilisi
+Yerevan
+Baku
+Tashkent
+Almaty
+Kabul
+Islamabad
+Hanoi
+Ho Chi Minh City
+Phnom Penh
+Vientiane
+Taipei
+Ulaanbaatar
+Pyongyang
+Suva
+Port Moresby
+Noumea
+Papeete
+Honolulu
+Anchorage
+Panama City
+Havana
+Kingston
+San Juan
+Nassau
+Port of Spain
+Bridgetown
+Georgetown
+Oxford
+Cambridge
+Edinburgh
+Glasgow
+Manchester
+Birmingham
+Liverpool
+Naples
+Florence
+Venice
+Turin
+Munich
+Hamburg
+Frankfurt
+Lyon
+Marseille
+Valencia
+Seville
+Porto
+Rotterdam
+Antwerp
+Granada
+Cordoba
+Toledo
+Coimbra
+Braga
+Palma
+Ajaccio
+Cagliari
+Palermo
+Catania
+Bologna
+Verona
+Padua
+Trieste
+Pisa
+Siena
+Bordeaux
+Nantes
+Lille
+Strasbourg
+Salvador
+Fortaleza
+Recife
+Curitiba
+Medellin
+Cali
+Arequipa
+Cusco
+Rosario
+Mendoza
+Maracaibo
+Barranquilla
+Cartagena
+Puebla
+Tijuana
+Managua
+Tegucigalpa
+Guatemala City
+San Salvador
+Darwin
+Newcastle
+Wollongong
+Geelong
+Townsville
+Cairns
+Invercargill
+Nelson
+Palmerston North
+New Plymouth
+Napier
+Tauranga
+Whangarei
+Kerikeri
+Paihia
+Kaikohe
+Greymouth
+Hokitika
+Westport
+Blenheim
+Picton
+Motueka
+Masterton
+Levin
+Feilding
+Wanganui
+Gisborne
+Taupo
+Turangi
+Ohakune
+Taihape
+Marton
+Foxton
+Otaki
+Waikanae
+Paraparaumu
+Porirua
+Lower Hutt
+Upper Hutt
+Kapiti
+Carterton
+Greytown
+Featherston
+Martinborough
+Kaikoura
+Rangiora
+Ashburton
+Timaru
+Oamaru
+Wanaka
+Alexandra
+Cromwell
+Gore
+Bluff
+Te Anau
+Manapouri
+Tuatapere
+Riverton
+Winton
+Lumsden
+Mossburn
+Arrowtown
+Frankton
+Garston
+Athol
+Parawa
+Tapanui
+Lawrence
+Roxburgh
+Ettrick
+Millers Flat
+Beaumont
+Raes Junction
+Clarksville
+Milton
+Henley
+Outram
+Mosgiel
+Port Chalmers
+Waitati
+Waikouaiti
+Palmerston
+Hampden
+Moeraki
+Shag Point
+Katiki
+Troopers Memorial
+Maheno
+Weston
+Ardgowan
+Deborah
+Pukeuri
+Richmond
+Waimate
+Makikihi
+Waihao Downs
+Morven
+Glenavy
+Waitaki Bridge
+Ikawai
+Saint Andrews
+Pareora
+Washdyke
+Saltwater Creek
+Southburn
+Seadown
+Claremont
+Kingsdown
+Rosebrook
+Beautiful Valley
+Kerrytown
+Pleasant Point
+Cave
+Fairlie
+Kimbell
+Burkes Pass
+Lake Tekapo
+Twizel
+Omarama
+Otematata
+Kurow
+Duntroon
+Livingstone
+Danseys Pass
+Naseby
+Ranfurly
+Ophir
+Omakau
+Lauder
+Becks
+St Bathans
+Cambrians
+Kyeburn
+Kokonga
+Hyde
+Middlemarch
+Sutton
+Clarks Junction
+Allanton
+East Taieri
+Momona
+Berwick
+Woodside
+Shannon
+Clinton
+Waiwera South
+Kaiwera
+Waiarakiki
+Pukerau
+East Gore
+West Gore
+Bury
+Warsaw

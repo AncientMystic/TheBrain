@@ -1,0 +1,2012 @@
+{
+  "_readme": "Disambiguation notes for gazetteer terms. Annotates risky entries in the companion .txt files; does NOT replace them. Schema: term (lowercase, matches automaton term_lower) | kinds (colliding gazetteer kinds) | risk (low/medium/high/critical) | region_hint | requires_coevidence (OR-groups of lowercase co-occurring tokens; sentence window preferred) | negative_coevidence (OR-groups whose presence votes AGAINST the gazetteer sense) | confidence_penalty (0-1) | default_kind (winner on conflict, null = flag ambiguous) | action (keep/gate/demote/remove) | notes. POLICY: nothing is removed for being ambiguous — every risky term gets a contextual identification rule instead. Feeds the future mapping DB population (terms table 1:1). v1 seed — extend as precision reviews demand.",
+  "_policies": [
+    {
+      "id": "short-token",
+      "applies_to": "any gazetteer term of 3 or fewer characters (li, ma, hu, he, yu, du, ye, su, lu, wu, xu, na, min, ...)",
+      "rule": "Never annotate a bare short token. Accept only with at least one coevidence: honorific or title adjacent (mr/mrs/ms/dr/prof/st/sir/lady), biographical verb in the same sentence (born/died/married/appointed/graduated/succeeded), a Capitalized+Capitalized pair whose partner is itself gazetteer-known, an attribution verb nearby (said/says/told/according to/stated), or an initial pattern (X. Yyyy). Apply confidence_penalty 0.45 when only weak (single-pair) evidence exists.",
+      "rationale": "Two-letter tokens collide with pronouns (he), verbs (du/do), abbreviations (min/minute, na/sodium, ma/mother/MA-state, su/sue, yu/you). Context, not the token, carries the signal."
+    },
+    {
+      "id": "descriptive-place",
+      "applies_to": "multi-word place names composed of ordinary descriptive words (beautiful valley, pleasant point, saltwater creek, ...)",
+      "rule": "Require Title Case on every word AND at least one of: a geographic preposition within 5 tokens (in/at/near/nearby/around/throughout/across/just outside), a regional coevidence term in the same sentence (country, state, or known city), or a gazetteer-neighbor place in the same sentence. Lowercase or isolated occurrences stay unannotated.",
+      "rationale": "Descriptive phrases are real places but read as ordinary prose. Capitalization plus geographic framing distinguishes 'we camped at Beautiful Valley' from 'a beautiful valley stretched ahead'."
+    }
+  ],
+  "notes": [
+    {
+      "term": "georgia",
+      "kinds": [
+        "us_states",
+        "countries"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "atlanta OR savannah OR fulton OR county OR governor OR u.s. OR united states",
+        "tbilisi OR caucasus OR sakartvelo OR lari OR black sea"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Cross-type: US state vs country. Never default; require regional co-evidence, else flag ambiguous for LLM/mapping layer.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "washington",
+      "kinds": [
+        "us_states",
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": "US-WA default for location sense",
+      "requires_coevidence": [
+        "seattle OR spokane OR olympia OR cascade OR pacific northwest",
+        "george OR president OR d.c. OR district of columbia OR white house"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": "us_states",
+      "action": "gate",
+      "notes": "State vs person (George Washington et al) vs D.C. Person-pattern Cap+Cap hits (first name in gazetteer) take the people bucket; bare Washington needs geo co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "turkey",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "ankara OR istanbul OR ottoman OR turkish OR lira OR erdogan OR bosphorus"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Country vs food/animal. Bare 'turkey' near thanksgiving/dinner/gravy/roast is almost never the country. Gate strictly.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "jordan",
+      "kinds": [
+        "countries",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "amman OR middle east OR hashemite OR petra OR dead sea",
+        "michael OR river OR basketball OR bulls"
+      ],
+      "confidence_penalty": 0.25,
+      "default_kind": "countries",
+      "action": "gate",
+      "notes": "Country vs person (Michael Jordan et al). Person-pattern hits with gated first names take people bucket; bare Jordan needs Middle-East co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "guinea",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "countries",
+      "action": "keep",
+      "notes": "Substring hazard: fires inside 'Papua New Guinea' / 'Equatorial Guinea' / 'Guinea-Bissau' alongside the full name. Annotator rule: on overlapping spans prefer the LONGEST match, drop the subsumed one.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "sudan",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "countries",
+      "action": "keep",
+      "notes": "Substring hazard inside 'South Sudan'. Longest-match rule applies; bare Sudan defaults to Sudan (not South).",
+      "negative_coevidence": []
+    },
+    {
+      "term": "congo",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "brazzaville OR republic of",
+        "kinshasa OR democratic OR drc OR zaire"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "demote",
+      "notes": "Republic of Congo vs DR Congo unresolved by the term alone. Keep with penalty; co-evidence picks the capital. Mapping phase should add a distinct DR Congo entry.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "paris",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "FR-IDF default",
+      "requires_coevidence": [
+        "france OR french OR eiffel OR seine OR louvre"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs given name (Paris Hilton) vs Paris, Texas. Person-pattern cannot fire (Paris not a gated first name) — mapping phase should add it as a name alias; city sense needs France co-evidence for full confidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "london",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "UK-London default",
+      "requires_coevidence": [
+        "england OR british OR thames OR uk OR ontario OR kentucky"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs surname (Jack London). Person-pattern hits take people bucket; bare London needs UK/Ontario co-evidence; London KY/OH exist as minor collisions.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "victoria",
+      "kinds": [
+        "first_names",
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "queen OR beckham OR secret OR actress OR born",
+        "australia OR british columbia OR hong kong OR seychelles OR falls"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs many places (AU state, BC capital, HK district, falls). Person-pattern decides the person sense; place sense needs regional co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "charlotte",
+      "kinds": [
+        "first_names",
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "US-NC default for place sense",
+      "requires_coevidence": [
+        "emily OR bronte OR actress OR born OR married",
+        "carolina OR mecklenburg OR nascar OR banking"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs Charlotte NC (and Amalie, PEI). Same split rule as victoria.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "austin",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "US-TX default for place sense",
+      "requires_coevidence": [
+        "texas OR travis county OR sxsw OR longhorns OR powers OR stone OR six"
+      ],
+      "confidence_penalty": 0.25,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "City vs surname/given name (Austin Powers, Jane Austen ~fuzzy). Person-pattern decides person sense; place needs Texas co-evidence. NOTE: Austen (author) is a different spelling — mapping phase must not conflate.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "dallas",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "US-TX default for place sense",
+      "requires_coevidence": [
+        "texas OR cowboys OR mavericks OR dfw"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs surname. Place sense is the common case; demote without Texas co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "houston",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "US-TX default for place sense",
+      "requires_coevidence": [
+        "texas OR nasa OR astros OR rockets OR harris county OR whitney"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs surname (Whitney Houston, Sam Houston). Person-pattern decides person sense; place demoted without Texas co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "miami",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "low",
+      "region_hint": "US-FL default",
+      "requires_coevidence": [
+        "florida OR dade OR south beach OR hurricanes"
+      ],
+      "confidence_penalty": 0.15,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Mostly unambiguous city; minor tribe/university senses. Light demote without Florida co-evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "denver",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "US-CO default for place sense",
+      "requires_coevidence": [
+        "colorado OR broncos OR nuggets OR mile high OR john"
+      ],
+      "confidence_penalty": 0.15,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs surname/given name (John Denver). Same split rule as houston.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "boston",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "US-MA default for place sense",
+      "requires_coevidence": [
+        "massachusetts OR celtics OR red sox OR harvard OR mit"
+      ],
+      "confidence_penalty": 0.15,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs surname. Place sense dominates; light demote.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "mark",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "first_names",
+      "action": "keep",
+      "notes": "Common word but person-pattern requires Capitalized+Capitalized pairs, so bare lowercase 'mark' never fires. Keep; revisit only if pair-pattern precision drops (e.g. 'Mark Time' style false pairs).",
+      "negative_coevidence": []
+    },
+    {
+      "term": "reading",
+      "kinds": [],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": null,
+      "action": "keep",
+      "notes": "NOT in gazetteers (deliberately excluded: UK city vs universal verb). Documents the exclusion policy: high-frequency common words stay out of flat lists even when they are real places; mapping phase resolves via co-evidence instead.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "li",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says OR told OR according to"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Short-token policy flagship: extremely common surname but a 2-letter match. Accept only with person coevidence per _policies.short-token.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "ma",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says",
+        "massachusetts OR boston OR cape cod"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs mother ('ma') vs MA state abbreviation. Person coevidence decides person sense; Massachusetts coevidence decides state sense; otherwise drop.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "hu",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Common surname; 2-letter match needs person coevidence per short-token policy.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "he",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "critical",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR died OR said OR he-family OR heh"
+      ],
+      "confidence_penalty": 0.5,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs English pronoun 'he' vs helium symbol. Bare 'He' at sentence start is virtually never the surname — require strong person coevidence (title + verb, not just capitalization).",
+      "negative_coevidence": []
+    },
+    {
+      "term": "yu",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Surname vs 'you' typo/shorthand. Person coevidence required; informal text rarely carries it, which correctly suppresses most false hits.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "du",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Surname vs French 'du' (de+le). In French text require title-case pair or person verb; otherwise drop.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "ye",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says OR kanye OR west"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Surname vs archaic 'ye olde'. Person coevidence required.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "su",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Surname vs nickname 'Su' (Sue). Person coevidence required; note Sue itself is a separate given-name entry for mapping phase.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "lu",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Common surname; 2-letter match needs person coevidence per short-token policy.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "wu",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says OR woo"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Common surname vs 'woo' interjection. Person coevidence required.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "xu",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR prof OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Uncommon letter pair in English prose, so lower risk than li/ma — still gated as a 2-letter token.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "na",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR born OR died OR said OR says"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Rare given name vs sodium symbol Na vs 'nah' shorthand. Person coevidence required.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "min",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR dr OR born OR died OR said OR says OR korean OR chinese"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs 'min' (minute/minimum abbreviation). Person coevidence required; bare 'min' with digits nearby is always the abbreviation.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "maine",
+      "kinds": [
+        "us_states"
+      ],
+      "risk": "high",
+      "region_hint": "US-ME",
+      "requires_coevidence": [
+        "augusta OR portland OR bangor OR pine tree OR new england OR lobster OR governor"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "US state vs adjective 'main' in 'the maine attraction' style wordplay and the historic province of Maine (France). Capitalized bare Maine in US-geographic context is usually the state; require state coevidence, else flag.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "chile",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "santiago OR andes OR south america OR spanish OR atacama OR valparaiso"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Country vs chili pepper (common misspelling 'chile'). Food coevidence (recipe, pepper, spicy, relleno, con carne) means NOT the country — treat as negative evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "china",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "beijing OR dynasty OR ming OR great wall OR mandarin OR communist OR shanghai"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Country vs fine porcelain ('china cabinet', 'china cups'). Tableware coevidence (cabinet, cups, plates, dishes, set) is negative evidence for the country sense.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "lima",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "high",
+      "region_hint": "PE-Lima default",
+      "requires_coevidence": [
+        "peru OR south america OR andes OR ohio OR allen county"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Capital of Peru (and Lima, Ohio) vs lima bean. Food coevidence (beans, soup, succotash, butter) is negative evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "porto",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "PT-Porto default",
+      "requires_coevidence": [
+        "portugal OR douro OR gaia OR portuguese"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": "world_cities",
+      "action": "gate",
+      "notes": "Portuguese city vs port wine ('porto', 'port') and generic harbour noun. Wine coevidence (tawny, vintage, bottle, wine) is negative evidence for the city sense.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "anchorage",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "US-AK default",
+      "requires_coevidence": [
+        "alaska OR cook inlet OR denali OR alaskan"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": "world_cities",
+      "action": "gate",
+      "notes": "Alaskan city vs ordinary noun (harbour anchorage, mooring). Lowercase or nautical coevidence (harbour, mooring, anchor, vessel) means the noun — the city is virtually always capitalized with Alaska context.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "bologna",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "IT-BO default",
+      "requires_coevidence": [
+        "italy OR italian OR emilia OR towers OR university"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Italian city vs bologna sausage. Food coevidence (sandwich, meat, slice, oscar mayer) is negative evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "pisa",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "IT-PI default",
+      "requires_coevidence": [
+        "italy OR arno OR leaning OR tower OR tuscany"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Italian city vs PISA education test (usually ALL-CAPS). All-caps PISA near students/scores/education is the test, never the city — treat casing as evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "phoenix",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "US-AZ default",
+      "requires_coevidence": [
+        "arizona OR maricopa OR desert OR suns OR cardinals"
+      ],
+      "confidence_penalty": 0.25,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "City vs mythical bird and countless business names. City sense dominates in geographic text; myth sense comes with rising/ashes/rebirth coevidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "bluff",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "NZ-Southland default",
+      "requires_coevidence": [
+        "new zealand OR southland OR stirling point OR invercargill OR oyster"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "NZ town vs poker/deception verb ('bluffing', 'called his bluff'). Verb forms and card-game coevidence are negative evidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "cave",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "NZ-Canterbury default",
+      "requires_coevidence": [
+        "new zealand OR canterbury OR timaru OR south canterbury"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "NZ township vs ordinary noun (caves, spelunking, stalactite). Lowercase or plural/caving coevidence means the noun.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "gore",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "NZ-Southland default for place sense",
+      "requires_coevidence": [
+        "new zealand OR southland OR hokonui OR mataura",
+        "al OR vice president OR climate OR tipper OR election"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "NZ town vs Al Gore vs blood/gore noun. Politics coevidence picks the person; NZ coevidence picks the town; horror/violence context picks neither.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "beautiful valley",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "new zealand OR canterbury OR north otago OR valley OR station"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Descriptive-place policy flagship: real locality, but reads as ordinary prose. Apply _policies.descriptive-place (Title Case on all words + geographic framing).",
+      "negative_coevidence": []
+    },
+    {
+      "term": "pleasant point",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "new zealand OR canterbury OR timaru OR south canterbury"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Descriptive-place policy: real township. Same Title-Case-plus-framing rule as beautiful valley.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "saltwater creek",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "new zealand OR canterbury OR timaru OR creek OR estuary"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Descriptive-place policy: real locality built from generic words. Same rule; note 'creek'/'river' waterwords strengthen the place sense."
+    },
+    {
+      "term": "monaco",
+      "kinds": [
+        "countries",
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "MC default (city-state: city IS the country)",
+      "requires_coevidence": [],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "countries",
+      "action": "keep",
+      "notes": "City-state: both senses resolve to the same place. Emit once as country; no conflict possible. Same handling for san marino."
+    },
+    {
+      "term": "san marino",
+      "kinds": [
+        "countries",
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "SM default (city-state)",
+      "requires_coevidence": [],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "countries",
+      "action": "keep",
+      "notes": "City-state like monaco: emit once as country."
+    },
+    {
+      "term": "singapore",
+      "kinds": [
+        "countries",
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": "SG default (city-state)",
+      "requires_coevidence": [],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.0,
+      "default_kind": "countries",
+      "action": "keep",
+      "notes": "City-state like monaco: emit once as country."
+    },
+    {
+      "term": "new york",
+      "kinds": [
+        "us_states",
+        "world_cities"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "albany OR buffalo OR rochester OR yonkers OR hudson OR governor OR state senate",
+        "manhattan OR brooklyn OR queens OR bronx OR staten island OR mayor OR subway OR wall street"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "State vs city share the name. Borough/mayor/subway coevidence picks the city; capital/upstate/governor picks the state; otherwise flag ambiguous — never silently default."
+    },
+    {
+      "term": "chad",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "africa OR niger OR libya OR sudan OR lake chad OR ndjamena OR sahel"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Country vs common given name. Person-pattern Cap+Cap hits (first name in gazetteer + Chad) take people bucket; bare Chad needs African coevidence."
+    },
+    {
+      "term": "alexandria",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "EG default for place sense",
+      "requires_coevidence": [
+        "egypt OR mediterranean OR library OR pharos OR virginia OR louisiana"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Egyptian city (plus VA/LA namesakes) vs surname/given name. Person-pattern decides person sense; place demoted without coevidence.",
+      "negative_coevidence": []
+    },
+    {
+      "term": "darwin",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": "AU-NT default for place sense",
+      "requires_coevidence": [
+        "australia OR northern territory OR timor sea OR charles"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Australian city vs Charles Darwin and the surname. Person-pattern decides person sense; place demoted without Australian coevidence."
+    },
+    {
+      "term": "hamilton",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "new zealand OR waikato OR ohio OR bermuda OR ontario",
+        "alexander OR musical OR lewis OR formula"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Many cities (NZ, Ohio, Ontario, Bermuda) vs very common surname. Person-pattern decides person sense; place needs regional coevidence — never default the city."
+    },
+    {
+      "term": "nelson",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "new zealand OR tasman OR british columbia OR lancashire",
+        "horatio OR mandela OR willie OR admiral"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Cities (NZ, BC, Lancashire) vs common surname. Same split rule as hamilton."
+    },
+    {
+      "term": "mendoza",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "AR-Mendoza default for place sense",
+      "requires_coevidence": [
+        "argentina OR andes OR wine OR malbec"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.15,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Argentine city/province vs Spanish surname. Place dominates; light demote."
+    },
+    {
+      "term": "weston",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "florida OR massachusetts OR connecticut OR super mare"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.15,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Several towns (FL, MA, CT, super-Mare UK) vs surname. Needs regional coevidence; no default town."
+    },
+    {
+      "term": "zurich",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "CH-ZH default for place sense",
+      "requires_coevidence": [
+        "switzerland OR swiss OR limmat OR bahnhofstrasse"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.15,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Swiss city vs rare surname. Place dominates; light demote. NOTE spelling: Zurich without umlaut is the gazetteer form; Zürich with umlaut should map to the same entry in mapping phase."
+    },
+    {
+      "term": "waitangi",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "NZ-Northland",
+      "requires_coevidence": [
+        "new zealand OR treaty OR bay of islands OR northland"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.1,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "NZ treaty town; surname sense is vanishingly rare. Light demote only."
+    },
+    {
+      "term": "deborah",
+      "kinds": [
+        "first_names",
+        "world_cities"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "born OR married OR actress OR ms OR mrs",
+        "storm OR cyclone OR iowa"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.15,
+      "default_kind": "first_names",
+      "action": "demote",
+      "notes": "Given name vs Storm Deborah naming + Deborah, Iowa. Person sense dominates; storm sense needs weather coevidence."
+    },
+    {
+      "term": "sofia",
+      "kinds": [
+        "first_names",
+        "world_cities"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "born OR actress OR ms OR mrs",
+        "bulgaria OR balkan OR serdica"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.15,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs Bulgarian capital. Both common; coevidence decides, no default."
+    },
+    {
+      "term": "virginia",
+      "kinds": [
+        "first_names",
+        "us_states"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "born OR actress OR ms OR mrs OR woolf",
+        "commonwealth OR richmond OR norfolk OR shenandoah OR west virginia"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.25,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs US state (+ West Virginia substring hazard: longest-match rule applies). Person-pattern decides person sense; state needs Virginia coevidence."
+    },
+    {
+      "term": "church",
+      "kinds": [
+        "last_names",
+        "organizations_suffixes"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR reverend OR pastor OR born OR frederic OR winston",
+        "baptist OR catholic OR methodist OR parish OR street OR avenue OR road"
+      ],
+      "negative_coevidence": [
+        "the church",
+        "going to church",
+        "church service"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs org-suffix vs ordinary noun — triple collision and case variants collapse in matching. Org sense needs a multi-word capitalized name before it; person needs person coevidence; generic 'the church' phrases are negative evidence for both."
+    },
+    {
+      "term": "council",
+      "kinds": [
+        "organizations_suffixes",
+        "event_triggers"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "city OR county OR parish OR national OR security OR tribal"
+      ],
+      "negative_coevidence": [
+        "council housing",
+        "council tax",
+        "student council"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Org suffix vs event/trigger noun. Requires a capitalized multi-word body before it; generic 'the council decided' without a proper body name stays unannotated."
+    },
+    {
+      "term": "treaty",
+      "kinds": [
+        "last_names",
+        "event_triggers"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "waitangi OR paris OR versailles OR named OR signed OR treaty of"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Rare surname vs event noun. Event sense needs a named treaty ('Treaty of X', signed/ratified nearby); surname needs person coevidence."
+    },
+    {
+      "term": "gas",
+      "kinds": [
+        "organizations_suffixes"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "natural gas OR british gas OR company OR corp OR station"
+      ],
+      "negative_coevidence": [
+        "gas station",
+        "gas prices",
+        "step on the gas",
+        "natural gas"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Org suffix vs everyday noun/verb. Bare 'gas' is never an organization alone — require a capitalized company body (British Gas, Gazprom-styled names) or drop."
+    },
+    {
+      "term": "oil",
+      "kinds": [
+        "organizations_suffixes"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "company OR corp OR petroleum OR crude OR shell OR bp"
+      ],
+      "negative_coevidence": [
+        "olive oil",
+        "cooking oil",
+        "motor oil",
+        "oil change",
+        "oil prices"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Same rule as gas: bare 'oil' is a commodity noun, never an org. Require company-form coevidence."
+    },
+    {
+      "term": "lab",
+      "kinds": [
+        "organizations_suffixes"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "university OR national OR research OR los alamos OR bell OR laboratory"
+      ],
+      "negative_coevidence": [
+        "the lab",
+        "lab results",
+        "lab work",
+        "labrador"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Clipping of laboratory; only safe after a capitalized institution name. Bare 'lab' is generic."
+    },
+    {
+      "term": "bank",
+      "kinds": [
+        "organizations_suffixes"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "national OR central OR world bank OR of america OR chase OR hsbc OR reserve"
+      ],
+      "negative_coevidence": [
+        "river bank",
+        "bank account",
+        "bank holiday",
+        "piggy bank"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Financial org vs riverbank vs verb. Capitalized institution body required; river/account/holiday contexts are negative evidence."
+    },
+    {
+      "term": "team",
+      "kinds": [
+        "organizations_suffixes"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "national team OR olympic OR club OR fc OR united",
+        "captain OR coach OR league OR match"
+      ],
+      "negative_coevidence": [
+        "team building",
+        "team meeting",
+        "our team",
+        "teamwork"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Sports/org sense needs a proper body or league coevidence; workplace-generic uses stay unannotated."
+    },
+    {
+      "term": "war",
+      "kinds": [
+        "event_triggers"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "world war OR civil war OR cold war OR vietnam OR crimean OR declared OR outbreak OR casualties"
+      ],
+      "negative_coevidence": [
+        "award",
+        "forward",
+        "wardrobe",
+        "warning",
+        "reward"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Bare 'war' over-fires; require a named war or war coevidence. Substring lookalikes (award/forward) are saved by word boundaries but listed as a standing watch."
+    },
+    {
+      "term": "first",
+      "kinds": [
+        "event_triggers"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "first ever OR first time OR first of its kind OR maiden OR inaugural OR premiere"
+      ],
+      "negative_coevidence": [
+        "first name",
+        "first quarter",
+        "first place",
+        "at first"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Ordinal/adjective in most text; event sense only with novelty framing (maiden/inaugural/first-ever)."
+    },
+    {
+      "term": "record",
+      "kinds": [
+        "event_triggers"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "broke the record OR world record OR set a record OR guinness"
+      ],
+      "negative_coevidence": [
+        "record label",
+        "on record",
+        "record keeping",
+        "medical records"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Achievement sense needs record-breaking framing; label/legal/archival senses are negative evidence."
+    },
+    {
+      "term": "de",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "high",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR de-family OR de la OR de los"
+      ],
+      "negative_coevidence": [
+        "rio de janeiro",
+        "de facto",
+        "de jure"
+      ],
+      "confidence_penalty": 0.45,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname particle vs French/Portuguese preposition. Bare 'de' is almost never standalone — require nobiliary-phrase form (de Gaulle, de la Cruz)."
+    },
+    {
+      "term": "ren",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR born OR said"
+      ],
+      "negative_coevidence": [
+        "wren",
+        "renal",
+        "render"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name/surname vs bird/medical substrings (saved by boundaries) — person coevidence required; cross-kind first/last collision is benign for the people bucket."
+    },
+    {
+      "term": "wei",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR born OR said OR chinese"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Common Chinese given/family name. Person coevidence required; cross-kind collision benign for people bucket."
+    },
+    {
+      "term": "liu",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR born OR said OR chinese"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Common Chinese name both positions. Same rule as wei."
+    },
+    {
+      "term": "ali",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR muhammad OR boxer OR said"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Common given/family name. Person coevidence required; cross-kind collision benign."
+    },
+    {
+      "term": "roy",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR orbison OR rogers OR scheider"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given/family name. Person coevidence required."
+    },
+    {
+      "term": "lin",
+      "kinds": [
+        "first_names",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR born OR said OR maya OR jeremy"
+      ],
+      "negative_coevidence": [
+        "linseed",
+        "linden",
+        "linear"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Name vs tree/seed substrings (boundaries save most). Person coevidence required."
+    },
+    {
+      "term": "han",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR chinese OR dynasty"
+      ],
+      "negative_coevidence": [
+        "han solo",
+        "han dynasty"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs Han dynasty/ethnicity vs Star Wars character. Dynasty coevidence picks the historical sense (still a valid annotation target); person coevidence picks the surname."
+    },
+    {
+      "term": "tan",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [
+        "suntan",
+        "tangent",
+        "tango"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Surname vs color/verb. Person coevidence required."
+    },
+    {
+      "term": "sen",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR amartya"
+      ],
+      "negative_coevidence": [
+        "senate",
+        "senator",
+        "senior"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs senate/senior clippings. Person coevidence required; legislative coevidence is negative."
+    },
+    {
+      "term": "pal",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [
+        "pen pal",
+        "gal pal",
+        "my pal"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs informal 'pal' (friend). Familiar-address coevidence (my/pen/gal) is negative."
+    },
+    {
+      "term": "pan",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [
+        "frying pan",
+        "peter pan",
+        "pan-african",
+        "panorama"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname vs cookware/Peter Pan/prefix. Kitchen and Neverland coevidence are negative."
+    },
+    {
+      "term": "cox",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [
+        "coxsackie",
+        "coxswain"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Distinctive consonant cluster makes bare hits usually correct; light gate for safety."
+    },
+    {
+      "term": "fox",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR mrs OR ms OR born OR said OR news OR megan OR michael j"
+      ],
+      "negative_coevidence": [
+        "fox hunting",
+        "the fox",
+        "foxes",
+        "red fox",
+        "arctic fox"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname/media company vs animal. Wildlife coevidence is negative; network context (Fox News) is its own org-sense decision."
+    },
+    {
+      "term": "lee",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR general OR robert e OR bruce OR stan OR harper OR born OR said"
+      ],
+      "negative_coevidence": [
+        "leeward",
+        "leeway"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": "last_names",
+      "action": "gate",
+      "notes": "Very common surname; also sheltered-side noun. Person coevidence required; nautical coevidence negative."
+    },
+    {
+      "term": "sun",
+      "kinds": [
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR yat-sen"
+      ],
+      "negative_coevidence": [
+        "the sun",
+        "sunrise",
+        "sunset",
+        "sunny",
+        "solar"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Surname (esp. Sun Yat-sen) vs star noun. Astronomical coevidence is negative."
+    },
+    {
+      "term": "eva",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "ms OR mrs OR born OR said OR peron OR longoria OR mendez"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.25,
+      "default_kind": "first_names",
+      "action": "gate",
+      "notes": "Given name; pair-gate already protects it. Light gate for bare mentions."
+    },
+    {
+      "term": "ira",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR glass OR Gershwin"
+      ],
+      "negative_coevidence": [
+        "ira account",
+        "roth ira",
+        "traditional ira"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Given name vs retirement account (IRA, usually caps). Financial coevidence is negative; casing helps (all-caps IRA is never the name)."
+    },
+    {
+      "term": "leo",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said OR dicaprio OR messi OR tolstoy"
+      ],
+      "negative_coevidence": [
+        "leo constellation",
+        "the lion"
+      ],
+      "confidence_penalty": 0.25,
+      "default_kind": "first_names",
+      "action": "gate",
+      "notes": "Given name vs constellation. Zodiac coevidence picks neither (constellation is its own mapping entry later)."
+    },
+    {
+      "term": "amy",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "ms OR born OR said OR winehouse OR adams"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "first_names",
+      "action": "demote",
+      "notes": "Common given name; pair-gate protects it. Light demote only."
+    },
+    {
+      "term": "kai",
+      "kinds": [
+        "first_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.25,
+      "default_kind": "first_names",
+      "action": "gate",
+      "notes": "Given name; short-token policy applies. Light gate."
+    },
+    {
+      "term": "bury",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "greater manchester OR lancashire OR bury st"
+      ],
+      "negative_coevidence": [
+        "bury the",
+        "bury his",
+        "bury her",
+        "bury them",
+        "bury me"
+      ],
+      "confidence_penalty": 0.4,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "UK town vs verb 'bury'. Verb frames (bury the/his/her) are negative evidence; only Greater-Manchester coevidence licenses the place."
+    },
+    {
+      "term": "hyde",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "greater manchester OR cheshire OR jekyll"
+      ],
+      "negative_coevidence": [
+        "dr jekyll",
+        "mr hyde"
+      ],
+      "confidence_penalty": 0.35,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "UK town vs surname vs Jekyll-and-Hyde character. Literary coevidence picks the character (its own mapping entry later); regional picks the town."
+    },
+    {
+      "term": "sutton",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "london OR surrey OR massachusetts OR dublin"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Many towns + common surname. Person-pattern decides person sense; place needs regional coevidence."
+    },
+    {
+      "term": "shannon",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "ireland OR clare OR river shannon OR airport"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Irish town/river vs given name/surname. Person-pattern decides person sense; place needs Irish coevidence."
+    },
+    {
+      "term": "clinton",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "iowa OR massachusetts OR new jersey OR mississippi",
+        "bill OR hillary OR president OR white house OR monica"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Several towns vs political surname. Politics coevidence picks the person; town coevidence picks the place."
+    },
+    {
+      "term": "richmond",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "virginia OR london OR california OR texas OR yorkshire"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Many cities (VA capital chief) vs surname. Person-pattern decides person sense; place needs regional coevidence."
+    },
+    {
+      "term": "cambridge",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "england OR massachusetts OR university OR harvard OR mit OR ontario"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "University cities dominate; surname rare. Demote without academic/regional coevidence. NOTE overlap with analytica/cambridge-analytica org sense — mapping phase splits."
+    },
+    {
+      "term": "newcastle",
+      "kinds": [
+        "world_cities"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "england OR tyne OR australia OR nsw OR kwa-zulu OR united"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "world_cities",
+      "action": "demote",
+      "notes": "Several cities (Tyne UK chief). Regional coevidence picks which; demote bare mentions."
+    },
+    {
+      "term": "fairlie",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": "NZ-Canterbury default for place sense",
+      "requires_coevidence": [
+        "new zealand OR canterbury OR mackenzie"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "NZ town vs surname. Person-pattern decides person sense; place needs NZ coevidence."
+    },
+    {
+      "term": "milton",
+      "kinds": [
+        "world_cities",
+        "last_names"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "keynes OR ontario OR massachusetts OR otago"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Towns (MK UK, Ontario, Otago NZ) vs surname (Milton Friedman). Person-pattern decides person sense."
+    },
+    {
+      "term": "peru",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "lima OR andes OR machu picchu OR south america OR inca"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country; rare surname Perutz is fuzzy-adjacent only. Demote without South-American coevidence."
+    },
+    {
+      "term": "cuba",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "havana OR caribbean OR castro OR embargo"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country; demote without Caribbean coevidence."
+    },
+    {
+      "term": "fiji",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "suva OR pacific OR island OR water"
+      ],
+      "negative_coevidence": [
+        "fiji water"
+      ],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country vs bottled-water brand. Brand coevidence (bottled, water, artesian) weakens the country sense without killing it."
+    },
+    {
+      "term": "iran",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "tehran OR persian OR middle east OR nuclear"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country; demote without Middle-East coevidence. Substring of 'iranian' handled by boundaries."
+    },
+    {
+      "term": "iraq",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "baghdad OR middle east OR gulf war OR kurdistan"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country; demote without Middle-East coevidence."
+    },
+    {
+      "term": "mali",
+      "kinds": [
+        "countries",
+        "last_names"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "bamako OR west africa OR sahel OR timbuktu",
+        "mr OR born OR said"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Country vs surname/given name. Person-pattern decides person sense; country needs African coevidence."
+    },
+    {
+      "term": "oman",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "muscat OR arabian OR gulf OR middle east"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country; short token but distinctive consonants. Demote without Arabian coevidence."
+    },
+    {
+      "term": "togo",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "low",
+      "region_hint": null,
+      "requires_coevidence": [
+        "lome OR west africa OR ghana OR benin"
+      ],
+      "negative_coevidence": [],
+      "confidence_penalty": 0.2,
+      "default_kind": "countries",
+      "action": "demote",
+      "notes": "Country. One-word 'togo' without space rarely means 'to go'; demote without African coevidence."
+    },
+    {
+      "term": "usa",
+      "kinds": [
+        "countries"
+      ],
+      "risk": "medium",
+      "region_hint": null,
+      "requires_coevidence": [
+        "u.s.a OR united states OR america OR washington"
+      ],
+      "negative_coevidence": [
+        "susan",
+        "jerusalem",
+        "medusa"
+      ],
+      "confidence_penalty": 0.3,
+      "default_kind": null,
+      "action": "gate",
+      "notes": "Abbreviation that appears as a substring inside longer words (Susan, Jerusalem). Annotator must match whole-token USA only (boundaries + all-caps preferred); listed superstrings are explicit negative evidence."
+    }
+  ]
+}
