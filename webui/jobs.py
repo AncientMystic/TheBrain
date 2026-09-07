@@ -188,11 +188,14 @@ def _run_guided_real(job):
                     _conn.close()
             except Exception as e:
                 _emit(job, {"type": "log", "level": "warn", "msg": f"Logic decision failed: {e}"})
+        import time as _tmod
+        _f0 = _tmod.time()
         try:
             ok = process_file(f, tracker, logic_context=logic_context, preloaded=_prep, seq=done + 1)
         except Exception as e:
             _emit(job, {"type": "log", "level": "error", "msg": f"Failed {fname}: {e}"})
             ok = False
+        _fms = int((_tmod.time() - _f0) * 1000)
         # Counts for this file (cheap COUNTs, same DBs the pipeline just wrote)
         facts_n, chunks_n = -1, -1
         try:
