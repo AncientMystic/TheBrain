@@ -20,7 +20,7 @@
 :focus-visible{outline:2px solid var(--acc1);outline-offset:2px;border-radius:6px}
 .rail button:focus-visible,.btn:focus-visible{box-shadow:0 0 0 2px var(--bg1),0 0 14px var(--acc1)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media (max-width:860px){.main{margin-left:60px;padding:10px}.rail{width:60px}.rail button{width:50px}.row,.row3{grid-template-columns:1fr}.cfg-item{grid-template-columns:1fr}div[style*="grid-template-columns:1fr 260px"]{grid-template-columns:1fr!important}.msg{max-width:100%}}
+@media (max-width:860px){.main{margin-left:60px;padding:10px}.rail{width:60px}.rail button{width:50px}.row,.row3{grid-template-columns:1fr}.cfg-item{grid-template-columns:1fr}.gr-grid{grid-template-columns:1fr!important}.msg{max-width:100%}}
 .top{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
 .pill{padding:6px 12px;border-radius:999px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(18px);font-size:12px;color:var(--mut)}
 .card{background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:16px;backdrop-filter:blur(18px);box-shadow:0 8px 32px rgba(0,0,0,.35);margin-bottom:14px}
@@ -49,6 +49,10 @@ canvas.chart{width:100%;height:150px;background:rgba(0,0,0,.35);border:1px solid
 .rail button.on{box-shadow:0 0 16px rgba(34,211,238,.55)}
 .top{position:sticky;bottom:0;z-index:20;background:rgba(11,16,38,.85);backdrop-filter:blur(18px);border-radius:14px;padding:10px 12px;border:1px solid var(--line);margin-top:14px}
 #gr-facts{max-height:220px;overflow-y:auto;display:grid;gap:6px;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:10px;padding:8px}
+.gr-grid{display:grid;grid-template-columns:1fr 260px;gap:10px}
+#gr-inspector{height:460px;overflow-y:auto;display:flex;flex-direction:column;font-size:12px;color:var(--mut);background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+#gr-inspector #gr-facts{max-height:none;flex:1;min-height:120px}
+@media (max-width:860px){.gr-grid{grid-template-columns:1fr!important}#gr-inspector{height:auto;max-height:460px}}
 #clock{font-variant-numeric:tabular-nums}
 #chat-wrap{display:flex;flex-direction:column;height:62vh;min-height:380px}
 #c-a{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 2px}
@@ -107,7 +111,7 @@ details.sources summary{cursor:pointer}
 <div class="tab card" data-tab="Graph"><h2>🕸️ Deep Graph — knowledge landscape</h2>
 <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:end"><input id="gr-q" placeholder="Filter nodes…" aria-label="Filter graph nodes" style="max-width:200px"><div><label style="font-size:11px">Depth dial</label><select id="gr-depth" style="max-width:130px"><option value="1">① isolated</option><option value="2" selected>② confluence</option><option value="3">③ fusion</option></select></div><button class="btn ghost" onclick="loadGraph()">Load</button><button class="btn ghost" onclick="clearGraph()">Clear</button><button class="btn ghost" onclick="grRelease()">Release focus</button><button class="btn ghost" onclick="grFit()">Fit view</button><label style="font-size:12px;color:var(--mut)"><input type="checkbox" id="gr-edgelabels" checked onchange="grDraw()"> Edge labels</label><span id="gr-count" style="font-size:12px;color:var(--mut)"></span></div>
 <div style="display:flex;gap:14px;font-size:11px;color:var(--mut);margin-bottom:8px;flex-wrap:wrap"><span><span class="dot" style="background:#22d3ee;box-shadow:0 0 8px #22d3ee"></span>fact</span><span><span class="dot" style="background:#a78bfa;box-shadow:0 0 8px #a78bfa"></span>entity</span><span><span class="dot" style="background:#f472b6;box-shadow:0 0 8px #f472b6"></span>doc/topic</span><span><span class="dot" style="background:#94a3b8"></span>other</span><span>○ ring = hub</span></div>
-<div style="display:grid;grid-template-columns:1fr 260px;gap:10px"><canvas id="gr-canvas" height="460" style="width:100%;background:radial-gradient(600px 300px at 50% 40%,rgba(91,33,182,.25),transparent),rgba(0,0,0,.5);border:1px solid var(--line);border-radius:12px;cursor:grab"></canvas><div id="gr-inspector" style="font-size:12px;color:var(--mut)">Click a node to inspect it.<br><br>Drag nodes to arrange · drag background to pan · wheel to zoom · right-click for actions.</div></div>
+<div class="gr-grid"><canvas id="gr-canvas" height="460" style="width:100%;background:radial-gradient(600px 300px at 50% 40%,rgba(91,33,182,.25),transparent),rgba(0,0,0,.5);border:1px solid var(--line);border-radius:12px;cursor:grab"></canvas><div id="gr-inspector" style="font-size:12px;color:var(--mut)">Click a node to inspect it.<br><br>Drag nodes to arrange · drag background to pan · wheel to zoom · right-click for actions.</div></div>
 <div id="gr-menu" style="display:none;position:fixed;z-index:50;background:rgba(10,14,30,.95);border:1px solid var(--line);border-radius:10px;padding:6px;min-width:200px"></div>
 <h3 style="margin:10px 0 6px;font-size:13px;color:var(--mut)">Log (graph actions + backend notes)</h3>
 <div class="term" id="gr-log" style="height:110px"></div>
