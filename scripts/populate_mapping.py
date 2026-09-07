@@ -105,6 +105,22 @@ HISTORICAL_SEED = [
     ("vangogh", "Q5582", "celebrity"), ("gogh", "Q5582", "celebrity"),
     ("aristotle", "Q868", "historical_figure"), ("plato", "Q859", "historical_figure"),
     ("socrates", "Q913", "historical_figure"),
+    # Batch 2: leaders, artists, composers, scientists (gate verifies each).
+    ("churchill", "Q8016", "historical_figure"), ("gandhi", "Q1001", "historical_figure"),
+    ("napoleon", "Q517", "historical_figure"), ("caesar", "Q44", "historical_figure"),
+    ("alexander", "Q8409", "historical_figure"), ("picasso", "Q5593", "celebrity"),
+    ("michelangelo", "Q5592", "celebrity"), ("rembrandt", "Q5593", "celebrity"),
+    ("bach", "Q1339", "celebrity"), ("beethoven", "Q255", "celebrity"),
+    ("mendel", "Q37970", "scientist"), ("pasteur", "Q82122", "scientist"),
+    ("faraday", "Q8758", "scientist"), ("maxwell", "Q9095", "scientist"),
+    ("hawking", "Q496", "scientist"), ("confucius", "Q4604", "historical_figure"),
+    ("jesus", "Q302", "historical_figure"), ("joan", "Q23182", "historical_figure"),
+    ("cleopatra", "Q635", "historical_figure"), ("columbus", "Q7327", "historical_figure"),
+    ("magellan", "Q1496", "historical_figure"), ("cook", "Q7327", "historical_figure"),
+    ("marco polo", "Q6108", "historical_figure"), ("nightingale", "Q35610", "scientist"),
+    ("salk", "Q188845", "scientist"), ("fleming", "Q35244", "scientist"),
+    ("bohr", "Q5292", "scientist"), ("heisenberg", "Q40916", "scientist"),
+    ("schrodinger", "Q42450", "scientist"), ("dirac", "Q47480", "scientist"),
 ]
 
 
