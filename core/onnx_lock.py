@@ -23,6 +23,24 @@ def run(session, output_names, inputs):
         return session.run(output_names, inputs)
 
 
+def _dml_provider():
+    """DmlExecutionProvider pinned to ONNX_DML_DEVICE_ID when set.
+
+    Returns the plain string (legacy adapter-0 behavior) when unset, else
+    the (name, {device_id}) tuple form InferenceSession accepts inline in
+    a provider list. All project-owned sessions share this (embedder via
+    resolve_providers; NER stays CPU-gated by FAST_EXTRACTOR_DEVICE).
+    """
+    try:
+        import config as _cfg
+        _did = str(getattr(_cfg, "ONNX_DML_DEVICE_ID", "") or "").strip()
+    except Exception:
+        _did = ""
+    if _did:
+        return ("DmlExecutionProvider", {"device_id": _did})
+    return "DmlExecutionProvider"
+
+
 def resolve_providers():
     """One provider policy for every project-owned session.
 
@@ -43,11 +61,11 @@ def resolve_providers():
     except Exception:
         _dev = "cpu"
     if _dev in ("directml", "dml") and "DmlExecutionProvider" in _avail:
-        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        return [_dml_provider(), "CPUExecutionProvider"]
     if _dev == "cuda" and "CUDAExecutionProvider" in _avail:
         return ["CUDAExecutionProvider", "CPUExecutionProvider"]
     if _dev == "auto":
         if "DmlExecutionProvider" in _avail:
-            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+            return [_dml_provider(), "CPUExecutionProvider"]
         return ["CPUExecutionProvider"]
     return ["CPUExecutionProvider"]

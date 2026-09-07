@@ -295,6 +295,11 @@ GLINER_THRESHOLD = float(os.environ.get("GLINER_THRESHOLD", "0.35"))
 # mitigate it, and ONNX_DEVICE=cpu remains the safe fallback per machine.
 # "auto" = try DML first (legacy).
 ONNX_DEVICE = os.environ.get("ONNX_DEVICE", "directml")  # "auto", "cpu", "cuda", "directml"
+# DML adapter pin: ORT's DML EP defaults to DXGI adapter 0, which on this box
+# is the Intel Arc iGPU. Probed 2026-09-07 (scripts/probe_dml_device.py):
+# device_id=0 -> 4.8 enc/s (Arc), device_id=1 -> 23.3 enc/s + 89% NVIDIA util
+# (GRID RTX6000-12Q). Empty = legacy behavior (adapter 0).
+ONNX_DML_DEVICE_ID = os.environ.get("ONNX_DML_DEVICE_ID", "1")
 
 # Performance
 RETRIEVAL_CACHE_ENABLED = True
