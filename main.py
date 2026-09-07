@@ -1196,6 +1196,57 @@ def start_verify_trailer(verified_flag, total):
                     _cc.close()
                 except Exception:
                     pass
+                # Dirty-queue producer (ingest trailer, phase 77): entity
+                # surfaces this file yielded that the map doesn't know get
+                # queued for review (doc_id = file hash). Bounded (40/file),
+                # deduped by table PK, silent, never raises.
+                try:
+                    _mnames = set()
+                    _mc3 = db.db_connect("key_facts")
+                    try:
+                        for _tt, _ccol in (("entities", "entity_name"),
+                                           ("people", "person_name"),
+                                           ("locations", "location_name")):
+                            try:
+                                for _rr in _mc3.execute(
+                                        "SELECT DISTINCT " + _ccol + " FROM " + _tt +
+                                        " WHERE doc_hash=? LIMIT 60", (_fh,)):
+                                    _ss = (_rr[0] or "").strip()
+                                    if _ss and len(_ss) < 80:
+                                        _mnames.add(_ss)
+                            except Exception:
+                                continue
+                    finally:
+                        try:
+                            _mc3.close()
+                        except Exception:
+                            pass
+                    if _mnames and _fh:
+                        from core.mapping_lookup import (
+                            mapping_candidates_fn as _mcf3,
+                            record_dirty_mention as _rdm3)
+                        _mp = None
+                        _mn = 0
+                        try:
+                            for _ss in sorted(_mnames):
+                                if _mn >= 40:
+                                    break
+                                try:
+                                    if _mp is None:
+                                        _mp = db.db_connect("mapping")
+                                    if not _mcf3(_ss, limit=1, conn=_mp):
+                                        _rdm3(_mp, _ss, str(_fh))
+                                        _mn += 1
+                                except Exception:
+                                    continue
+                        finally:
+                            try:
+                                if _mp is not None:
+                                    _mp.close()
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
                 with _verify_lock:
                     _verify_done["n"] += 1
                     _vd = _verify_done["n"]

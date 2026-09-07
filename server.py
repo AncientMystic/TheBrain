@@ -153,6 +153,36 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
             _known = _mcb(_ents)
             if _known:
                 context = _known + "\n\n" + context
+            # Dirty-queue producer (chat fallback, phase 77): surfaces the
+            # map doesn't know get queued for review instead of vanishing.
+            # Bounded, deduped by the table PK, never raises.
+            try:
+                import hashlib as _hl
+                from core.mapping_lookup import (mapping_candidates_fn as _mcf,
+                                                 record_dirty_mention as _rdm)
+                _qid = "chat:" + _hl.sha256(
+                    str(query or "").encode("utf-8", errors="ignore")
+                ).hexdigest()[:16]
+                _mc = None
+                for _e in (_ents or [])[:12]:
+                    try:
+                        _t = _e.get("text") if isinstance(_e, dict) else str(_e)
+                        if not (_t or "").strip():
+                            continue
+                        if _mc is None:
+                            from core import db as _dbm
+                            _mc = _dbm.db_connect("mapping")
+                        if not _mcf(_t, limit=1, conn=_mc):
+                            _rdm(_mc, _t.strip(), _qid)
+                    except Exception:
+                        continue
+                if _mc is not None:
+                    try:
+                        _mc.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     except Exception:
         pass
 
