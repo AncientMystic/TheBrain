@@ -41,6 +41,8 @@ def main():
     if eu and na:
         assert min(eu) > max(na), "Texas not crushed by horizontal term"
         print("invariant: every geo:eu candidate beats every geo:na one")
+    elif eu and not na:
+        print("invariant: no geo:na candidate even reached top 8 (stronger)")
     top5 = [c for c, _, _, _, _ in rows[:5]]
     names = [n for _, n, _, _, _ in rows[:5]]
     assert any("Curie" in n for n in names), "Marie Curie missing from top 5"
