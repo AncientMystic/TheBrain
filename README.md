@@ -9,6 +9,12 @@ TheBrain now also incorporates **hyperbolic embeddings** (Poincaré ball model) 
 
 It also ships a **glassmorphism WebUI** (`python main.py --webui`, or double-click `start-webui.bat` / `start-webui.sh`) with nine tabs covering every feature — guided learning, chat, deep-graph mindmap, Recoll search, audit, server health, deep research, logic & memory, and full configuration.
 
+## Support development:
+
+support welcome and appreciated: 
+- Cashapp: $AncientMystic144 
+- XMR: 86dMFgF5PeweEPfR4wmZHbc5bCpfbFwdUe6NiS61nqKYHjXwv9UwFAg7U47iigUQLRE5Br1V6dm67fP7udbkfz4y4V
+
 ## Screenshots
 
 <table>
