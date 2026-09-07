@@ -227,10 +227,71 @@ def populate_historical_figures(conn, limit=500, min_links=80):
     return n
 
 
+def wbsearch_qid(name, timeout=30):
+    """Resolve a name to a human-instance QID via wbsearchentities.
+
+    Returns (qid, label, description) or None. Prefers results whose
+    description signals a person; caller-side label gate still applies.
+    """
+    import requests
+    r = requests.get(
+        "https://www.wikidata.org/w/api.php",
+        params={"action": "wbsearchentities", "search": name, "language": "en",
+                "format": "json", "limit": 10},
+        headers={"User-Agent": "TheBrain-mapping/1.0 (local-first research)"},
+        timeout=timeout)
+    r.raise_for_status()
+    for hit in (r.json().get("search") or []):
+        qid = hit.get("id", "")
+        if not qid.startswith("Q"):
+            continue
+        yield qid, hit.get("label", ""), hit.get("description", "")
+
+
+BATCH3_NAMES = [
+    ("rutherford", "scientist"), ("bohr", "scientist"),
+    ("heisenberg", "scientist"), ("schrodinger", "scientist"),
+    ("dirac", "scientist"), ("fermi", "scientist"),
+    ("planck", "scientist"), ("hubble", "scientist"),
+    ("mendel", "scientist"), ("koch", "scientist"),
+    ("lister", "scientist"), ("fleming", "scientist"),
+    ("nightingale", "scientist"), ("goodall", "scientist"),
+    ("carson", "scientist"), ("mandela", "historical_figure"),
+    ("joan of arc", "historical_figure"), ("cleopatra", "historical_figure"),
+    ("columbus", "historical_figure"), ("magellan", "historical_figure"),
+]
+
+
+def populate_name_batch(conn, names=None):
+    """Resolve names via search API, then run the gated seed importer.
+
+    No memory-sourced QIDs: every ID comes from wbsearchentities and still
+    passes the label gate inside populate_historical_seed.
+    """
+    seeds = []
+    for frag, etype in (names if names is not None else BATCH3_NAMES):
+        try:
+            got = False
+            for qid, label, desc in wbsearch_qid(frag):
+                seeds.append((frag, qid, etype))
+                got = True
+                break
+            if not got:
+                print(f"  no search hit for {frag!r}")
+        except Exception as e:
+            print(f"  search failed for {frag!r}: {type(e).__name__}")
+    return populate_historical_seed(conn, seeds=seeds)
+
+
 if __name__ == "__main__":
+    import sys as _sys
     from scripts.init_mapping_db import init_mapping_db
     _conn = init_mapping_db()
-    print("populating curated historical seed (label-gated)...")
-    _kept, _skipped = populate_historical_seed(_conn)
+    if len(_sys.argv) > 1 and _sys.argv[1] == "batch3":
+        print("populating name batch via wbsearchentities (label-gated)...")
+        _kept, _skipped = populate_name_batch(_conn)
+    else:
+        print("populating curated historical seed (label-gated)...")
+        _kept, _skipped = populate_historical_seed(_conn)
     print(f"done: {_kept} kept, {len(_skipped)} skipped: {_skipped}")
     _conn.close()
