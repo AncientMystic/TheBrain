@@ -55,8 +55,14 @@ class GlinerONNXExtractor:
         if onnx_path is None:
             print(f"GLiNER onnx not found under {root}")
             return
+        # Silence cosmetic loader advisories (model_type=gliner mismatch +
+        # mistral-regex notes): tokenization output is proven correct by the
+        # parity tests, and these warnings alarm every run for no reason.
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(str(root))
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                self.tokenizer = AutoTokenizer.from_pretrained(str(root))
             print("Loaded GLiNER tokenizer via transformers.")
         except Exception as e:
             print(f"GLiNER tokenizer load error: {e}")

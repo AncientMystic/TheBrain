@@ -1071,6 +1071,159 @@ def prepare_next_file(filepath):
         logger.warning("Unexpected exception occurred", exc_info=True)
         return None
 
+
+def _tui_line(label, done, total, extra=""):
+    """One in-place curriculum-style progress line (shared by all loops)."""
+    try:
+        _w = 24
+        _f = min(1.0, (done / max(1, total)))
+        _bar = ("#" * int(_f * _w)).ljust(_w, "-")
+        print(f"\r  {label} {done}/{total} [{_bar}]{extra}", end="", flush=True)
+        if done >= total:
+            print("", flush=True)
+    except Exception:
+        pass
+
+
+def _bulk_prefetch_files(files, tracker):
+    """Bulk extract -> index -> embed for every file, cache-aware throughout.
+
+    Returns a preloaded-dict (or None) per file, aligned with `files`.
+    Skipped/failed files yield None; process_file re-checks cheaply.
+    Nothing is extracted, chunked, or embedded twice: text/chunk caches
+    are consulted first and embeddings resolve from the embedding cache.
+    """
+    _n = len(files)
+    _hashes, _texts, _chunks, _embs, _skipped = [], [], [], [], []
+    print("  [1/3] Extracting text (cache-aware)...")
+    for _i, _f in enumerate(files, 1):
+        try:
+            _h = get_file_hash(_f)
+        except Exception:
+            _h = ""
+        _hashes.append(_h)
+        if _h and tracker.is_processed(_h):
+            _texts.append(None); _chunks.append(None); _embs.append(None); _skipped.append(True)
+        else:
+            try:
+                _t, _m, _o = _load_or_extract_text(_h, _f)
+            except Exception:
+                _t, _m, _o = "", {}, False
+            _texts.append((_t, _m, _o)); _chunks.append(None); _embs.append(None); _skipped.append(False)
+        _tui_line("extracting", _i, _n)
+    print("  [2/3] Indexing chunks (cache-aware)...")
+    for _i, (_h, _t3) in enumerate(zip(_hashes, _texts), 1):
+        if _t3 is None or not _t3[0]:
+            _tui_line("indexing", _i, _n)
+            continue
+        try:
+            _chunks[_i - 1] = _load_or_chunk(_h, _t3[0])
+        except Exception:
+            _chunks[_i - 1] = []
+        _tui_line("indexing", _i, _n)
+    # Persist newly chunked docs once (process_file skips already-stored).
+    try:
+        _conn0 = db.db_connect("index")
+        for _h, _ch in zip(_hashes, _chunks):
+            if _h and _ch:
+                try:
+                    _c0 = _conn0.cursor()
+                    _c0.execute("SELECT COUNT(*) AS n FROM document_chunks WHERE doc_hash=?", (_h,))
+                    _r0 = _c0.fetchone()
+                    if not (_r0 and _r0["n"]):
+                        store_chunks(_conn0, _h, _ch)
+                except Exception:
+                    continue
+        _conn0.commit(); _conn0.close()
+    except Exception:
+        pass
+    print("  [3/3] Embedding chunks (cache-backed)...")
+    for _i, _ch in enumerate(_chunks, 1):
+        if not _ch:
+            _embs[_i - 1] = []
+        else:
+            try:
+                _embs[_i - 1] = get_embeddings_batch(_ch, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+            except Exception:
+                _embs[_i - 1] = [None] * len(_ch)
+        _tui_line("embedding", _i, _n)
+    _out = []
+    for _f, _h, _t3, _ch, _e, _sk in zip(files, _hashes, _texts, _chunks, _embs, _skipped):
+        if _sk or not _t3 or not _t3[0]:
+            _out.append(None)
+            continue
+        _out.append({"file": _f, "file_hash": _h, "text": _t3[0],
+                     "chunks": _ch or [], "chunk_embs": _e or [],
+                     "metadata": _t3[1], "format": Path(_f).suffix.lstrip(".").lower(),
+                     "ocr_used": _t3[2]})
+    return _out
+
+
+def start_verify_trailer(verified_flag, total):
+    """Trailing verifier thread: promotion, smart GC, per-file verification
+    sweep. No LLM re-runs: facts were verified inline during processing;
+    this aggregates what landed. Returns (queue, thread, counter)."""
+    import queue as _qmod
+    _verify_q = _qmod.Queue()
+    _verify_done = {"n": 0}
+    _verify_lock = threading.Lock()
+
+    def _verify_trailer():
+        while True:
+            _job = _verify_q.get()
+            if _job is None:
+                _verify_q.task_done()
+                break
+            try:
+                _fh, _fname, _ok = _job
+                if _ok and verified_flag:
+                    try:
+                        promote_verified_file(_fh, _fname)
+                    except Exception:
+                        pass
+                _vn = _vp = _vu = 0
+                try:
+                    _cc = db.db_connect("key_facts")
+                    _cr = _cc.cursor()
+                    _cr.execute("SELECT verification_status, COUNT(*) AS n FROM key_facts WHERE doc_hash=? GROUP BY verification_status", (_fh,))
+                    for _row in _cr.fetchall():
+                        if _row[0] == "verified":
+                            _vn = _row[1]
+                        elif _row[0] == "partially_verified":
+                            _vp = _row[1]
+                        else:
+                            _vu += _row[1] or 0
+                    _cc.close()
+                except Exception:
+                    pass
+                with _verify_lock:
+                    _verify_done["n"] += 1
+                    _vd = _verify_done["n"]
+                print(f"\r  verifying {_vd}/{total} [{_fname}: {int(_vn)} verified, {int(_vp)} partial, {int(_vu)} other]", flush=True)
+                try:
+                    _everyT = int(getattr(config, "GC_EVERY_N_FILES", 25))
+                    if _vd % max(1, _everyT) == 0:
+                        gc.collect()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            finally:
+                _verify_q.task_done()
+
+    _vt = threading.Thread(target=_verify_trailer, daemon=True)
+    _vt.start()
+    return _verify_q, _vt, _verify_done
+
+
+def drain_verify_trailer(queue, thread, timeout=600):
+    """Drain the trailing verifier before reporting completion."""
+    try:
+        queue.put(None)
+        thread.join(timeout=timeout)
+    except Exception:
+        pass
+
 def main():
     if "--debug" in sys.argv:
         config.DEBUG_VERBOSE = True
@@ -1562,7 +1715,8 @@ Return only JSON."""
                 total_files = len(files)
                 processed_count = 0
 
-                def process_one(f):
+                def process_one(idx_f):
+                    idx, f = idx_f
                     nonlocal processed_count
                     # Claim the display sequence FIRST (atomic): readers of the
                     # shared counter all saw the same stale number.
@@ -1576,10 +1730,12 @@ Return only JSON."""
                             return None
                     except Exception:
                         pass
-                    # Single extraction per file (no double parse/OCR): prepare once,
-                    # reuse text for logic decision + pass preloaded into process_file.
+                    # Single extraction per file (no double parse/OCR): bulk
+                    # prefetch first, live prepare only as fallback.
                     try:
-                        _prep = prepare_next_file(f)
+                        _prep = _par_preps[idx] if idx < len(_par_preps) else None
+                        if _prep is None and not is_file_processed(f, tracker):
+                            _prep = prepare_next_file(f)
                     except Exception as e:
                         print(f"  (Prepare error for {getattr(f, 'name', f)}: {e})")
                         _prep = None
@@ -1605,6 +1761,10 @@ Return only JSON."""
                             promote_verified_file(file_hash, f.name, source_file=f)
                             return None
                     success = process_file(f, tracker, logic_context=logic_context, preloaded=_prep, seq=my_idx)
+                    try:
+                        _par_q.put((get_file_hash(f), f.name, bool(success)))
+                    except Exception:
+                        pass
                     with tracker_lock:
                         if success and verified_flag:
                             file_hash = get_file_hash(f)
@@ -1624,8 +1784,10 @@ Return only JSON."""
                     for f in files:
                         print(f"[DRY-RUN] Would process: {f.name}")
                 else:
+                    _par_q, _par_vt, _ = start_verify_trailer(verified_flag, len(files))
+                    _par_preps = _bulk_prefetch_files(files, tracker)
                     with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(config, 'PARALLEL_INGESTION_WORKERS', getattr(config, 'PARALLEL_WORKERS', 1))) as executor:
-                        list(executor.map(process_one, files))
+                        list(executor.map(process_one, enumerate(files)))
             else:
                 # ---- Terminal-UI pipeline: bulk prefetch powers through all
                 # files first (extract -> index -> embed, cache-aware, nothing
@@ -1839,6 +2001,11 @@ Return only JSON."""
                 try:
                     _verify_q.put(None)
                     _vt.join(timeout=600)
+                except Exception:
+                    pass
+                # Parallel branch trailer (sequential branch drains its own above).
+                try:
+                    drain_verify_trailer(_par_q, _par_vt)
                 except Exception:
                     pass
         except KeyboardInterrupt:
