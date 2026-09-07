@@ -355,6 +355,8 @@ GLINER_MODEL_REPO = os.environ.get("GLINER_MODEL_REPO", "onnx-community/gliner_s
 GLINER_CASCADE_ENABLED = os.environ.get("GLINER_CASCADE_ENABLED", "false").lower() == "true"
 GLINER_COVERAGE_MIN_RATIO = float(os.environ.get("GLINER_COVERAGE_MIN_RATIO", "0.15"))
 GLINER_COVERAGE_MIN_ENTITIES = int(os.environ.get("GLINER_COVERAGE_MIN_ENTITIES", "3"))
+# Mapping Known-block injection into chat context (P4 wiring).
+MAPPING_CONTEXT = os.environ.get("MAPPING_CONTEXT", "true").lower() == "true"
 RERANKER_MODEL_REPO = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANKER_MODEL_DIR = str(BASE_DIR / "models" / "reranker")
 

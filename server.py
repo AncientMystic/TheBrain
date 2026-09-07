@@ -139,6 +139,22 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
         context = logic_context + "\n\n" + context
     if memory_text:
         context = memory_text + "\n\n" + context
+    # Mapping context injection (P4): who/where/what for query entities.
+    # Bounded, read-only, never raises; disable via MAPPING_CONTEXT=false.
+    try:
+        import config as _cfgm
+        if getattr(_cfgm, "MAPPING_CONTEXT", True):
+            from core.mapping_lookup import mapping_context_block as _mcb
+            _ents = []
+            try:
+                _ents = (analysis or {}).get("entities", []) if "analysis" in dir() else []
+            except Exception:
+                _ents = []
+            _known = _mcb(_ents)
+            if _known:
+                context = _known + "\n\n" + context
+    except Exception:
+        pass
 
     answer = generate_answer(query, context)
     return answer, facts
