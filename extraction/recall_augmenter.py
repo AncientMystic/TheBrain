@@ -116,10 +116,18 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
                 except Exception:
                     _emap = {}
             # Collective choice per chunk with embeddings (true coherence, not first-match)
+            # Phase-75 wiring: prefer decoherence_link (identical choices —
+            # it calls collective_link internally) and log the gate report
+            # advisory-only; choices never change, review flags just observe.
             try:
-                from core.entity_linking import collective_link as _cl2
+                from core.entity_linking import decoherence_link as _cl2
+                _cl2_deco = True
             except Exception:
-                _cl2 = None
+                try:
+                    from core.entity_linking import collective_link as _cl2
+                except Exception:
+                    _cl2 = None
+                _cl2_deco = False
             for i in range(n):
                 mentions = _mentions_list[i]
                 if not mentions:
@@ -139,6 +147,16 @@ def augment_batch(chunks, fast_pres=None, chunk_embs=None, recall_index=None):
                             except Exception:
                                 return []
                         _res = _cl2(_mnames, _cands_fn)
+                        if _cl2_deco and isinstance(_res, tuple):
+                            try:
+                                _res, _rep = _res
+                                _nrev = sum(1 for _v in _rep.values()
+                                            if isinstance(_v, dict) and _v.get("review"))
+                                if _nrev:
+                                    logger.debug("decoherence gate: %d/%d mentions flagged for review",
+                                                 _nrev, len(_rep))
+                            except Exception:
+                                pass
                         for mk, mn in zip(_mkeys, _mnames):
                             try:
                                 _chosen = _res.get(mn) if isinstance(_res, dict) else None

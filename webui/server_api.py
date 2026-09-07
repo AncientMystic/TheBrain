@@ -124,6 +124,56 @@ def register_server_routes(app, require_auth):
         except Exception:
             out["verification"] = {}
             out["activity"] = []
+        # Mapping geometry rollup (phase-75 wiring): entity counts, layer
+        # coverage (emb/coords/oct8/e8), shard + cell census, dirty queue
+        # depth, closure audit score. Read-only, guarded, cheap COUNTs
+        # (orphan scan uses the idx_er_*/idx_al_cid maintenance indexes).
+        try:
+            _mc = _db.db_connect("mapping")
+            _m = {}
+            try:
+                _m["entities"] = int(_mc.execute(
+                    "SELECT COUNT(*) AS n FROM entities").fetchone()["n"])
+                for _k, _w in (("embedded", "emb IS NOT NULL"),
+                                ("coords", "lat_r IS NOT NULL"),
+                                ("oct8", "oct8 IS NOT NULL"),
+                                ("e8", "e8_key IS NOT NULL")):
+                    try:
+                        _m[_k] = int(_mc.execute(
+                            f"SELECT COUNT(*) AS n FROM entities WHERE {_w}"
+                        ).fetchone()["n"])
+                    except Exception:
+                        _m[_k] = 0
+                try:
+                    _m["shards"] = int(_mc.execute(
+                        "SELECT COUNT(*) AS n FROM shards").fetchone()["n"])
+                except Exception:
+                    _m["shards"] = 0
+                try:
+                    _m["cells"] = int(_mc.execute(
+                        "SELECT COUNT(DISTINCT e8_key) AS n FROM entities"
+                    ).fetchone()["n"])
+                except Exception:
+                    _m["cells"] = 0
+                try:
+                    _m["dirty_pending"] = int(_mc.execute(
+                        "SELECT COUNT(*) AS n FROM dirty_mentions WHERE status LIKE 'pending%'"
+                    ).fetchone()["n"])
+                except Exception:
+                    _m["dirty_pending"] = 0
+                try:
+                    from core.enneagram import closure_score as _cs
+                    _m["closure"] = round(float(_cs(_mc).get("score", 0.0)), 3)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    _mc.close()
+                except Exception:
+                    pass
+            out["mapping"] = _m
+        except Exception:
+            out["mapping"] = {}
         # Open breaker circuits (reliability pills).
         try:
             from core.breaker import open_circuits as _brk_open
