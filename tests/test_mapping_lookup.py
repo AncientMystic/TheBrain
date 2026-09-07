@@ -45,3 +45,13 @@ def test_display_card(tmp_path):
 def test_normalize():
     assert normalize_mention("Marie Curie!") == "marie curie"
     assert normalize_mention("") == ""
+
+
+def test_context_block(tmp_path):
+    from core.mapping_lookup import mapping_context_block
+    conn = _db(tmp_path)
+    block = mapping_context_block([{"text": "Marie Curie"}, {"text": "Nobody Xyz"}], conn=conn)
+    assert "Known: Marie Curie" in block and "Physicist" in block
+    assert "Nobody" not in block
+    assert mapping_context_block([], conn=conn) == ""
+    conn.close()
