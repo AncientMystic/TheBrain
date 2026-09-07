@@ -1,1 +1,456 @@
-{"faithfulness": [{"citations": [{"quote": "Marie Curie — physicist (Paris, France)"}], "expected": "faithful", "id": "F01", "notes": "Direct quote from card; check harness string-match."}, {"citations": [{"quote": "Marie Curie — physicist (Paris, France)"}], "expected": "unfaithful", "id": "F02", "notes": "Must flag: citation does not support the Texas claim."}, {"citations": [{"quote": "Paris, Texas is a city in Lamar County"}], "expected": "faithful", "id": "F03", "notes": "Supports the answer if card text matches."}, {"citations": [], "expected": "unfaithful", "id": "F04", "notes": "Factual answer with zero citations must fail."}, {"citations": [{"quote": "Albert Einstein developed the theory of relativity"}], "expected": "faithful", "id": "F05", "notes": "Spot-check quote against live card text."}, {"citations": [{"quote": "Albert Einstein developed the theory of relativity"}], "expected": "unfaithful", "id": "F06", "notes": "Quote is real but irrelevant to the painted claim."}, {"citations": [{"quote": "Curie, Texas (Lamar County)"}], "expected": "faithful", "id": "F07", "notes": "Geographic claim with direct card support."}, {"citations": [{"quote": "Curie, Texas (Lamar County)"}], "expected": "unfaithful", "id": "F08", "notes": "Same quote cannot support a Nobel claim."}], "hallucination": [{"claim": "Marie Curie was a physicist associated with Paris, France.", "context": "Known: Marie Curie [person] (Paris, France)", "expected": "supported", "id": "H01", "notes": "Baseline supported case."}, {"claim": "Marie Curie was born in Paris, Texas.", "context": "Known: Marie Curie [person] (Paris, France)", "expected": "contradicted", "id": "H02", "notes": "Direct contradiction of context."}, {"claim": "Marie Curie won three Nobel Prizes.", "context": "Known: Marie Curie [person] (Paris, France)", "expected": "unsupported", "id": "H03", "notes": "Plausible but not in context; must not pass as supported."}, {"claim": "Paris, Texas is in Lamar County.", "context": "Known: Paris [place] (Lamar County, Texas)", "expected": "supported", "id": "H04", "notes": "Spot-check county against live card."}, {"claim": "Paris, Texas is the capital of France.", "context": "Known: Paris [place] (Lamar County, Texas)", "expected": "contradicted", "id": "H05", "notes": "Absurd contradiction; must fail."}, {"claim": "Albert Einstein developed relativity while in Berlin.", "context": "Known: Albert Einstein [person] (Berlin)", "expected": "supported", "id": "H06", "notes": "Spot-check city against live card."}, {"claim": "Albert Einstein invented the telephone.", "context": "Known: Albert Einstein [person] (Berlin)", "expected": "contradicted", "id": "H07", "notes": "Must fail even though entity matches."}, {"claim": "The entity Curie refers to Marie Curie the physicist.", "context": "Query was 'Curie in Paris'. Candidates: Marie Curie (0.243), Paris districts (~0.25).", "expected": "unsupported", "id": "H08", "notes": "Ambiguous ranking presented as certain; must not pass."}, {"claim": "No candidate in the mapping matched the mention.", "context": "Candidates list is empty.", "expected": "supported", "id": "H09", "notes": "Correct abstention must pass."}, {"claim": "Mozart composed in Vienna.", "context": "Known: Mozart [person] (Vienna)", "expected": "supported", "id": "H10", "notes": "Spot-check city against live card."}], "prepass_recall": [{"id": "R01", "must_find": ["Marie Curie", "Pierre Curie", "Paris", "France", "radium"], "notes": "Dense entity prose; all five must surface.", "text": "Marie Curie and Pierre Curie worked in Paris, France on radium research."}, {"id": "R02", "must_find": ["Albert Einstein", "Berlin"], "notes": "Person + city.", "text": "Albert Einstein developed his theories while living in Berlin."}, {"id": "R03", "must_find": ["Mozart", "Vienna"], "notes": "Person + city.", "text": "Mozart composed many works in Vienna."}, {"id": "R04", "must_find": ["Shakespeare", "London"], "notes": "Person + city.", "text": "Shakespeare wrote plays for London audiences."}, {"id": "R05", "must_find": ["Tokyo"], "notes": "Single city; must not be missed.", "text": "The conference will be held in Tokyo next spring."}, {"id": "R06", "must_find": ["Curie", "Texas"], "notes": "Ambiguous surface kept verbatim.", "text": "Curie mentioned Texas in the interview."}, {"id": "R07", "must_find": [], "notes": "Negative: no entities must be reported.", "text": "zzqx unrelated filler words without any named things whatsoever here."}, {"id": "R08", "must_find": ["Paris"], "notes": "Single place.", "text": "Paris in the spring is lovely."}], "status": "DRAFT - operator spot-check required before use as gates", "version": 1}
+{
+ "faithfulness": [
+  {
+   "citations": [
+    {
+     "quote": "Marie Curie \u2014 physicist (Paris, France)"
+    }
+   ],
+   "expected": "faithful",
+   "id": "F01",
+   "notes": "Direct quote from card; check harness string-match.",
+   "answer": "Marie Curie was a physicist."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Marie Curie \u2014 physicist (Paris, France)"
+    }
+   ],
+   "expected": "unfaithful",
+   "id": "F02",
+   "notes": "Must flag: citation does not support the Texas claim.",
+   "answer": "Marie Curie won a Nobel Prize."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Paris, Texas is a city in Lamar County"
+    }
+   ],
+   "expected": "faithful",
+   "id": "F03",
+   "notes": "Supports the answer if card text matches.",
+   "answer": "Paris, Texas is in Lamar County."
+  },
+  {
+   "citations": [],
+   "expected": "unfaithful",
+   "id": "F04",
+   "notes": "Factual answer with zero citations must fail.",
+   "answer": "Paris, Texas is in Lamar County."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Albert Einstein developed the theory of relativity"
+    }
+   ],
+   "expected": "faithful",
+   "id": "F05",
+   "notes": "Spot-check quote against live card text.",
+   "answer": "Albert Einstein developed the theory of relativity."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Albert Einstein developed the theory of relativity"
+    }
+   ],
+   "expected": "unfaithful",
+   "id": "F06",
+   "notes": "Quote is real but irrelevant to the painted claim.",
+   "answer": "Albert Einstein painted landscapes."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Curie, Texas (Lamar County)"
+    }
+   ],
+   "expected": "faithful",
+   "id": "F07",
+   "notes": "Geographic claim with direct card support.",
+   "answer": "Curie, Texas is in Lamar County."
+  },
+  {
+   "citations": [
+    {
+     "quote": "Curie, Texas (Lamar County)"
+    }
+   ],
+   "expected": "unfaithful",
+   "id": "F08",
+   "notes": "Same quote cannot support a Nobel claim.",
+   "answer": "Curie, Texas won a Nobel Prize."
+  },
+  {
+   "id": "F09",
+   "citations": [
+    {
+     "quote": "Ada Lovelace was an English mathematician and writer."
+    }
+   ],
+   "claim": "Ada Lovelace was an English mathematician.",
+   "expected": "faithful",
+   "notes": "VETTED: subset of citation directly supported. Live card Ada Lovelace [scientist] exists."
+  },
+  {
+   "id": "F10",
+   "citations": [
+    {
+     "quote": "Ada Lovelace was an English mathematician and writer."
+    }
+   ],
+   "claim": "Ada Lovelace was an American mathematician.",
+   "expected": "unfaithful",
+   "notes": "VETTED: citation contradicts nationality."
+  },
+  {
+   "id": "F11",
+   "citations": [
+    {
+     "quote": "The Eiffel Tower is located in Paris, France."
+    }
+   ],
+   "claim": "The Eiffel Tower is in Paris.",
+   "expected": "faithful",
+   "notes": "VETTED: subset of location supported. Note: Eiffel Tower has no mapping card (landmark gap)."
+  },
+  {
+   "id": "F12",
+   "citations": [
+    {
+     "quote": "The Eiffel Tower is located in Paris, France."
+    }
+   ],
+   "claim": "Paris is the capital of France.",
+   "expected": "unfaithful",
+   "notes": "VETTED: capital status not stated; classic over-inference trap."
+  },
+  {
+   "id": "F13",
+   "citations": [],
+   "claim": "Water boils at 100C at sea level.",
+   "expected": "unfaithful",
+   "notes": "VETTED: zero citations must fail even when true."
+  },
+  {
+   "id": "F14",
+   "citations": [
+    {
+     "quote": "The Great Barrier Reef is the world's largest coral reef system."
+    }
+   ],
+   "claim": "The Great Barrier Reef is located off the coast of Australia.",
+   "expected": "unfaithful",
+   "notes": "VETTED: claim is real-world true but citation-boundedness requires fail. Key test."
+  },
+  {
+   "id": "F15",
+   "citations": [
+    {
+     "quote": "The Sun is a star."
+    },
+    {
+     "quote": "Stars are massive celestial bodies."
+    }
+   ],
+   "claim": "The Sun is a massive celestial body.",
+   "expected": "faithful",
+   "notes": "VETTED: multi-citation inference; harness must combine both."
+  },
+  {
+   "id": "F16",
+   "citations": [
+    {
+     "quote": "Vincent van Gogh painted The Starry Night."
+    }
+   ],
+   "claim": "Vincent van Gogh was a Dutch painter.",
+   "expected": "unfaithful",
+   "notes": "VETTED: nationality absent. Live card Vincent van Gogh [celebrity] exists."
+  }
+ ],
+ "hallucination": [
+  {
+   "claim": "Marie Curie was a physicist associated with Paris, France.",
+   "context": "Known: Marie Curie [person] (Paris, France)",
+   "expected": "supported",
+   "id": "H01",
+   "notes": "Baseline supported case."
+  },
+  {
+   "claim": "Marie Curie was born in Paris, Texas.",
+   "context": "Known: Marie Curie [person] (Paris, France)",
+   "expected": "contradicted",
+   "id": "H02",
+   "notes": "Direct contradiction of context."
+  },
+  {
+   "claim": "Marie Curie won three Nobel Prizes.",
+   "context": "Known: Marie Curie [person] (Paris, France)",
+   "expected": "unsupported",
+   "id": "H03",
+   "notes": "Plausible but not in context; must not pass as supported."
+  },
+  {
+   "claim": "Paris, Texas is in Lamar County.",
+   "context": "Known: Paris [place] (Lamar County, Texas)",
+   "expected": "supported",
+   "id": "H04",
+   "notes": "Spot-check county against live card."
+  },
+  {
+   "claim": "Paris, Texas is the capital of France.",
+   "context": "Known: Paris [place] (Lamar County, Texas)",
+   "expected": "contradicted",
+   "id": "H05",
+   "notes": "Absurd contradiction; must fail."
+  },
+  {
+   "claim": "Albert Einstein developed relativity while in Berlin.",
+   "context": "Known: Albert Einstein [person] (Berlin)",
+   "expected": "supported",
+   "id": "H06",
+   "notes": "Spot-check city against live card."
+  },
+  {
+   "claim": "Albert Einstein invented the telephone.",
+   "context": "Known: Albert Einstein [person] (Berlin)",
+   "expected": "contradicted",
+   "id": "H07",
+   "notes": "Must fail even though entity matches."
+  },
+  {
+   "claim": "The entity Curie refers to Marie Curie the physicist.",
+   "context": "Query was 'Curie in Paris'. Candidates: Marie Curie (0.243), Paris districts (~0.25).",
+   "expected": "unsupported",
+   "id": "H08",
+   "notes": "Ambiguous ranking presented as certain; must not pass."
+  },
+  {
+   "claim": "No candidate in the mapping matched the mention.",
+   "context": "Candidates list is empty.",
+   "expected": "supported",
+   "id": "H09",
+   "notes": "Correct abstention must pass."
+  },
+  {
+   "claim": "Mozart composed in Vienna.",
+   "context": "Known: Mozart [person] (Vienna)",
+   "expected": "supported",
+   "id": "H10",
+   "notes": "Spot-check city against live card."
+  },
+  {
+   "id": "H11",
+   "claim": "The Moon is made of cheese.",
+   "context": "Known: Moon [celestial body] (Earth's natural satellite)",
+   "expected": "contradicted",
+   "notes": "VETTED: house semantics (context + world knowledge refutes), matches H02/H05/H07 precedent. Note: Moon maps to a book card live."
+  },
+  {
+   "id": "H12",
+   "claim": "The Moon orbits Earth.",
+   "context": "Known: Moon [celestial body] (Earth's natural satellite)",
+   "expected": "supported",
+   "notes": "VETTED: satellite status implies orbit."
+  },
+  {
+   "id": "H13",
+   "claim": "The Moon's diameter is 3,474 km.",
+   "context": "Known: Moon [celestial body] (Earth's natural satellite)",
+   "expected": "unsupported",
+   "notes": "VETTED: true number, absent from context; must not pass."
+  },
+  {
+   "id": "H14",
+   "claim": "Marie Curie discovered penicillin.",
+   "context": "Known: Marie Curie [person] (discovered radium and polonium)",
+   "expected": "contradicted",
+   "notes": "VETTED: Fleming fact; tests misattribution."
+  },
+  {
+   "id": "H15",
+   "claim": "Marie Curie discovered radium.",
+   "context": "Known: Marie Curie [person] (discovered radium and polonium)",
+   "expected": "supported",
+   "notes": "VETTED: directly stated."
+  },
+  {
+   "id": "H16",
+   "claim": "Paris is the capital of Texas.",
+   "context": "Known: Paris [place] (city in Lamar County, Texas)",
+   "expected": "contradicted",
+   "notes": "VETTED: Austin is capital; matches user-confirmed H07 pattern."
+  },
+  {
+   "id": "H17",
+   "claim": "Paris is a city in Texas.",
+   "context": "Known: Paris [place] (city in Lamar County, Texas)",
+   "expected": "supported",
+   "notes": "VETTED: directly supported."
+  },
+  {
+   "id": "H18",
+   "claim": "The entity 'Java' refers to the programming language.",
+   "context": "Query 'Java island population'. Candidates: Java [island] (0.85), Java [programming language] (0.1)",
+   "expected": "contradicted",
+   "notes": "VETTED: ranking + query jointly refute; scores illustrative."
+  }
+ ],
+ "prepass_recall": [
+  {
+   "id": "R01",
+   "must_find": [
+    "Marie Curie",
+    "Pierre Curie",
+    "Paris",
+    "France",
+    "radium"
+   ],
+   "notes": "Dense entity prose; all five must surface.",
+   "text": "Marie Curie and Pierre Curie worked in Paris, France on radium research."
+  },
+  {
+   "id": "R02",
+   "must_find": [
+    "Albert Einstein",
+    "Berlin"
+   ],
+   "notes": "Person + city.",
+   "text": "Albert Einstein developed his theories while living in Berlin."
+  },
+  {
+   "id": "R03",
+   "must_find": [
+    "Mozart",
+    "Vienna"
+   ],
+   "notes": "Person + city.",
+   "text": "Mozart composed many works in Vienna."
+  },
+  {
+   "id": "R04",
+   "must_find": [
+    "Shakespeare",
+    "London"
+   ],
+   "notes": "Person + city.",
+   "text": "Shakespeare wrote plays for London audiences."
+  },
+  {
+   "id": "R05",
+   "must_find": [
+    "Tokyo"
+   ],
+   "notes": "Single city; must not be missed.",
+   "text": "The conference will be held in Tokyo next spring."
+  },
+  {
+   "id": "R06",
+   "must_find": [
+    "Curie",
+    "Texas"
+   ],
+   "notes": "Ambiguous surface kept verbatim.",
+   "text": "Curie mentioned Texas in the interview."
+  },
+  {
+   "id": "R07",
+   "must_find": [],
+   "notes": "Negative: no entities must be reported.",
+   "text": "zzqx unrelated filler words without any named things whatsoever here."
+  },
+  {
+   "id": "R08",
+   "must_find": [
+    "Paris"
+   ],
+   "notes": "Single place.",
+   "text": "Paris in the spring is lovely."
+  },
+  {
+   "id": "R09",
+   "text": "Alan Turing worked at Bletchley Park during World War II.",
+   "must_find": [
+    "Alan Turing",
+    "Bletchley Park",
+    "World War II"
+   ],
+   "notes": "VETTED live: 3/3 found, zero extras. PASSING."
+  },
+  {
+   "id": "R10",
+   "text": "The 2024 Summer Olympics will be held in Paris, France.",
+   "must_find": [
+    "Olympics",
+    "Paris",
+    "France"
+   ],
+   "notes": "VETTED live: all present (Olympics via '2024 Summer Olympics', France via 'Paris, France'); benign extra '2024'. PASSING."
+  },
+  {
+   "id": "R11",
+   "text": "Apple Inc. released the first iPhone in 2007.",
+   "must_find": [
+    "Apple Inc.",
+    "iPhone"
+   ],
+   "notes": "VETTED live: found ('Apple Inc' sans period); benign extra '2007'. PASSING."
+  },
+  {
+   "id": "R12",
+   "text": "New York City, often called NYC, is in New York State.",
+   "must_find": [
+    "New York City",
+    "NYC",
+    "New York State"
+   ],
+   "notes": "VETTED live: perfect 3/3 including abbreviation. PASSING."
+  },
+  {
+   "id": "R13",
+   "text": "Barack Obama met Angela Merkel in Berlin.",
+   "must_find": [
+    "Barack Obama",
+    "Angela Merkel",
+    "Berlin"
+   ],
+   "notes": "VETTED live: perfect 3/3. PASSING."
+  },
+  {
+   "id": "R14",
+   "text": "The Louvre Museum in Paris houses the Mona Lisa.",
+   "must_find": [
+    "Louvre Museum",
+    "Paris",
+    "Mona Lisa"
+   ],
+   "notes": "VETTED live: perfect 3/3. PASSING."
+  },
+  {
+   "id": "R15",
+   "text": "The quick brown fox jumps over the lazy dog.",
+   "must_find": [],
+   "notes": "VETTED live: FAILS \u2014 pre-pass reports 'The quick brown fox'. Kept as regression item documenting GLiNER over-eagerness."
+  },
+  {
+   "id": "R16",
+   "text": "Mount Everest is in the Himalayas on the border of Nepal and China.",
+   "must_find": [
+    "Mount Everest",
+    "Himalayas",
+    "Nepal",
+    "China"
+   ],
+   "notes": "VETTED live: PARTIAL \u2014 China missed. Kept documenting the recall hole."
+  }
+ ],
+ "status": "DRAFT - operator spot-check required before use as gates",
+ "version": 1,
+ "vetting": {
+  "suite2": "24 items vetted 2026-09-07: F/H logic accepted under house semantics; R09-R14 passing live, R15 failing (fox FP), R16 partial (China gap). Live-card spot-checks recorded per item; Eiffel Tower/Moon-as-book among mapping gaps found."
+ }
+}
