@@ -158,7 +158,7 @@ def _run_guided_real(job):
         try:
             from core.file_utils import get_file_hash as _gfh
             if tracker.is_processed(_gfh(f)):
-                _emit(job, {"type": "log", "level": "info", "msg": f"Skipping already processed: {fname}"})
+                _emit(job, {"type": "log", "level": "info", "msg": f"[{done + 1}/{total}] Skipping already processed: {fname}"})
                 tracker.processed_count += 1
                 done += 1
                 _emit(job, {"type": "document", "name": fname, "chunks": 0, "facts": 0, "status": "skipped"})

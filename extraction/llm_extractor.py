@@ -1006,6 +1006,12 @@ def extract_from_chunks(chunks, model=None, max_workers=None, chunk_embeddings=N
             if _fast_extractor_instance is None:
                 _fast_extractor_instance = FastExtractor()
             fast_extractor = _fast_extractor_instance
+            try:
+                _backend = "GLiNER" if getattr(fast_extractor, "gliner_extractor", None) is not None else (
+                    "bert-NER" if getattr(fast_extractor, "onnx_extractor", None) is not None else "rules-only")
+                print(f"  (Pre-pass NER backend: {_backend})")
+            except Exception:
+                pass
             # Threaded pre-pass: extract() is stateless and the ONNX session
             # is read-only after init (session.run is thread-safe). executor.map
             # preserves chunk order, so downstream indexing is unchanged.

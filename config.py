@@ -284,7 +284,7 @@ FAST_EXTRACTOR_WORKERS = int(os.environ.get("FAST_EXTRACTOR_WORKERS", "4"))
 # actually matters. Override per machine only with good reason.
 FAST_EXTRACTOR_DEVICE = os.environ.get("FAST_EXTRACTOR_DEVICE", "cpu")
 # GLiNER zero-shot NER (replaces bert-base-NER when enabled; bert stays fallback)
-GLINER_ENABLED = os.environ.get("GLINER_ENABLED", "false").lower() == "true"
+GLINER_ENABLED = os.environ.get("GLINER_ENABLED", "true").lower() == "true"
 GLINER_MODEL_DIR = str(BASE_DIR / "models" / "gliner_ner")
 GLINER_THRESHOLD = float(os.environ.get("GLINER_THRESHOLD", "0.35"))
 # DirectML default per operator choice (fastest on this box). Known risk:

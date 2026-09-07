@@ -1572,7 +1572,7 @@ Return only JSON."""
                     # Skip BEFORE prepare: embedding a file just to skip it is pure waste.
                     try:
                         if is_file_processed(f, tracker):
-                            print(f"Skipping already processed: {getattr(f, 'name', f)}")
+                            print(f"[{my_idx}/{tracker.total_files}] Skipping already processed: {getattr(f, 'name', f)}")
                             return None
                     except Exception:
                         pass
@@ -1641,7 +1641,7 @@ Return only JSON."""
                     # Skip BEFORE any prepare/logic work (embedding just to skip is waste).
                     try:
                         if is_file_processed(f, tracker):
-                            print(f"Skipping already processed: {f.name}")
+                            print(f"[{file_count}/{len(files)}] Skipping already processed: {f.name}")
                             if verified_flag:
                                 promote_verified_file(get_file_hash(f), f.name, source_file=f)
                             tracker.processed_count += 1
