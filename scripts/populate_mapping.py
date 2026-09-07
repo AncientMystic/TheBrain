@@ -283,15 +283,111 @@ def populate_name_batch(conn, names=None):
     return populate_historical_seed(conn, seeds=seeds)
 
 
+GEONAMES_CITIES1000_URL = "https://download.geonames.org/export/dump/cities1000.zip"
+# GeoNames readme columns for cities dumps.
+_GEONAMES_COLS = ("geonameid name asciiname alternatenames latitude longitude "
+                  "feature_class feature_code country_code cc2 admin1 admin2 admin3 "
+                  "admin4 population elevation dem timezone modification").split()
+
+
+def _geonames_region(country, admin1):
+    cc = (country or "").upper()
+    continent = {"US": "na", "CA": "na", "MX": "na", "GL": "na"}.get(cc)
+    if continent is None:
+        continent = {"GB": "eu", "FR": "eu", "DE": "eu", "IT": "eu", "ES": "eu",
+                     "NL": "eu", "BE": "eu", "CH": "eu", "AT": "eu", "IE": "eu",
+                     "PT": "eu", "GR": "eu", "PL": "eu", "CZ": "eu", "SK": "eu",
+                     "HU": "eu", "RO": "eu", "BG": "eu", "HR": "eu", "SI": "eu",
+                     "SE": "eu", "NO": "eu", "DK": "eu", "FI": "eu", "IS": "eu",
+                     "EE": "eu", "LV": "eu", "LT": "eu", "UA": "eu", "BY": "eu",
+                     "MD": "eu", "RS": "eu", "BA": "eu", "AL": "eu", "MK": "eu",
+                     "ME": "eu", "LU": "eu", "MC": "eu", "AD": "eu", "SM": "eu",
+                     "VA": "eu", "MT": "eu", "CY": "eu", "TR": "eu", "RU": "eu"}.get(cc, "other")
+    return continent, cc
+
+
+def populate_geonames_cities(conn, cache_dir=None, min_population=5000, limit=None):
+    """Bulk-load GeoNames cities1000 dump: city/town entities + aliases.
+
+    Static open-data dump (no API, no rate limits, fully local after first
+    download). Idempotent upserts keyed on geonames IDs.
+    """
+    import os as _os
+    import zipfile as _zf
+    import requests as _rq
+    from pathlib import Path as _P
+    cache = _P(cache_dir or _P(__file__).resolve().parent.parent / "data" / "geonames")
+    cache.mkdir(parents=True, exist_ok=True)
+    zpath = cache / "cities1000.zip"
+    if not zpath.exists():
+        print(f"downloading {GEONAMES_CITIES1000_URL} ...")
+        with _rq.get(GEONAMES_CITIES1000_URL, stream=True, timeout=600) as r:
+            r.raise_for_status()
+            with open(zpath, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1 << 20):
+                    if chunk:
+                        f.write(chunk)
+        print("download complete.")
+    n = 0
+    with _zf.ZipFile(zpath) as z:
+        name = [i.filename for i in z.infolist() if i.filename.endswith(".txt")][0]
+        with z.open(name) as f:
+            for line in f:
+                try:
+                    parts = line.decode("utf-8").rstrip("\n").split("\t")
+                    if len(parts) < 19:
+                        continue
+                    rec = dict(zip(_GEONAMES_COLS, parts))
+                    pop = int(rec["population"] or 0)
+                    if pop < int(min_population):
+                        continue
+                    gid = rec["geonameid"]
+                    cname = rec["name"] or rec["asciiname"]
+                    if not cname:
+                        continue
+                    continent, cc = _geonames_region(rec["country_code"], rec["admin1"])
+                    fclass = (rec["feature_class"] or "").upper()
+                    etype = "city" if fclass == "P" else "town" if fclass == "T" else "location"
+                    cid = f"geo:{cname.lower().replace(' ', '-')}-{gid}"
+                    desc = f"{etype.title()} in {cc}"
+                    if rec["admin1"]:
+                        desc += f" ({rec['admin1']})"
+                    desc += f"; population {pop}."
+                    upsert_entity(conn, cid, etype, "geo", cname, f"geo:{continent}",
+                                  region_code=cc, description=desc,
+                                  popularity=float(pop),
+                                  external_ids={"geonames": gid}, source="geonames")
+                    add_alias(conn, cname, cid, alias_type="primary")
+                    if rec["asciiname"] and rec["asciiname"] != cname:
+                        add_alias(conn, rec["asciiname"], cid, alias_type="aka")
+                    record_provenance(conn, cid, "geonames", gid)
+                    n += 1
+                    if limit and n >= int(limit):
+                        break
+                    if n % 20000 == 0:
+                        conn.commit()
+                        print(f"  ...{n} cities")
+                except Exception:
+                    continue
+    conn.commit()
+    return n
+
+
 if __name__ == "__main__":
     import sys as _sys
     from scripts.init_mapping_db import init_mapping_db
     _conn = init_mapping_db()
-    if len(_sys.argv) > 1 and _sys.argv[1] == "batch3":
+    if len(_sys.argv) > 1 and _sys.argv[1] == "geonames":
+        _lim = int(_sys.argv[2]) if len(_sys.argv) > 2 else 0
+        print("populating GeoNames cities (static dump, idempotent)...")
+        _n = populate_geonames_cities(_conn, limit=_lim or None)
+        print(f"done: {_n} cities.")
+    elif len(_sys.argv) > 1 and _sys.argv[1] == "batch3":
         print("populating name batch via wbsearchentities (label-gated)...")
         _kept, _skipped = populate_name_batch(_conn)
+        print(f"done: {_kept} kept, {len(_skipped)} skipped.")
     else:
         print("populating curated historical seed (label-gated)...")
         _kept, _skipped = populate_historical_seed(_conn)
-    print(f"done: {_kept} kept, {len(_skipped)} skipped: {_skipped}")
+        print(f"done: {_kept} kept, {len(_skipped)} skipped.")
     _conn.close()
