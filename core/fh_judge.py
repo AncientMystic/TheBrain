@@ -53,12 +53,16 @@ def _extract_spans(kind, material):
         be = create_backend(ep)
         if kind == "faith":
             task = ("List the exact substrings (word-for-word quotes) from CITATIONS "
-                    "that state each factual claim in ANSWER. Reply with exactly one JSON "
+                    "that state each factual claim in ANSWER. Quote FULL sentences "
+                    "containing the evidence, never fragments or single names — a quote "
+                    "must be able to stand alone as support. Reply with exactly one JSON "
                     "object: {\"quotes\": [\"<exact substring>\", ...]} and nothing else. "
                     "Empty list if a claim has no supporting substring. Never paraphrase.")
         else:
             task = ("List exact substrings (word-for-word quotes) from CONTEXT that either "
                     "support or refute the CLAIM, and split the CLAIM into atomic sub-claims. "
+                    "Quote FULL sentences containing the evidence, never fragments — a span "
+                    "must stand alone as support or refutation. "
                     "Reply with exactly one JSON object: {\"subclaims\": [\"...\", ...], "
                     "\"supports\": [\"<exact substring>\", ...], "
                     "\"refutes\": [\"<exact substring>\", ...]} and nothing else. "
@@ -208,14 +212,14 @@ def judge_hallucination(claim, context):
                 if impl == "supported":
                     return "supported", ireason, "llm-audit"
             # audit failed or unusable: famous-check before accepting support
-            flabel, freason = _famous_fact_check(claim_s)
+            flabel, freason = _famous_fact_check(claim_s, ctx_s)
             if flabel == "contradicted":
                 return flabel, freason, "llm-audit"
             if not ev:
                 return "supported", jreason, "llm"
             return "unsupported", "no verified support in context", "llm-audit"
         if jlabel == "unsupported":
-            flabel, freason = _famous_fact_check(claim_s)
+            flabel, freason = _famous_fact_check(claim_s, ctx_s)
             if flabel == "contradicted":
                 return flabel, freason, "llm-audit"
             return "unsupported", jreason, "llm"
@@ -227,19 +231,40 @@ def judge_hallucination(claim, context):
 _STOP = frozenset("the a an and or of in on at to for with is are was were be been by as from that this it its into over under".split())
 
 
+def _norm_tok(t):
+    """Lowercase + light plural normalization (bodies/body, prizes/prize).
+
+    Applied to BOTH sides of every comparison, so proper names shift
+    identically (paris/pari both sides) and matching stays exact.
+    """
+    try:
+        t = str(t or "").strip(".,;:!?\"'()").lower()
+        if t.endswith("ies") and len(t) > 5:
+            return t[:-3] + "y"
+        if t.endswith("es") and len(t) > 4:
+            return t[:-2]
+        if t.endswith("s") and len(t) > 4 and not t.endswith("ss"):
+            return t[:-1]
+        return t
+    except Exception:
+        return ""
+
+
 def _covers(supports, subclaims, strict=True):
     """Strict: EVERY content token of every sub-claim appears in supports.
 
+    v4: both sides pass through _norm_tok (plural-tolerant: bodies/body).
     Conservative by design (safe direction is human review). Near-misses
     fall through to the implication check, which allows genuine strict
     implication (H01-class) while rejecting number traps (H03-class).
     """
     try:
-        hay = " ".join(supports).lower()
+        hay = [_norm_tok(t) for t in " ".join(supports).split()]
+        hayset = set(hay)
         for s in subclaims:
-            toks = [t.strip(".,;:!?\"'()").lower() for t in str(s).split()]
-            content = [t for t in toks if len(t) > 3 and t not in _STOP]
-            if content and any(t not in hay for t in content):
+            content = [_norm_tok(t) for t in str(s).split()]
+            content = [t for t in content if len(t) > 3 and t not in _STOP]
+            if content and any(t not in hayset for t in content):
                 return False
         return True
     except Exception:
@@ -273,12 +298,11 @@ def _implication_check(subclaims, supports):
         return "review", f"implication check failed: {str(e)[:120]}", "rules"
 
 
-def _famous_fact_check(claim):
+def _famous_fact_check(claim, context=""):
     """Decide contradicted vs unsupported for famous-fact clashes.
 
-    Returns (label|None, reason). Only fires on direct contradiction by
-    well-established facts; anything else returns (None, '') leaving the
-    caller at unsupported.
+    Returns (label|None, reason). The CONTEXT travels along and wins ties:
+    no clash may be declared against the context's own statements.
     """
     try:
         from core.backends import create_backend
@@ -290,11 +314,17 @@ def _famous_fact_check(claim):
                 "(c) Austin is the capital of Texas — no other Texas city is. "
                 "(d) The Moon is rock, not cheese. (e) Van Gogh painted The Starry Night; "
                 "that says nothing about his nationality. "
+                "BINDING PRECEDENCE: the CONTEXT below wins every tie. If CONTEXT "
+                "explicitly establishes otherwise (e.g. a Paris in Texas, a Moon described "
+                "as a book), the context governs and there is NO clash. Never contradict "
+                "the CONTEXT's own statements with world knowledge. "
                 "Reply with exactly one JSON object: {\"label\": \"contradicted\"|"
                 "\"unsupported\", \"reason\": \"<one sentence>\"} and nothing else. "
-                "Say contradicted on a DIRECT clash with (a)-(d); otherwise unsupported.")
+                "Say contradicted ONLY on a DIRECT clash surviving the precedence rule; "
+                "otherwise unsupported.")
         msgs = [{"role": "system", "content": "You are a strict verification judge."},
-                {"role": "user", "content": task + "\n\nCLAIM: " + str(claim)[:1000]}]
+                {"role": "user", "content": task + "\n\nCLAIM: " + str(claim)[:1000]
+                 + "\n\nCONTEXT (wins ties): " + str(context or "")[:1500]}]
         out = be.chat(msgs, model=eps[0].get("model"), max_tokens=128, temperature=0.0)
         txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
         start, end = txt.find("{"), txt.rfind("}")
