@@ -49,6 +49,26 @@ def register_recoll_routes(app, require_auth):
         # Skeleton: preview via same search path (full fast-mode pipeline job lands next batch)
         return await recoll_search(SearchBody(query=body.keyword or "", limit=body.limit))
 
+    class IngestBody(BaseModel):
+        keyword: str = ""
+        limit: int = 20
+
+    @app.post("/api/jobs/recoll-ingest", dependencies=[Depends(require_auth)])
+    async def recoll_ingest(body: IngestBody):
+        from webui import jobs as _jobs
+        jid = _jobs.create_job("recoll-ingest",
+                               {"keyword": (body.keyword or "")[:500],
+                                "limit": max(1, min(int(body.limit or 20), 200))})
+        return {"job_id": jid}
+
+    @app.post("/api/jobs/recoll-fast", dependencies=[Depends(require_auth)])
+    async def recoll_fast_job(body: IngestBody):
+        from webui import jobs as _jobs
+        jid = _jobs.create_job("recoll-fast",
+                               {"keyword": (body.keyword or "")[:500],
+                                "limit": max(1, min(int(body.limit or 20), 200))})
+        return {"job_id": jid}
+
     @app.get("/api/recoll/status", dependencies=[Depends(require_auth)])
     async def recoll_status():
         import shutil

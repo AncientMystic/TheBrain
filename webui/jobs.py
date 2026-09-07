@@ -65,6 +65,10 @@ def create_job(kind, params=None):
         target = _run_research_real
     elif kind == "consolidate":
         target = _run_consolidate_real
+    elif kind == "recoll-ingest":
+        target = _run_recoll_ingest_real
+    elif kind == "recoll-fast":
+        target = _run_recoll_fast_real
     t = threading.Thread(target=target, args=(job,), daemon=True)
     job["thread"] = t
     t.start()
@@ -221,6 +225,135 @@ def _run_guided_real(job):
         _emit(job, {"type": "document", "name": fname, "chunks": chunks_n, "facts": facts_n,
                     "status": "done" if ok else "failed"})
         _emit(job, {"type": "progress", "done": done, "total": total})
+    _emit(job, {"type": "done", "ok": not job["cancel"].is_set()})
+    job["done"] = True
+
+
+def _run_recoll_ingest_real(job):
+    """Ingest documents found by a Recoll keyword query (the missing job).
+
+    Recoll search -> skip missing/already-processed -> process_file each,
+    with per-file document/progress events and cancel checks. Same event
+    shapes as guided-learning so the frontend reuses its renderers.
+    """
+    from pathlib import Path as _P
+    params = job.get("params", {})
+    keyword = str(params.get("keyword", "")).strip()[:500]
+    try:
+        limit = max(1, min(int(params.get("limit") or 20), 200))
+    except Exception:
+        limit = 20
+    if not keyword:
+        _emit(job, {"type": "error", "msg": "Empty keyword"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info",
+                "msg": f"Recoll ingest: searching for '{keyword[:120]}' (limit {limit})"})
+    try:
+        from core.recoll_client import RecollClient
+        from main import process_file
+        from core.progress import ProgressTracker
+        from core.file_utils import get_file_hash
+        from core import db as _db
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Import failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    try:
+        results, _count = RecollClient().search(keyword, limit=limit)
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Recoll search failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    # Resolve to existing local files, newest dedupe by resolved path.
+    files, _seen = [], set()
+    for _doc in (results or []):
+        _raw = _doc.get("path") or _doc.get("url") or ""
+        try:
+            _rp = str(_P(str(_raw)).expanduser().resolve())
+        except Exception:
+            continue
+        if _rp in _seen:
+            continue
+        _seen.add(_rp)
+        import os as _os
+        if _rp and _os.path.isfile(_rp):
+            files.append(_P(_rp))
+    # Drop already-processed before claiming progress totals.
+    tracker = ProgressTracker()
+    fresh = []
+    for _f in files:
+        try:
+            if tracker.is_processed(get_file_hash(_f)):
+                _emit(job, {"type": "log", "level": "info",
+                            "msg": f"Skipping already processed: {_f.name}"})
+                continue
+        except Exception:
+            pass
+        fresh.append(_f)
+    total = len(fresh)
+    _emit(job, {"type": "log", "level": "info",
+                "msg": f"{len(results or [])} hits, {total} new files to ingest"})
+    _emit(job, {"type": "progress", "done": 0, "total": max(1, total)})
+    done = 0
+    for _f in fresh:
+        if job["cancel"].is_set():
+            _emit(job, {"type": "log", "level": "warn", "msg": "Cancelled by user"})
+            break
+        _fname = getattr(_f, "name", str(_f))
+        _emit(job, {"type": "log", "level": "info", "msg": f"Processing {_fname}"})
+        try:
+            ok = process_file(_f, tracker)
+        except Exception as e:
+            _emit(job, {"type": "log", "level": "error", "msg": f"Failed {_fname}: {e}"})
+            ok = False
+        facts_n = -1
+        try:
+            _fh = get_file_hash(_f)
+            _c = _db.db_connect("key_facts")
+            _row = _c.execute("SELECT COUNT(*) AS n FROM key_facts WHERE doc_hash=?", (_fh,)).fetchone()
+            facts_n = int(_row["n"]) if _row else -1
+            _c.close()
+        except Exception:
+            pass
+        tracker.processed_count += 1
+        done += 1
+        _emit(job, {"type": "document", "name": _fname, "chunks": -1, "facts": facts_n,
+                    "status": "done" if ok else "failed"})
+        _emit(job, {"type": "progress", "done": done, "total": max(1, total)})
+    _emit(job, {"type": "done", "ok": not job["cancel"].is_set()})
+    job["done"] = True
+
+
+def _run_recoll_fast_real(job):
+    """Fast chunk ingest for a keyword via the existing fast-mode pipeline."""
+    params = job.get("params", {})
+    keyword = str(params.get("keyword", "")).strip()[:500]
+    try:
+        limit = max(1, min(int(params.get("limit") or 20), 200))
+    except Exception:
+        limit = 20
+    if not keyword:
+        _emit(job, {"type": "error", "msg": "Empty keyword"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info",
+                "msg": f"Fast chunk ingest for '{keyword[:120]}' (limit {limit})"})
+    _emit(job, {"type": "progress", "done": 0, "total": 1})
+    try:
+        from recoll_fast import process_recoll_fast
+        process_recoll_fast(keyword, max_results=limit)
+    except Exception as e:
+        _emit(job, {"type": "log", "level": "error", "msg": f"Fast ingest failed: {e}"})
+        _emit(job, {"type": "done", "ok": False})
+        job["done"] = True
+        return
+    _emit(job, {"type": "log", "level": "info", "msg": "Fast ingest complete"})
+    _emit(job, {"type": "progress", "done": 1, "total": 1})
     _emit(job, {"type": "done", "ok": not job["cancel"].is_set()})
     job["done"] = True
 
