@@ -141,6 +141,11 @@ def judge_faithfulness(answer, citations):
             if not ev:
                 return _judge_faithfulness_v1(answer, quotes)
             return "unfaithful", "no verified supporting quote in citations", "llm-2step"
+        # v3: verified spans must also cover the ANSWER's content tokens —
+        # a trivial verified span ('Marie Curie') saying nothing is the
+        # F02 confabulation shape. Uncovered answer -> unfaithful.
+        if not _covers(verified, [str(answer or "").strip()], strict=True):
+            return "unfaithful", "verified quotes do not cover the answer's claims", "llm-2step"
         from core.backends import create_backend
         eps = getattr(config, "LLM_ENDPOINTS", [])
         be = create_backend(eps[0])
@@ -177,40 +182,44 @@ def _judge_faithfulness_v1(answer, quotes):
 def judge_hallucination(claim, context):
     """(label, reason, method) for claim + context string.
 
-    v2: extract sub-claims + supporting/refuting spans, verify spans
-    verbatim, then decide: any verified refutation -> contradicted
-    (contradicted-preference kills the hedge); every sub-claim with a
-    verified support and none refuted -> supported; else unsupported.
-    Falls back to v1 when extraction is unusable.
+    v3: v1 holistic judgment decides; span machinery only DOWNGrades.
+    supported -> strict audit (verbatim + full token cover); failure
+    falls to implication check, then famous-facts check (contradicted
+    wins ties). unsupported -> famous-facts check (kills the hedge).
+    contradicted -> trusted. Chain preserves v1's reading while
+    auditing its support.
     """
     try:
         claim_s, ctx_s = str(claim or "").strip(), str(context or "").strip()
         if not (claim_s and ctx_s):
             return "review", "empty claim or context", "rules"
         material = "CLAIM: %s\nCONTEXT: %s" % (claim_s, ctx_s)
-        ev = _extract_spans("hal", material)
-        if ev:
-            sup = _verify_spans(ev.get("supports") or [], [ctx_s])
-            ref = _verify_spans(ev.get("refutes") or [], [ctx_s])
-            subs = [s for s in (ev.get("subclaims") or []) if s.strip()]
-            if ref:
-                return "contradicted", "verified refuting span in context", "llm-2step"
-            if subs and sup and _covers(sup, subs, strict=True):
-                return "supported", "every sub-claim has verified support", "llm-2step"
-            if not subs and sup:
-                return "supported", "verified supporting span in context", "llm-2step"
-            # No verified spans either way: famous-fact check decides
-            # contradicted vs unsupported (the clause v1 never fired).
-            label, reason = _famous_fact_check(claim_s)
-            if label == "contradicted":
-                return label, reason, "llm-2step"
-            # Otherwise: strict implication check on verified spans (saves
-            # H01-class implication while rejecting H03-class number traps).
-            return _implication_check(subs or [claim_s], sup)
-        label, reason, _ = _llm_judge(HALLUCINATION_RUBRIC, material)
-        if label in ("supported", "contradicted", "unsupported"):
-            return label, reason, "llm"
-        return "review", f"judge unparseable: {reason}", "llm"
+        jlabel, jreason, _ = _llm_judge(HALLUCINATION_RUBRIC, material)
+        if jlabel == "contradicted":
+            return jlabel, jreason, "llm"
+        if jlabel == "supported":
+            ev = _extract_spans("hal", material)
+            if ev:
+                sup = _verify_spans(ev.get("supports") or [], [ctx_s])
+                subs = [s for s in (ev.get("subclaims") or []) if s.strip()] or [claim_s]
+                if sup and _covers(sup, subs, strict=True):
+                    return "supported", "every sub-claim has verified support", "llm-audit"
+                impl, ireason, _ = _implication_check(subs, sup)
+                if impl == "supported":
+                    return "supported", ireason, "llm-audit"
+            # audit failed or unusable: famous-check before accepting support
+            flabel, freason = _famous_fact_check(claim_s)
+            if flabel == "contradicted":
+                return flabel, freason, "llm-audit"
+            if not ev:
+                return "supported", jreason, "llm"
+            return "unsupported", "no verified support in context", "llm-audit"
+        if jlabel == "unsupported":
+            flabel, freason = _famous_fact_check(claim_s)
+            if flabel == "contradicted":
+                return flabel, freason, "llm-audit"
+            return "unsupported", jreason, "llm"
+        return "review", f"judge unparseable: {jreason}", "llm"
     except Exception as e:
         return "review", f"judge failed: {str(e)[:120]}", "rules"
 
@@ -275,11 +284,15 @@ def _famous_fact_check(claim):
         from core.backends import create_backend
         eps = getattr(config, "LLM_ENDPOINTS", [])
         be = create_backend(eps[0])
-        task = ("Does this CLAIM clash with a well-established famous fact "
-                "(inventor of telephone/penicillin, national capitals, Moon's nature, "
-                "who painted famous works)? Reply with exactly one JSON object: "
-                "{\"label\": \"contradicted\"|\"unsupported\", \"reason\": \"<one sentence>\"} "
-                "and nothing else. When in doubt, say unsupported.")
+        task = ("Does this CLAIM directly clash with one of these well-established "
+                "facts? (a) Alexander Graham Bell invented the telephone — anyone else "
+                "credited is wrong. (b) Alexander Fleming discovered penicillin. "
+                "(c) Austin is the capital of Texas — no other Texas city is. "
+                "(d) The Moon is rock, not cheese. (e) Van Gogh painted The Starry Night; "
+                "that says nothing about his nationality. "
+                "Reply with exactly one JSON object: {\"label\": \"contradicted\"|"
+                "\"unsupported\", \"reason\": \"<one sentence>\"} and nothing else. "
+                "Say contradicted on a DIRECT clash with (a)-(d); otherwise unsupported.")
         msgs = [{"role": "system", "content": "You are a strict verification judge."},
                 {"role": "user", "content": task + "\n\nCLAIM: " + str(claim)[:1000]}]
         out = be.chat(msgs, model=eps[0].get("model"), max_tokens=128, temperature=0.0)
