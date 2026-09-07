@@ -90,6 +90,46 @@ def register_server_routes(app, require_auth):
         except Exception:
             pass
         out["counts"] = counts
+        # Verification distribution (trust at a glance, warrant colors).
+        try:
+            _c = _db.db_connect("key_facts")
+            _dist, _act = {}, []
+            try:
+                for _row in _c.execute(
+                        "SELECT verification_status, COUNT(*) AS n FROM key_facts GROUP BY verification_status"):
+                    _dist[str(_row[0] or "unverified")] = int(_row[1] or 0)
+            except Exception:
+                pass
+            try:
+                _ci = _db.db_connect("index")
+                _docs = _ci.execute(
+                    "SELECT file_hash, filename, updated_at FROM documents ORDER BY updated_at DESC LIMIT 8"
+                ).fetchall()
+                _ci.close()
+                for _d in _docs:
+                    try:
+                        _n = _c.execute("SELECT COUNT(*) AS n FROM key_facts WHERE doc_hash=?",
+                                        (_d[0],)).fetchone()
+                        _nn = int(_n["n"]) if _n else 0
+                    except Exception:
+                        _nn = 0
+                    _act.append({"name": str(_d[1] or "?")[:80],
+                                 "at": str(_d[2] or ""),
+                                 "facts": _nn})
+            except Exception:
+                pass
+            _c.close()
+            out["verification"] = _dist
+            out["activity"] = _act
+        except Exception:
+            out["verification"] = {}
+            out["activity"] = []
+        # Open breaker circuits (reliability pills).
+        try:
+            from core.breaker import open_circuits as _brk_open
+            out["breakers"] = _brk_open()
+        except Exception:
+            out["breakers"] = []
         # Metric stats: counters raw + histogram count/avg/p95 (capped)
         stats = {"counters": {}, "timings": {}}
         try:

@@ -78,3 +78,13 @@ def reset(endpoint=None):
             _state.clear()
         else:
             _state.pop(_key(endpoint), None)
+
+
+def open_circuits():
+    """Currently open circuits for dashboards: [{url, model, failures}]."""
+    import time as _time
+    now = _time.monotonic()
+    with _lock:
+        return [{"url": k[0], "model": k[1], "failures": int(v.get("failures", 0))}
+                for k, v in _state.items()
+                if now < float(v.get("opened_until", 0.0))]
