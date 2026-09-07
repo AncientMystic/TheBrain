@@ -42,6 +42,17 @@ def test_display_card(tmp_path):
     conn.close()
 
 
+def test_dirty_queue(tmp_path):
+    from core.mapping_lookup import record_dirty_mention
+    conn = _db(tmp_path)
+    assert record_dirty_mention(conn, "Paree", "doc1", "geo:paris-fr") is True
+    assert record_dirty_mention(conn, "Paree", "doc1", "geo:paris-fr") is True
+    assert record_dirty_mention(conn, "", "doc1") is False
+    n = conn.execute("SELECT COUNT(*) FROM dirty_mentions").fetchone()[0]
+    assert n == 1, "queue must dedupe"
+    conn.close()
+
+
 def test_normalize():
     assert normalize_mention("Marie Curie!") == "marie curie"
     assert normalize_mention("") == ""

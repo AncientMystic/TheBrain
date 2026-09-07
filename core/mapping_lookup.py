@@ -116,6 +116,24 @@ def mapping_context_block(ent_names, max_chars=1200, conn=None):
         return ""
 
 
+def record_dirty_mention(conn, surface, doc_id, proposed_canonical=""):
+    """Queue an unlinked/low-coherence mention for human/LLM review.
+
+    The repair queue behind clean canonical mapping: approvers promote
+    rows to aliases/same_as edges; nothing rewrites legacy tables in
+    place. Idempotent, never raises.
+    """
+    try:
+        if not (surface or "").strip() or not (doc_id or "").strip():
+            return False
+        conn.execute("INSERT OR IGNORE INTO dirty_mentions (surface, doc_id, proposed_canonical, status) VALUES (?,?,?,?)",
+                     (surface.strip(), doc_id.strip(), proposed_canonical or "", "pending"))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+
+
 def lookup_display(conn, canonical_id):
     """One-row display card for chat injection: name, type, description."""
     try:
