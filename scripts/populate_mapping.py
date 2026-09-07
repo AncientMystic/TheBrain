@@ -373,6 +373,74 @@ def populate_geonames_cities(conn, cache_dir=None, min_population=5000, limit=No
     return n
 
 
+NAMESDB_PATH = r"A:\scripts\abs_auto_match\names.db"
+# Exact-norm matches that are format categories, not real series.
+NON_SERIES = {"ebooks", "audiobooks", "audio books", "audio books short stories",
+              "short stories", "comics", "manga", "magazines", "newspapers",
+              "books", "novels", "anthologies", "collections", "misc", "unknown"}
+
+
+def _slug(s):
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "-", str(s or "").lower()).strip("-")
+
+
+def populate_namesdb(conn, path=None):
+    """Local kickoff import: authors/series/titles from names.db.
+
+    Read-only against the source. Authors -> person/author rows, series ->
+    work/series rows, titles -> work/book rows; norm doubles as alias.
+    """
+    import sqlite3 as _sq3
+    src = _sq3.connect(path or NAMESDB_PATH)
+    src.row_factory = _sq3.Row
+    counts = {"author": 0, "series": 0, "book": 0}
+    try:
+        for r in src.execute("SELECT name, norm, source, count FROM authors"):
+            name = (r["name"] or "").strip()
+            if not name:
+                continue
+            cid = f"per:{_slug(name) or 'unknown'}"
+            upsert_entity(conn, cid, "author", "person", name, "person:global",
+                          description=f"Author ({r['source'] or 'local'}).",
+                          popularity=float(r["count"] or 1),
+                          external_ids={"namesdb": r["norm"]}, source="namesdb")
+            add_alias(conn, name, cid, alias_type="primary")
+            if r["norm"] and r["norm"] != name.lower():
+                add_alias(conn, r["norm"], cid, alias_type="aka")
+            record_provenance(conn, cid, "namesdb", f"authors:{r['norm']}")
+            counts["author"] += 1
+        for r in src.execute("SELECT name, norm, source, count FROM series"):
+            name = (r["name"] or "").strip()
+            norm = (r["norm"] or "").strip().lower()
+            if not name or norm in NON_SERIES:
+                continue
+            cid = f"work:series-{_slug(name)}"
+            upsert_entity(conn, cid, "series", "work", name, "work:global",
+                          description=f"Book series ({r['source'] or 'local'}).",
+                          popularity=float(r["count"] or 1),
+                          external_ids={"namesdb": norm}, source="namesdb")
+            add_alias(conn, name, cid, alias_type="primary")
+            record_provenance(conn, cid, "namesdb", f"series:{norm}")
+            counts["series"] += 1
+        for r in src.execute("SELECT name, norm, source, count FROM titles"):
+            name = (r["name"] or "").strip()
+            if not name:
+                continue
+            cid = f"work:book-{_slug(name)}"
+            upsert_entity(conn, cid, "book", "work", name, "work:global",
+                          description=f"Book title ({r['source'] or 'local'}).",
+                          popularity=float(r["count"] or 1),
+                          external_ids={"namesdb": r["norm"]}, source="namesdb")
+            add_alias(conn, name, cid, alias_type="primary")
+            record_provenance(conn, cid, "namesdb", f"titles:{r['norm']}")
+            counts["book"] += 1
+    finally:
+        src.close()
+    conn.commit()
+    return counts
+
+
 if __name__ == "__main__":
     import sys as _sys
     from scripts.init_mapping_db import init_mapping_db
@@ -382,6 +450,10 @@ if __name__ == "__main__":
         print("populating GeoNames cities (static dump, idempotent)...")
         _n = populate_geonames_cities(_conn, limit=_lim or None)
         print(f"done: {_n} cities.")
+    if len(_sys.argv) > 1 and _sys.argv[1] == "namesdb":
+        print("importing names.db kickoff (read-only source)...")
+        _c = populate_namesdb(_conn)
+        print(f"done: {_c}")
     elif len(_sys.argv) > 1 and _sys.argv[1] == "batch3":
         print("populating name batch via wbsearchentities (label-gated)...")
         _kept, _skipped = populate_name_batch(_conn)
