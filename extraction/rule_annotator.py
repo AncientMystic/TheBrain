@@ -8,6 +8,28 @@ logger = logging.getLogger(__name__)
 _YEAR_RE = re.compile(r'\b(17|18|19|20)\d{2}\b')
 _DATE_RE = re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b', re.IGNORECASE)
 _PERSON_RE = re.compile(r'\b[A-Z][a-z]+\s+[A-Z][a-z]+\b')
+# P1 extensions: numeric/ISO dates, ranges, qualifiers (no behavior change to existing buckets)
+_DATE_ISO_RE = re.compile(r'\b(17|18|19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b')
+_DATE_NUM_RE = re.compile(r'\b(0?[1-9]|1[0-2])[/.](0?[1-9]|[12]\d|3[01])[/.](17|18|19|20)\d{2}\b|\b(0?[1-9]|[12]\d|3[01])[.](0?[1-9]|1[0-2])[.](17|18|19|20)\d{2}\b')
+_DATE_MY_RE = re.compile(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[,.]?\s+(17|18|19|20)\d{2}\b', re.IGNORECASE)
+_DATE_RANGE_RE = re.compile(r'\b(17|18|19|20)\d{2}\s*[–—-]\s*(17|18|19|20)\d{2}\b')
+_DATE_QUAL_RE = re.compile(r'\b(?:c\.|ca\.|circa|fl\.|floruit)\s*(17|18|19|20)\d{2}\b', re.IGNORECASE)
+# Page references: p. 42, pp. 42-45, pg. 7, Page 12, S. 42 (German), fol. 3
+_PAGE_RE = re.compile(r'\b(?:pp?g?\.|pages?|S\.|fol\.|fols\.)\s*\d+(?:\s*[–—-]\s*\d+)?\b', re.IGNORECASE)
+# Identifiers: ISBN-10/13, ISSN, DOI
+_ISBN_RE = re.compile(r'\bISBN(?:-1[03])?:?\s*(?=[0-9Xx][0-9Xx\- ]{9,16}[0-9Xx])(?:[0-9Xx][\- ]?){10,13}\b')
+_ISSN_RE = re.compile(r'\bISSN:?\s*\d{4}-\d{3}[\dXx]\b', re.IGNORECASE)
+_DOI_RE = re.compile(r'\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b')
+# Bylines: By Jane Smith / BY JOHN SMITH / Author: X / Written by X
+_BYLINE_RE = re.compile(r'(?m)^(?:by|author(?:\(s\))?|written by|reported by)\s*[:\-]?\s*([A-Z][\w.\'-]+(?:\s+[A-Z][\w.\'-]+){0,3})\s*$', re.IGNORECASE)
+# Datelines: PARIS — / Paris, France, Jan 5 — / LONDON, Jan. 5 (AP):
+_DATELINE_RE = re.compile(r'(?m)^([A-Z][A-Za-z .\'-]{1,40}?)(?:,\s*([A-Za-z .\'-]{1,40}?))?\s*(?:—|--|–|:)\s*')
+# Transcript speaker turns: NAME: ... / [00:12:33] Name: ... / SPEAKER 1: ...
+_SPEAKER_RE = re.compile(r'(?m)^(?:\[(\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?\]\s*)?([A-Z][A-Za-z .\'-]{1,32}?|SPEAKER\s+\d+|UNKNOWN):\s+')
+# Citations: Author (Year) / Author & Other (Year) / Author et al. (Year)
+_CITE_RE = re.compile(r'\b([A-Z][a-z]+(?:\s+(?:&|and)\s+[A-Z][a-z]+)?(?:\s+et al\.?)?)\s*\(((?:17|18|19|20)\d{2}[a-z]?)\)')
+# Chapter/section headers
+_CHAPTER_RE = re.compile(r'(?m)^(?:chapter|section|part)\s+([IVXLCDM\d]+|[A-Z][\w .\'-]{0,60})\s*$', re.IGNORECASE)
 
 # Lazy-loaded Aho-Corasick automaton
 _automaton = None
@@ -84,16 +106,75 @@ def pre_annotate(text: str) -> dict:
         "people": [],
         "organizations": [],
         "events": [],
+        "pages": [],
+        "identifiers": [],
+        "bylines": [],
+        "datelines": [],
+        "speakers": [],
+        "citations": [],
+        "chapters": [],
     }
+
+    def _add(_bucket, _m, _group=0):
+        try:
+            annotations[_bucket].append({"text": _m.group(_group), "start": _m.start(_group), "end": _m.end(_group)})
+        except Exception:
+            pass
 
     # Years
     for m in _YEAR_RE.finditer(text):
         annotations["years"].append({"text": m.group(), "start": m.start(), "end": m.end()})
 
     # Full dates: January 1, 2020 or 1 January 2020
-    date_pattern = r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\b'
     for m in _DATE_RE.finditer(text):
         annotations["dates"].append({"text": m.group(), "start": m.start(), "end": m.end()})
+
+    # P1: ISO, numeric, month-year, ranges, qualified dates (all -> dates bucket)
+    for _rx in (_DATE_ISO_RE, _DATE_NUM_RE, _DATE_MY_RE, _DATE_RANGE_RE, _DATE_QUAL_RE):
+        for m in _rx.finditer(text):
+            _add("dates", m)
+
+    # P1: page references
+    for m in _PAGE_RE.finditer(text):
+        _add("pages", m)
+
+    # P1: ISBN / ISSN / DOI
+    for _rx in (_ISBN_RE, _ISSN_RE, _DOI_RE):
+        for m in _rx.finditer(text):
+            _add("identifiers", m)
+
+    # P1: bylines (group 1 = name)
+    for m in _BYLINE_RE.finditer(text):
+        _add("bylines", m, 1)
+
+    # P1: datelines (group 1 = place, group 2 = region/date-ish).
+    # Skip single-word-plus-colon (that's a transcript speaker turn, which
+    # gets its own bucket below) unless a region followed the place.
+    for m in _DATELINE_RE.finditer(text):
+        try:
+            _g1 = (m.group(1) or "").strip()
+            if not m.group(2) and m.group(0).rstrip().endswith(":") and " " not in _g1:
+                continue
+        except Exception:
+            pass
+        _add("datelines", m, 1)
+        try:
+            if m.group(2):
+                annotations["datelines"].append({"text": m.group(2).strip(), "start": m.start(2), "end": m.end(2)})
+        except Exception:
+            pass
+
+    # P1: transcript speaker turns (group 2 = speaker)
+    for m in _SPEAKER_RE.finditer(text):
+        _add("speakers", m, 2)
+
+    # P1: Author (Year) citations (group 1 = authors, group 2 = year)
+    for m in _CITE_RE.finditer(text):
+        _add("citations", m, 0)
+
+    # P1: chapter/section headers
+    for m in _CHAPTER_RE.finditer(text):
+        _add("chapters", m, 0)
 
     # Locations: use Aho-Corasick automaton for efficient exact word-boundary matching
     A = _build_automaton()
