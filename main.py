@@ -1627,6 +1627,144 @@ Return only JSON."""
                     with concurrent.futures.ThreadPoolExecutor(max_workers=getattr(config, 'PARALLEL_INGESTION_WORKERS', getattr(config, 'PARALLEL_WORKERS', 1))) as executor:
                         list(executor.map(process_one, files))
             else:
+                # ---- Terminal-UI pipeline: bulk prefetch powers through all
+                # files first (extract -> index -> embed, cache-aware, nothing
+                # repeated), the document stage trails behind on preloaded
+                # data, and a verifier thread trails behind that. Each stage
+                # updates its own line in place, curriculum-style.
+                def _tui_line(_label, _done, _total, _extra=""):
+                    try:
+                        _w = 24
+                        _f = min(1.0, (_done / max(1, _total)))
+                        _bar = ("#" * int(_f * _w)).ljust(_w, "-")
+                        print(f"\r  {_label} {_done}/{_total} [{_bar}]{_extra}", end="", flush=True)
+                        if _done >= _total:
+                            print("", flush=True)
+                    except Exception:
+                        pass
+
+                def _bulk_prefetch(_files):
+                    _n = len(_files)
+                    _hashes, _texts, _chunks, _embs, _skipped = [], [], [], [], []
+                    print("  [1/3] Extracting text (cache-aware)...")
+                    for _i, _f in enumerate(_files, 1):
+                        try:
+                            _h = get_file_hash(_f)
+                        except Exception:
+                            _h = ""
+                        _hashes.append(_h)
+                        if _h and tracker.is_processed(_h):
+                            _texts.append(None); _chunks.append(None); _embs.append(None); _skipped.append(True)
+                        else:
+                            try:
+                                _t, _m, _o = _load_or_extract_text(_h, _f)
+                            except Exception:
+                                _t, _m, _o = "", {}, False
+                            _texts.append((_t, _m, _o)); _chunks.append(None); _embs.append(None); _skipped.append(False)
+                        _tui_line("extracting", _i, _n)
+                    print("  [2/3] Indexing chunks (cache-aware)...")
+                    for _i, (_f, _h, _t3) in enumerate(zip(_files, _hashes, _texts), 1):
+                        if _t3 is None or not _t3[0]:
+                            _tui_line("indexing", _i, _n)
+                            continue
+                        try:
+                            _ch = _load_or_chunk(_h, _t3[0])
+                        except Exception:
+                            _ch = []
+                        _chunks[_i - 1] = _ch
+                        _tui_line("indexing", _i, _n)
+                    # Persist newly chunked docs once (process_file skips stored).
+                    try:
+                        _conn0 = db.db_connect("index")
+                        for _h, _ch in zip(_hashes, _chunks):
+                            if _h and _ch:
+                                try:
+                                    _c0 = _conn0.cursor()
+                                    _c0.execute("SELECT COUNT(*) AS n FROM document_chunks WHERE doc_hash=?", (_h,))
+                                    _r0 = _c0.fetchone()
+                                    if not (_r0 and _r0["n"]):
+                                        store_chunks(_conn0, _h, _ch)
+                                except Exception:
+                                    continue
+                        _conn0.commit(); _conn0.close()
+                    except Exception:
+                        pass
+                    print("  [3/3] Embedding chunks (cache-backed)...")
+                    for _i, (_ch) in enumerate(_chunks, 1):
+                        if not _ch:
+                            _embs[_i - 1] = []
+                        else:
+                            try:
+                                _embs[_i - 1] = get_embeddings_batch(_ch, batch_size=config.EMBEDDING_BATCH_SIZE, space='hyperbolic')
+                            except Exception:
+                                _embs[_i - 1] = [None] * len(_ch)
+                        _tui_line("embedding", _i, _n)
+                    _out = []
+                    for _f, _h, _t3, _ch, _e, _sk in zip(_files, _hashes, _texts, _chunks, _embs, _skipped):
+                        if _sk or not _t3 or not _t3[0]:
+                            _out.append(None)
+                            continue
+                        _out.append({"file": _f, "file_hash": _h, "text": _t3[0],
+                                     "chunks": _ch or [], "chunk_embs": _e or [],
+                                     "metadata": _t3[1], "format": Path(_f).suffix.lstrip(".").lower(),
+                                     "ocr_used": _t3[2]})
+                    return _out
+
+                import queue as _qmod
+                _verify_q = _qmod.Queue()
+                _verify_done = {"n": 0}
+                _verify_lock = threading.Lock()
+
+                def _verify_trailer():
+                    # Own process trailing behind documents: promotion, smart
+                    # GC, and a verification-status sweep per finished file.
+                    # No LLM re-runs here: facts were verified inline during
+                    # processing; this aggregates what landed.
+                    while True:
+                        _job = _verify_q.get()
+                        if _job is None:
+                            _verify_q.task_done()
+                            break
+                        try:
+                            _fh, _fname, _ok, _total = _job
+                            if _ok and verified_flag:
+                                try:
+                                    promote_verified_file(_fh, _fname)
+                                except Exception:
+                                    pass
+                            _vn = _vp = _vu = 0
+                            try:
+                                _cc = db.db_connect("key_facts")
+                                _cr = _cc.cursor()
+                                _cr.execute("SELECT verification_status, COUNT(*) AS n FROM key_facts WHERE doc_hash=? GROUP BY verification_status", (_fh,))
+                                for _row in _cr.fetchall():
+                                    if _row[0] == "verified":
+                                        _vn = _row[1]
+                                    elif _row[0] == "partially_verified":
+                                        _vp = _row[1]
+                                    else:
+                                        _vu += _row[1] or 0
+                                _cc.close()
+                            except Exception:
+                                pass
+                            with _verify_lock:
+                                _verify_done["n"] += 1
+                                _vd = _verify_done["n"]
+                            print(f"\r  verifying {_vd}/{_total} [{_fname}: {int(_vn)} verified, {int(_vp)} partial, {int(_vu)} other]", flush=True)
+                            try:
+                                _everyT = int(getattr(config, "GC_EVERY_N_FILES", 25))
+                                if _vd % max(1, _everyT) == 0:
+                                    gc.collect()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        finally:
+                            _verify_q.task_done()
+
+                _vt = threading.Thread(target=_verify_trailer, daemon=True)
+                _vt.start()
+                _preps = _bulk_prefetch(files)
                 file_count = 0
                 prefetched_data = None
                 prefetch_lock = threading.Lock()
@@ -1648,23 +1786,14 @@ Return only JSON."""
                             continue
                     except Exception:
                         pass
-                    # Use prefetched data if available (resolved-path identity, not object identity)
+                    # Preloaded from the bulk phase above (same-file identity).
                     preloaded = None
                     try:
-                        from pathlib import Path as _P
-                        _cur_res = str(_P(f).expanduser().resolve())
-                    except Exception:
-                        _cur_res = str(f)
-                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and prefetched_data:
-                        try:
-                            from pathlib import Path as _P2
-                            _pre_res = str(_P2(prefetched_data.get("file", "")).expanduser().resolve())
-                        except Exception:
-                            _pre_res = str(prefetched_data.get("file", ""))
-                        if _pre_res == _cur_res:
-                            preloaded = prefetched_data
-                            prefetched_data = None
+                        if idx < len(_preps) and _preps[idx] is not None:
+                            preloaded = _preps[idx]
                             print("  (Using prefetched data)")
+                    except Exception:
+                        preloaded = None
                     # sequential logic reuses prefetched/preloaded text (no double parse/OCR)
                     logic_context = ""
                     if logic_mode:
@@ -1698,32 +1827,20 @@ Return only JSON."""
                         except Exception:
                             pass
                         continue
-                    # Spawn prefetch for next file
-                    if getattr(config, "PREFETCH_NEXT_DOCUMENT", False) and idx + 1 < len(files):
-                        next_file = files[idx + 1]
-                        def do_prefetch():
-                            nonlocal prefetched_data
-                            with prefetch_lock:
-                                if prefetched_data is None:
-                                    try:
-                                        if is_file_processed(next_file, tracker):
-                                            return
-                                    except Exception:
-                                        pass
-                                    prefetched_data = prepare_next_file(next_file)
-                        t = threading.Thread(target=do_prefetch, daemon=True)
-                        t.start()
                     success = process_file(f, tracker, logic_context=logic_context, preloaded=preloaded, seq=file_count)
                     tracker.processed_count += 1
-                    if success and verified_flag:
-                        file_hash = get_file_hash(f)
-                        promote_verified_file(file_hash, f.name, source_file=f)
+                    # Hand off to the trailing verifier (promotion, GC and
+                    # verification-status sweep live there now, not inline).
                     try:
-                        _every1 = int(getattr(config, "GC_EVERY_N_FILES", 25))
-                        if tracker.processed_count % max(1, _every1) == 0:
-                            gc.collect()
+                        _verify_q.put((file_hash, f.name, bool(success), len(files)))
                     except Exception:
                         pass
+                # Drain the trailing verifier before reporting completion.
+                try:
+                    _verify_q.put(None)
+                    _vt.join(timeout=600)
+                except Exception:
+                    pass
         except KeyboardInterrupt:
             print("\n\n⚠️  Interrupted by user. Exiting...")
             os._exit(0)
