@@ -89,6 +89,20 @@ def load_gazetteers():
             elif key == "event_triggers":
                 _gazetteers[key] = {"discovered", "founded", "invented", "first", "occurred", "published", "launched", "created", "established"}
             # others empty by default
+    # P4 slice 1: mapping-DB sidecars merge into matching sets (same kind,
+    # same matching semantics — pure recall gain, zero behavior change).
+    # Names/publishers/works sidecars stay mapping-phase-only until the
+    # candidates_fn linker lands (different data shapes, not flat sets).
+    try:
+        _side = gaz_dir / "mapping_cities.txt"
+        if _side.exists():
+            with open(_side, "r", encoding="utf-8") as f:
+                for line in f:
+                    _t = line.strip().lower()
+                    if _t:
+                        _gazetteers["world_cities"].add(_t)
+    except Exception:
+        pass
     return _gazetteers
 
 
