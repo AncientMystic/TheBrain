@@ -147,3 +147,106 @@ def lookup_display(conn, canonical_id):
                 "popularity": row[4] or 0}
     except Exception:
         return None
+
+
+# Hyper-coordinate relevance weights (phase 65). S_hyp carries the semantic
+# match, S_plane the linear map pre-filter term, S_shard the horizontal term.
+W_HYP, W_PLANE, W_SHARD = 0.6, 0.25, 0.15
+
+
+def _plane_similarity(clat, clon, qlat, qlon):
+    """Equirectangular degree distance -> (0,1] similarity, 45deg scale."""
+    try:
+        import math
+        if None in (clat, clon, qlat, qlon):
+            return None
+        mlat = math.radians((float(clat) + float(qlat)) / 2.0)
+        dd = math.hypot(float(clat) - float(qlat),
+                        math.cos(mlat) * (float(clon) - float(qlon)))
+        return 1.0 / (1.0 + dd / 45.0)
+    except Exception:
+        return None
+
+
+def rank_candidates_scored(mention_text, mention_emb=None, limit=10,
+                           shard_weights=None, qlat=None, qlon=None,
+                           conn=None):
+    """Rank alias candidates by S = 0.6*S_hyp + 0.25*S_plane + 0.15*S_shard.
+
+    mention_emb: hyperbolic query vector (list/np) or None. shard_weights:
+    {shard_key: 0..1} from document context (None = no shard signal).
+    qlat/qlon: query map position or None. Missing parts are EXCLUDED and
+    the remaining weights renormalize (graceful degradation, never 0-bias).
+    Returns [(canonical_id, S, parts)] sorted desc. Read-only, never raises.
+    """
+    try:
+        limit = max(int(limit), 1)
+        own_conn = False
+        if conn is None:
+            from core import db as _db
+            conn = _db.db_connect("mapping")
+            own_conn = True
+        try:
+            pool = mapping_candidates_fn(mention_text, limit=min(limit * 3, 30),
+                                         conn=conn)
+            if not pool:
+                return []
+            try:
+                from core.hyperbolic import hyperbolic_similarity
+                import numpy as _np
+                _have_hyp = True
+            except Exception:
+                _have_hyp = False
+            q = None
+            if mention_emb is not None and _have_hyp:
+                try:
+                    q = _np.asarray(mention_emb, dtype=_np.float64)
+                except Exception:
+                    q = None
+            scored = []
+            for order, (cid, _) in enumerate(pool):
+                try:
+                    row = conn.execute(
+                        "SELECT emb, lat_r, lon_r, shard_key FROM entities"
+                        " WHERE canonical_id=?", (cid,)).fetchone()
+                except Exception:
+                    row = None
+                parts, num, den = {}, 0.0, 0.0
+                if row:
+                    blob, clat, clon, shard = row[0], row[1], row[2], row[3]
+                    if q is not None and blob is not None and _have_hyp:
+                        try:
+                            import numpy as _np2
+                            c = _np2.frombuffer(bytes(blob), dtype=_np2.float32)
+                            if len(c) == len(q):
+                                s = hyperbolic_similarity(q, c)
+                                parts["hyp"] = s
+                                num += W_HYP * s
+                                den += W_HYP
+                        except Exception:
+                            pass
+                    ps = _plane_similarity(clat, clon, qlat, qlon)
+                    if ps is not None:
+                        parts["plane"] = ps
+                        num += W_PLANE * ps
+                        den += W_PLANE
+                    if shard_weights and shard is not None and shard in shard_weights:
+                        try:
+                            s = min(max(float(shard_weights[shard]), 0.0), 1.0)
+                            parts["shard"] = s
+                            num += W_SHARD * s
+                            den += W_SHARD
+                        except Exception:
+                            pass
+                score = (num / den) if den > 0 else 0.5
+                scored.append((cid, score, parts, order))
+            scored.sort(key=lambda t: (-t[1], t[3]))
+            return [(cid, s, p) for cid, s, p, _ in scored[:limit]]
+        finally:
+            if own_conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        return []
