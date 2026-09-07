@@ -83,8 +83,18 @@ class GlinerONNXExtractor:
                 so.log_severity_level = 3
             except Exception:
                 pass
-            from core.onnx_lock import resolve_providers
-            providers = resolve_providers()
+            # Same pinning as bert NER above: CPU default so the threaded
+            # pre-pass never puts concurrent Run on the DML driver.
+            try:
+                _dev = str(getattr(config, "FAST_EXTRACTOR_DEVICE", "cpu") or "cpu").lower()
+            except Exception:
+                _dev = "cpu"
+            if _dev in ("directml", "dml", "auto") and "DmlExecutionProvider" in ort.get_available_providers():
+                providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+            elif _dev == "cuda" and "CUDAExecutionProvider" in ort.get_available_providers():
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            else:
+                providers = ["CPUExecutionProvider"]
             self.session = ort.InferenceSession(str(onnx_path), sess_options=so, providers=providers)
             self.input_names = [i.name for i in self.session.get_inputs()]
             self.available = True

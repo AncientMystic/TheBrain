@@ -541,6 +541,77 @@ def _drain_retry_jobs(jobs):
     return out
 
 
+def _gliner_entity_complete_idx(batch_chunks, batch_pre_extractions):
+    """Batch positions whose entities the ONNX pre-pass already covers.
+
+    Coverage = fraction of chunk words appearing in pre-pass entity texts,
+    with minimum entity count. Covered chunks skip the people/locations/
+    dates LLM category (served from pre-pass below); facts, relationships
+    and events always keep full LLM treatment. Empty set unless the cascade
+    flag is on and pre-extractions exist.
+    """
+    try:
+        if not getattr(config, "GLINER_CASCADE_ENABLED", False):
+            return set()
+        if not batch_pre_extractions:
+            return set()
+        _ratio = float(getattr(config, "GLINER_COVERAGE_MIN_RATIO", 0.15))
+        _min_n = int(getattr(config, "GLINER_COVERAGE_MIN_ENTITIES", 3))
+    except Exception:
+        return set()
+    done = set()
+    for i, chunk_text in enumerate(batch_chunks):
+        try:
+            pre = batch_pre_extractions[i] if i < len(batch_pre_extractions) else None
+            if not isinstance(pre, dict):
+                continue
+            _words = [w.strip(".,;:!?\"'()[]").lower() for w in str(chunk_text or "").split()]
+            _words = [w for w in _words if w]
+            if not _words:
+                continue
+            _covered, _n = set(), 0
+            for _key in ("entities", "people", "locations", "dates", "organizations"):
+                for _it in (pre.get(_key) or []):
+                    if not isinstance(_it, dict):
+                        continue
+                    _t = str(_it.get("text", "") or "").strip().lower()
+                    if not _t:
+                        continue
+                    _n += 1
+                    for _w in _t.split():
+                        _w = _w.strip(".,;:!?\"'()[]")
+                        if _w:
+                            _covered.add(_w)
+            _hit = sum(1 for w in _words if w in _covered)
+            if _n >= _min_n and (_hit / len(_words)) >= _ratio:
+                done.add(i)
+        except Exception:
+            continue
+    return done
+
+
+def _pre_entities_to_results(pre):
+    """Convert pre-pass entity shape to result field items (both shapes flow
+    downstream: validators accept text-first or entity_name-first dicts)."""
+    out = {"entities": [], "people": [], "locations": [], "dates": []}
+    try:
+        for _it in (pre.get("entities") or []):
+            if isinstance(_it, dict) and _it.get("text"):
+                out["entities"].append({"entity_type": _it.get("type", "MISC"),
+                                        "entity_name": _it["text"],
+                                        "normalized_name": _it["text"],
+                                        "source_span": _it["text"],
+                                        "confidence": float(_it.get("confidence", 0.5))})
+        for _key, _name in (("people", "person_name"), ("locations", "location_name"),
+                            ("dates", "date_text")):
+            for _it in (pre.get(_key) or []):
+                if isinstance(_it, dict) and _it.get("text"):
+                    out[_key].append({_name: _it["text"], "confidence": float(_it.get("confidence", 0.5))})
+    except Exception:
+        pass
+    return out
+
+
 def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, actual_model=None, batch_pre_extractions=None, batch_prio=None):
     if actual_model is None:
         actual_model = model
@@ -550,6 +621,11 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
         "people": [], "locations": [], "dates": [],
         "events": [], "discoveries": [], "gems": []
     } for _ in batch_chunks]
+
+    # Entity-complete chunks (cascade): pre-pass already nailed people/locs/dates.
+    _entity_done = _gliner_entity_complete_idx(batch_chunks, batch_pre_extractions)
+    if _entity_done:
+        print(f"    (Cascade: {len(_entity_done)}/{len(batch_chunks)} chunks entity-complete, LLM fills facts+events only)")
 
     categories = [
         ("facts_entities_relationships", ["facts", "entities", "relationships"]),
@@ -573,7 +649,21 @@ def _process_batch(batch_chunks, model=None, logic_context="", endpoint=None, ac
 
         uncached_indices = []
         cached_results = {}
+        # Cascade: entity-complete chunks skip this LLM category entirely when
+        # it is the people/locations/dates one (served from pre-pass below).
+        _skip_cat = (category == "people_locations_dates" and bool(_entity_done)
+                     and batch_pre_extractions)
         for i, chunk_text in enumerate(batch_chunks):
+            if _skip_cat and i in _entity_done:
+                try:
+                    _conv = _pre_entities_to_results(batch_pre_extractions[i])
+                    _cd = {k: _conv.get(k, []) for k in field_keys}
+                    _hh = _hash_text(chunk_text)
+                    _set_cached(_hh, category, actual_model, 4096, _cd, prompt_template)
+                    cached_results[i] = _cd
+                    continue
+                except Exception:
+                    pass
             chunk_hash = _hash_text(chunk_text)
             cached = _get_cached(chunk_hash, category, actual_model, 8192 if category=="facts_entities_relationships" else 4096, prompt_template)
             if cached is not None:

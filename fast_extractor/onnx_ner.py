@@ -31,13 +31,28 @@ class OnnxNERExtractor:
             print("No .onnx file found in model directory.")
             return
 
-        # Single shared policy (core.onnx_lock.resolve_providers): CPU by
-        # default, DML/CUDA only on explicit opt-in. Local try/except keeps
-        # the CPU-only hard fallback even if the helper ever fails.
+        # NER pins to FAST_EXTRACTOR_DEVICE (CPU default): the pre-pass runs
+        # NER concurrently across threads, which the DML driver cannot do
+        # (0xC0000005). Global ONNX_DEVICE still governs the embedder.
         try:
-            from core.onnx_lock import resolve_providers as _res_prov
-            provider_sets = [list(_res_prov()), ["CPUExecutionProvider"]]
+            _dev = str(getattr(config, "FAST_EXTRACTOR_DEVICE", "cpu") or "cpu").lower()
         except Exception:
+            _dev = "cpu"
+        try:
+            import onnxruntime as _ort2
+            _avail = _ort2.get_available_providers()
+        except Exception:
+            _avail = []
+        if _dev in ("directml", "dml") and "DmlExecutionProvider" in _avail:
+            provider_sets = [["DmlExecutionProvider", "CPUExecutionProvider"],
+                             ["CPUExecutionProvider"]]
+        elif _dev == "cuda" and "CUDAExecutionProvider" in _avail:
+            provider_sets = [["CUDAExecutionProvider", "CPUExecutionProvider"],
+                             ["CPUExecutionProvider"]]
+        elif _dev == "auto" and "DmlExecutionProvider" in _avail:
+            provider_sets = [["DmlExecutionProvider", "CPUExecutionProvider"],
+                             ["CPUExecutionProvider"]]
+        else:
             provider_sets = [["CPUExecutionProvider"]]
 
         import os as _os

@@ -140,7 +140,7 @@ def deduplicate_list(items, key_func):
     return list(seen.values())
 
 
-def process_file(filepath, tracker, logic_context="", preloaded=None):
+def process_file(filepath, tracker, logic_context="", preloaded=None, seq=None):
     import numpy as np
     import json
     _t0 = time.time()
@@ -148,7 +148,11 @@ def process_file(filepath, tracker, logic_context="", preloaded=None):
     if tracker.is_processed(file_hash):
         print(f"Skipping already processed: {filepath.name}")
         return False
-    print(f"\n[{tracker.processed_count}/{tracker.total_files}] Processing: {filepath}")
+    # seq is claimed atomically by the caller: parallel workers sharing
+    # tracker.processed_count all printed the same stale number (e.g. two
+    # files both showing [15/182]). Run-local sequence, never a live counter.
+    _shown = seq if seq is not None else tracker.processed_count
+    print(f"\n[{_shown}/{tracker.total_files}] Processing: {filepath}")
     logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
     logger.info(f"Processing file {file_hash}", extra={'file_hash': file_hash})
     try:
@@ -1560,12 +1564,15 @@ Return only JSON."""
 
                 def process_one(f):
                     nonlocal processed_count
+                    # Claim the display sequence FIRST (atomic): readers of the
+                    # shared counter all saw the same stale number.
+                    with tracker_lock:
+                        tracker.processed_count += 1
+                        my_idx = tracker.processed_count
                     # Skip BEFORE prepare: embedding a file just to skip it is pure waste.
                     try:
                         if is_file_processed(f, tracker):
                             print(f"Skipping already processed: {getattr(f, 'name', f)}")
-                            with tracker_lock:
-                                tracker.processed_count += 1
                             return None
                     except Exception:
                         pass
@@ -1596,11 +1603,9 @@ Return only JSON."""
                     with tracker_lock:
                         if tracker.is_processed(file_hash) and verified_flag:
                             promote_verified_file(file_hash, f.name, source_file=f)
-                            tracker.processed_count += 1
                             return None
-                    success = process_file(f, tracker, logic_context=logic_context, preloaded=_prep)
+                    success = process_file(f, tracker, logic_context=logic_context, preloaded=_prep, seq=my_idx)
                     with tracker_lock:
-                        tracker.processed_count += 1
                         if success and verified_flag:
                             file_hash = get_file_hash(f)
                             promote_verified_file(file_hash, f.name, source_file=f)
@@ -1708,7 +1713,7 @@ Return only JSON."""
                                     prefetched_data = prepare_next_file(next_file)
                         t = threading.Thread(target=do_prefetch, daemon=True)
                         t.start()
-                    success = process_file(f, tracker, logic_context=logic_context, preloaded=preloaded)
+                    success = process_file(f, tracker, logic_context=logic_context, preloaded=preloaded, seq=file_count)
                     tracker.processed_count += 1
                     if success and verified_flag:
                         file_hash = get_file_hash(f)

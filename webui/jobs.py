@@ -189,7 +189,7 @@ def _run_guided_real(job):
             except Exception as e:
                 _emit(job, {"type": "log", "level": "warn", "msg": f"Logic decision failed: {e}"})
         try:
-            ok = process_file(f, tracker, logic_context=logic_context, preloaded=_prep)
+            ok = process_file(f, tracker, logic_context=logic_context, preloaded=_prep, seq=done + 1)
         except Exception as e:
             _emit(job, {"type": "log", "level": "error", "msg": f"Failed {fname}: {e}"})
             ok = False
