@@ -14,6 +14,46 @@ import json
 
 import config
 
+# Portable role routing (phase 85): 'small' = fast/disciplined model for
+# mechanical span extraction, 'large' = reasoning model for judgment.
+# Resolved from SMALL_MODEL_ENDPOINT / LARGE_MODEL_ENDPOINT (env-driven,
+# empty on machines without role models -> default endpoint). No model
+# IDs live here; any box runs with whatever it configured, degrading to
+# single-model behavior when roles are unset.
+
+
+def role_endpoint(role="large"):
+    """Endpoint dict for a role, or None. Never raises."""
+    try:
+        if role == "small":
+            _ep = getattr(config, "SMALL_MODEL_ENDPOINT", None)
+            if _ep and _ep.get("model"):
+                return _ep
+        else:
+            _ep = getattr(config, "LARGE_MODEL_ENDPOINT", None)
+            if _ep and _ep.get("model"):
+                return _ep
+        _eps = getattr(config, "LLM_ENDPOINTS", []) or []
+        return _eps[0] if _eps else None
+    except Exception:
+        return None
+
+
+def role_chat(role, msgs, max_tokens=256):
+    """Chat via role endpoint. Returns (text, endpoint_label)."""
+    try:
+        from core.backends import create_backend
+        _ep = role_endpoint(role)
+        if not _ep:
+            return "", "none"
+        _be = create_backend(_ep)
+        _out = _be.chat(msgs, model=_ep.get("model"), max_tokens=max_tokens,
+                        temperature=0.0)
+        _txt = str(_out.get("content", _out) if isinstance(_out, dict) else _out or "").strip()
+        return _txt, str(_ep.get("model", "?"))[:40]
+    except Exception as e:
+        return "", f"error: {str(e)[:80]}"
+
 FAITHFULNESS_RUBRIC = (
     "Decide whether the ANSWER is fully supported by the CITATIONS.\n"
     "Reply with exactly one JSON object: {\"label\": \"faithful\"|\"unfaithful\", "
@@ -43,14 +83,9 @@ HALLUCINATION_RUBRIC = (
 
 
 def _extract_spans(kind, material):
-    """Step 1: extract exact-substring evidence spans. Returns list[str]."""
+    """Step 1 via the small (fast/disciplined) role: extract exact-substring
+    evidence spans. Returns parsed obj ({} on failure)."""
     try:
-        from core.backends import create_backend
-        eps = getattr(config, "LLM_ENDPOINTS", [])
-        if not eps:
-            return {}
-        ep = eps[0]
-        be = create_backend(ep)
         if kind == "faith":
             task = ("List the exact substrings (word-for-word quotes) from CITATIONS "
                     "that state each factual claim in ANSWER. Quote FULL sentences "
@@ -69,11 +104,10 @@ def _extract_spans(kind, material):
                     "Empty lists where nothing applies. Never paraphrase.")
         msgs = [{"role": "system", "content": "You extract evidence spans. Exact substrings only."},
                 {"role": "user", "content": task + "\n\nMATERIAL:\n" + str(material)[:4000]}]
-        out = be.chat(msgs, model=ep.get("model"), max_tokens=256, temperature=0.0)
-        txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
+        txt, _ = role_chat("small", msgs, max_tokens=256)
         start, end = txt.find("{"), txt.rfind("}")
         if start < 0 or end <= start:
-            return []
+            return {}
         import json as _js
         obj = _js.loads(txt[start:end + 1])
         spans = []
@@ -99,18 +133,11 @@ def _verify_spans(spans, sources):
 
 
 def _llm_judge(rubric, material, timeout=120):
-    """Single rubric call. Returns (label|None, reason, raw)."""
+    """Single rubric call via the large (reasoning) role. (label|None, reason, raw)."""
     try:
-        from core.backends import create_backend
-        eps = getattr(config, "LLM_ENDPOINTS", [])
-        if not eps:
-            return None, "no LLM endpoints configured", ""
-        ep = eps[0]
-        be = create_backend(ep)
         msgs = [{"role": "system", "content": "You are a strict verification judge."},
                 {"role": "user", "content": rubric + "\n\nMATERIAL:\n" + str(material)[:4000]}]
-        out = be.chat(msgs, model=ep.get("model"), max_tokens=256, temperature=0.0)
-        txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
+        txt, _ = role_chat("large", msgs, max_tokens=256)
         start, end = txt.find("{"), txt.rfind("}")
         if start < 0 or end <= start:
             return None, "non-JSON reply", txt[:200]
@@ -150,9 +177,6 @@ def judge_faithfulness(answer, citations):
         # F02 confabulation shape. Uncovered answer -> unfaithful.
         if not _covers(verified, [str(answer or "").strip()], strict=True):
             return "unfaithful", "verified quotes do not cover the answer's claims", "llm-2step"
-        from core.backends import create_backend
-        eps = getattr(config, "LLM_ENDPOINTS", [])
-        be = create_backend(eps[0])
         task = ("Given ONLY these verified exact quotes, is EVERY factual claim in "
                 "ANSWER directly stated? Reply with exactly one JSON object: "
                 "{\"label\": \"faithful\"|\"unfaithful\", \"reason\": \"<one sentence>\"} "
@@ -160,8 +184,7 @@ def judge_faithfulness(answer, citations):
         msgs = [{"role": "system", "content": "You are a strict verification judge."},
                 {"role": "user", "content": task + "\n\nANSWER: " + str(answer or "").strip()
                  + "\nVERIFIED QUOTES:\n" + "\n".join(f"- {q}" for q in verified)}]
-        out = be.chat(msgs, model=eps[0].get("model"), max_tokens=256, temperature=0.0)
-        txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
+        txt, _ = role_chat("large", msgs, max_tokens=256)
         start, end = txt.find("{"), txt.rfind("}")
         if start >= 0 and end > start:
             obj = json.loads(txt[start:end + 1])
@@ -274,9 +297,6 @@ def _covers(supports, subclaims, strict=True):
 def _implication_check(subclaims, supports):
     """Do verified spans strictly imply every sub-claim? (label, reason, method)."""
     try:
-        from core.backends import create_backend
-        eps = getattr(config, "LLM_ENDPOINTS", [])
-        be = create_backend(eps[0])
         task = ("Do these VERIFIED spans STRICTLY imply EVERY sub-claim (no bridging "
                 "assumptions, no uncited numbers/nationalities/capitals)? Reply with "
                 "exactly one JSON object: {\"label\": \"supported\"|\"unsupported\", "
@@ -285,8 +305,7 @@ def _implication_check(subclaims, supports):
                 {"role": "user", "content": task + "\n\nSUB-CLAIMS:\n" +
                  "\n".join(f"- {s}" for s in subclaims) +
                  "\nVERIFIED SPANS:\n" + "\n".join(f"- {s}" for s in supports)}]
-        out = be.chat(msgs, model=eps[0].get("model"), max_tokens=128, temperature=0.0)
-        txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
+        txt, _ = role_chat("large", msgs, max_tokens=128)
         start, end = txt.find("{"), txt.rfind("}")
         if start >= 0 and end > start:
             obj = json.loads(txt[start:end + 1])
@@ -305,9 +324,6 @@ def _famous_fact_check(claim, context=""):
     no clash may be declared against the context's own statements.
     """
     try:
-        from core.backends import create_backend
-        eps = getattr(config, "LLM_ENDPOINTS", [])
-        be = create_backend(eps[0])
         task = ("Does this CLAIM directly clash with one of these well-established "
                 "facts? (a) Alexander Graham Bell invented the telephone — anyone else "
                 "credited is wrong. (b) Alexander Fleming discovered penicillin. "
@@ -325,8 +341,7 @@ def _famous_fact_check(claim, context=""):
         msgs = [{"role": "system", "content": "You are a strict verification judge."},
                 {"role": "user", "content": task + "\n\nCLAIM: " + str(claim)[:1000]
                  + "\n\nCONTEXT (wins ties): " + str(context or "")[:1500]}]
-        out = be.chat(msgs, model=eps[0].get("model"), max_tokens=128, temperature=0.0)
-        txt = str(out.get("content", out) if isinstance(out, dict) else out or "").strip()
+        txt, _ = role_chat("large", msgs, max_tokens=128)
         start, end = txt.find("{"), txt.rfind("}")
         if start >= 0 and end > start:
             obj = json.loads(txt[start:end + 1])

@@ -16,9 +16,17 @@ sys.path.insert(0, "A:/scripts/TheBrain")
 def main(argv):
     import json
     log = ""
-    for a in argv:
-        if a.startswith("--log"):
-            log = a.split("=", 1)[1] if "=" in a else ""
+    model = ""
+    _args = list(argv)
+    for _i, a in enumerate(_args):
+        if a.startswith("--log="):
+            log = a.split("=", 1)[1]
+        elif a == "--log" and _i + 1 < len(_args):
+            log = _args[_i + 1]
+        if a.startswith("--model="):
+            model = a.split("=", 1)[1]
+        elif a == "--model" and _i + 1 < len(_args):
+            model = _args[_i + 1]
     logfh = open(log, "a", encoding="utf-8") if log else None
 
     def say(msg):
@@ -28,6 +36,16 @@ def main(argv):
             logfh.flush()
 
     from core import fh_judge as J
+    if model:
+        # Temporary in-process override only: routes the judge at the
+        # already-loaded model without touching config on disk.
+        import config as _C
+        try:
+            _C.LLM_ENDPOINTS[0]["model"] = model
+            say(f"model override: {model}")
+        except Exception as e:
+            say(f"model override failed: {e}")
+            return 2
     d = json.load(open("A:/scripts/TheBrain/tests/fixtures_ground_truth.json",
                        encoding="utf-8"))
     stats = {"faithfulness": [0, 0, 0], "hallucination": [0, 0, 0]}  # hit/total/review
