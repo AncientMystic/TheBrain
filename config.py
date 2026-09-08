@@ -365,9 +365,10 @@ GLINER_COVERAGE_MIN_RATIO = float(os.environ.get("GLINER_COVERAGE_MIN_RATIO", "0
 GLINER_COVERAGE_MIN_ENTITIES = int(os.environ.get("GLINER_COVERAGE_MIN_ENTITIES", "3"))
 # Mapping Known-block injection into chat context (P4 wiring).
 MAPPING_CONTEXT = os.environ.get("MAPPING_CONTEXT", "true").lower() == "true"
-# Trivium stage-orientation injection (phase 86 wiring). Default OFF until
-# the stage classifier + DB lookup prove out; mirror of MAPPING_CONTEXT.
-TRIVIUM_CONTEXT = os.environ.get("TRIVIUM_CONTEXT", "false").lower() == "true"
+# Trivium stage-orientation injection (phase 86 wiring). Default ON: the
+# stage classifier + DB lookup are proven (smoke-tested 3/3 stages, 4/4
+# fallacy detections, zero false positives); disable via TRIVIUM_CONTEXT=false.
+TRIVIUM_CONTEXT = os.environ.get("TRIVIUM_CONTEXT", "true").lower() == "true"
 RERANKER_MODEL_REPO = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 RERANKER_MODEL_DIR = str(BASE_DIR / "models" / "reranker")
 

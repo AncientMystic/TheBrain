@@ -340,6 +340,14 @@ def init_logic_db():
 
 
 def init_reasoning_db():
+    """Create reasoning tables (kept for reader compatibility).
+
+    PHASE-91 RETIREMENT: these tables are legacy. All 8+ hold zero rows
+    because writers only fire on manual flags; the trivium program
+    (fallacy catalog, gates, resolutions) supersedes them. Tables are
+    still created so existing readers (audit review queue, kg lookups)
+    keep working on empty sets. Do not add new writers.
+    """
     conn = db.db_connect("reasoning"); cur = conn.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS research_nodes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,3 +1,12 @@
+"""Reasoning-trace graph helpers (kg_triples, reasoning_edges, closure).
+
+STATUS (phase 91): these tables are RETIRED in favor of the trivium
+upgrade. All tables stay readable (existing readers degrade gracefully
+on empty sets), but no new writes should target them: record reasoning
+metadata as trivium-linked structures instead (fallacy catalog hits via
+core/trivium_detect.py, gate records via core/enneagram.py,
+claim resolutions via dirty queue). New code must not add writers here.
+"""
 import json
 from core import db
 import logging
