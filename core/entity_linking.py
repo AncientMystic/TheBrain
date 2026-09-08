@@ -222,3 +222,31 @@ def decoherence_link(mentions, candidates_fn, embed_fn=None, max_iter=5,
                                 embed_fn=embed_fn, gamma=gamma,
                                 review_threshold=review_threshold)
     return choice, report
+
+
+def fidelity_gate(scores, min_access_bits=1.0):
+    """Fuchs-inspired collapse gate (phase 99): Holevo-style accessible-info cap.
+
+    Given candidate scores (any positive scale), normalize to a distribution
+    and compute accessible = log2(K) - entropy. Collapse (accept top-1) only
+    if the top candidate holds majority AND accessible info clears the floor;
+    otherwise abstain. Never raises; empty input abstains.
+    Returns (accept_top: bool, accessible_bits: float, top_share: float).
+    """
+    try:
+        import math
+        vals = [max(float(s), 0.0) for s in (scores or [])]
+        K = len(vals)
+        if K == 0 or sum(vals) <= 0:
+            return False, 0.0, 0.0
+        tot = sum(vals)
+        if K == 1:
+            return True, 0.0, 1.0  # sole candidate: nothing to choose between
+        probs = [v / tot for v in vals]
+        H = -sum(p * math.log2(p) for p in probs if p > 0)
+        accessible = math.log2(K) - H
+        top = max(probs)
+        accept = bool(top > 0.5 and accessible >= float(min_access_bits))
+        return accept, round(accessible, 3), round(top, 3)
+    except Exception:
+        return False, 0.0, 0.0
