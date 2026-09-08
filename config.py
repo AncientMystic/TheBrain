@@ -22,6 +22,8 @@ REASONING_DB_FILE = str(DATA_DIR / "reasoning.db")
 VERIFICATION_STANDARDS_DB_FILE = str(DATA_DIR / "verification_standards.db")
 MAPPING_DB_FILE = str(DATA_DIR / "mapping.db")
 TRIVIUM_DB_FILE = str(DATA_DIR / "trivium.db")
+PROGRAMMING_DB_FILE = str(DATA_DIR / "programming.db")
+CODE_DB_FILE = str(DATA_DIR / "code.db")
 MAPPING_SHARD_FMT = str(DATA_DIR / "mapping_{shard}.db")
 VERIFICATION_FACTS_JSON_FILE = str(DATA_DIR / "verification_facts.json")
 
