@@ -19,6 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", type=int, default=2000)
     ap.add_argument("--log", default="")
+    ap.add_argument("--db", default="mapping")
     args = ap.parse_args()
     logfh = open(args.log, "a", encoding="utf-8") if args.log else None
 
@@ -33,7 +34,7 @@ def main():
     from core import db as _db
     from core.octonion import signature, to_blob
     from core.embeddings import decode_embedding_blob
-    conn = _db.db_connect("mapping")
+    conn = _db.db_connect(args.db)
     total = conn.execute(
         "SELECT COUNT(*) FROM entities WHERE emb IS NOT NULL").fetchone()[0]
     say(f"start: {total} embedded entities, batch={args.batch}")

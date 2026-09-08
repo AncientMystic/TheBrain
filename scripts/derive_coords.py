@@ -34,9 +34,22 @@ def derive_shard(conn, shard, rows, exp_dim, redo=False):
     X = _np.stack(vecs)
     mu = _np.asarray(frechet_mean(X), dtype=_np.float64)
     T = _np.stack([_np.asarray(log_mu(mu, x), dtype=_np.float64) for x in X])
+    # Single-point shards (and identical twins) yield NaN tangents (0/0 in
+    # the log map); by definition a point at its own centroid has zero
+    # tangent. SQLite stores NaN as NULL, which orphaned such rows.
+    T = _np.nan_to_num(T, nan=0.0, posinf=0.0, neginf=0.0)
     Tc = T - T.mean(axis=0)
-    _, _, Vt = _np.linalg.svd(Tc, full_matrices=False)
-    u1, u2 = Vt[0], Vt[1] if Vt.shape[0] > 1 else _np.zeros_like(Vt[0])
+    try:
+        _, _, Vt = _np.linalg.svd(Tc, full_matrices=False)
+        u1, u2 = Vt[0], Vt[1] if Vt.shape[0] > 1 else _np.zeros_like(Vt[0])
+    except Exception:
+        # Degenerate shard (tiny/identical tangents): deterministic
+        # orthonormal fallback seeded by shard key (stable across redos).
+        import hashlib as _hl
+        _seed = int.from_bytes(_hl.sha256(shard.encode()).digest()[:8], "big")
+        _rng = _np.random.default_rng(_seed)
+        _Q, _ = _np.linalg.qr(_rng.normal(size=(T.shape[1], 2)))
+        u1, u2 = _Q[:, 0].copy(), _Q[:, 1].copy()
     p1, p2 = T @ u1, T @ u2
     # Per-axis scales: each axis uses its full range, zero clipping.
     m1 = float(_np.abs(p1).max(initial=0.0))
@@ -157,12 +170,16 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(0 if selftest() else 1)
     _redo = "--redo" in sys.argv
-    _rest = [a for a in sys.argv[1:] if a != "--redo"]
+    _dbflag = [a.split("=", 1)[1] for a in sys.argv[1:]
+               if a.startswith("--db=")]
+    _dbname = _dbflag[0] if _dbflag else "mapping"
+    _rest = [a for a in sys.argv[1:]
+             if a != "--redo" and not a.startswith("--db")]
     if _rest:
         _conn = sqlite3.connect(_rest[0])
     else:
         from core import db as _db
-        _conn = _db.db_connect("mapping")
+        _conn = _db.db_connect(_dbname)
     _n = derive_all(_conn, redo=_redo)
     print(f"derive_coords: {_n} rows assigned")
     _conn.close()

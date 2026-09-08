@@ -147,6 +147,15 @@ def register_chat_routes(app, require_auth):
                     context = logic_context + "\n\n" + context
                 if memory_text:
                     context = memory_text + "\n\n" + context
+                try:
+                    import config as _cfgt2
+                    if getattr(_cfgt2, "TRIVIUM_CONTEXT", False):
+                        from core.trivium import trivium_context_block as _tcb2
+                        _tri2 = _tcb2(q)
+                        if _tri2:
+                            context = _tri2 + "\n\n" + context
+                except Exception:
+                    pass
                 _full = []
                 for ev in synthesize_answer_stream(q, context):
                     if ev.get("t") == "tok":

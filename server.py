@@ -185,6 +185,18 @@ def _process_chat(messages, session_id=None, reasoning=False, deep_research=Fals
                 pass
     except Exception:
         pass
+    # Trivium stage orientation (phase 86): one-line reasoning-stage note
+    # + art guidance pulled live from trivium.db. Bounded, read-only,
+    # never raises; enable via TRIVIUM_CONTEXT=true (default off).
+    try:
+        import config as _cfgt
+        if getattr(_cfgt, "TRIVIUM_CONTEXT", False):
+            from core.trivium import trivium_context_block as _tcb
+            _tri = _tcb(query)
+            if _tri:
+                context = _tri + "\n\n" + context
+    except Exception:
+        pass
 
     answer = generate_answer(query, context)
     return answer, facts

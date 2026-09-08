@@ -31,12 +31,16 @@ def backfill(conn, batch=2000):
 
 if __name__ == "__main__":
     import sys as _sys
-    if len(_sys.argv) > 1:
-        _conn = sqlite3.connect(_sys.argv[1])
+    _args = [a for a in _sys.argv[1:] if not a.startswith("--db")]
+    _dbflag = [a.split("=", 1)[1] for a in _sys.argv[1:]
+               if a.startswith("--db=")]
+    _dbname = _dbflag[0] if _dbflag else "mapping"
+    if _args:
+        _conn = sqlite3.connect(_args[0])
     else:
         _sys.path.insert(0, "A:/scripts/TheBrain")
         from core import db as _db
-        _conn = _db.db_connect("mapping")
+        _conn = _db.db_connect(_dbname)
     _n = backfill(_conn)
     _with = _conn.execute("SELECT COUNT(*) FROM entities WHERE depth IS NOT NULL").fetchone()[0]
     _tot = _conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]

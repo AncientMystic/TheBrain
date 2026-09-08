@@ -174,6 +174,12 @@ def register_server_routes(app, require_auth):
             out["mapping"] = _m
         except Exception:
             out["mapping"] = {}
+        # Trivium rollup (phase 86): row/stage/shard census, one cheap query set.
+        try:
+            from core.trivium import trivium_overview as _tov
+            out["trivium"] = _tov()
+        except Exception:
+            out["trivium"] = {}
         # Open breaker circuits (reliability pills).
         try:
             from core.breaker import open_circuits as _brk_open

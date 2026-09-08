@@ -15,6 +15,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", type=int, default=4000)
     ap.add_argument("--log", default="")
+    ap.add_argument("--db", default="mapping")
     args = ap.parse_args()
     logfh = open(args.log, "a", encoding="utf-8") if args.log else None
 
@@ -29,7 +30,7 @@ def main():
     from core.octonion import from_blob
     from core.e8 import quantize
     import time as _t
-    conn = _db.db_connect("mapping")
+    conn = _db.db_connect(args.db)
     total = conn.execute(
         "SELECT COUNT(*) FROM entities WHERE oct8 IS NOT NULL").fetchone()[0]
     say(f"start: {total} signed entities, batch={args.batch}")

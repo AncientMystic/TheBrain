@@ -107,6 +107,7 @@ DB_FILES = {
     "recoll_log": config.RECOLL_LOG_DB_FILE,
     "verification_standards": config.VERIFICATION_STANDARDS_DB_FILE,
     "mapping": config.MAPPING_DB_FILE,
+    "trivium": config.TRIVIUM_DB_FILE,
 }
 
 for _db_path in DB_FILES.values():
