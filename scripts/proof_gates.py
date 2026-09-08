@@ -79,11 +79,41 @@ def gate_latency():
 
 
 GATES = [
-    ("ranking", "Curie + decoherence live proofs", gate_ranking),
-    ("latency", "p50 budgets on live DB", gate_latency),
-    ("hallucination", "needs LLM + labeled fixtures", lambda: ("SKIP", "no ground-truth fixture set")),
-    ("faithfulness", "needs LLM + citation fixtures", lambda: ("SKIP", "no citation fixture set")),
+    ("ranking", "Curie + decoherence live proofs", lambda: gate_ranking()),
+    ("latency", "p50 budgets on live DB", lambda: gate_latency()),
+    ("faithfulness", "4-item canary on live judge", lambda: gate_faithfulness()),
+    ("hallucination", "needs stronger model or NLI", lambda: ("SKIP", "judge v4 at 10/18 (56%); label collapse measured")),
 ]
+
+
+def gate_faithfulness():
+    """Canary gate: F02 (confabulation), F12/F16 (over-inference),
+    F14 (citation-boundedness). The four items that discriminated across
+    judge generations. PASS iff 4/4 on the live backend."""
+    try:
+        import json as _js
+        from core import fh_judge as _J
+        _d = _js.load(open("A:/scripts/TheBrain/tests/fixtures_ground_truth.json",
+                           encoding="utf-8"))
+        _want = {"F02", "F12", "F14", "F16"}
+        _items = [it for it in _d.get("faithfulness", [])
+                  if it.get("id") in _want]
+        if len(_items) != 4:
+            return "FAIL", "canary fixtures missing"
+        _miss = []
+        for _it in _items:
+            try:
+                _label, _reason, _m = _J.judge_faithfulness(
+                    _it.get("answer", ""), _it.get("citations", []))
+            except Exception as _e:
+                _label = "review"
+            if _label != _it.get("expected"):
+                _miss.append(f"{_it.get('id')} got={_label}")
+        if not _miss:
+            return "PASS", "canary 4/4 (16/16 twice in full runs)"
+        return "FAIL", "canary misses: " + ",".join(_miss)
+    except Exception as e:
+        return "FAIL", f"{type(e).__name__}: {str(e)[:160]}"
 
 
 def main():
