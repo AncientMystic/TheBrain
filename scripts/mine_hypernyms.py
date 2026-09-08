@@ -137,6 +137,38 @@ def label_qids(qids):
     return out
 
 
+# Seed-era surname-trap repairs (verified 2026-09-08 via full-name +
+# person-description matching; each resolves to human lineage Q5).
+# Canonical IDs keep stale suffixes (nothing parses them); provenance
+# carries the corrected QIDs.
+KNOWN_QID_REPAIRS = {
+ "per:dirac-q1118592": "Q47480",      # was French commune
+ "per:fermi-q76912274": "Q8753",      # was family-name item
+ "per:rutherford-q16882409": "Q9123",  # was family-name item
+ "per:planck-q47516218": "Q9021",     # was family-name item
+ "per:mendel-q16876806": "Q37970",    # was family-name item
+ "per:koch-q1348074": "Q37193",       # was family-name item
+}
+
+DENY_PARENTS = ("Q101352", "Q484170", "Q51625")  # family name, commune, Salvator Mundi
+
+
+def apply_qid_repairs(conn):
+    """Write corrected QIDs to provenance; purge denylisted parents."""
+    n = 0
+    for cid, qid in KNOWN_QID_REPAIRS.items():
+        try:
+            conn.execute("UPDATE ingest_provenance SET source_id=? WHERE canonical_id=?"
+                         " AND source='wikidata'", (qid, cid))
+            n += 1
+        except Exception:
+            continue
+    conn.execute(f"DELETE FROM hypernym_edges WHERE parent_qid IN ({','.join('?' * len(DENY_PARENTS))})",
+                 DENY_PARENTS)
+    conn.commit()
+    return n
+
+
 def stage_known(conn):
     """Exact QIDs from ingest_provenance (source=wikidata): zero search risk."""
     rows = conn.execute("SELECT e.canonical_id, p.source_id FROM entities e"
