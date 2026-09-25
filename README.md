@@ -13,7 +13,7 @@ It also ships a **glassmorphism WebUI** (`python main.py --webui`, or double-cli
 
 support welcome and appreciated: 
 - Cashapp: $AncientMystic144 
-- XMR: 86dMFgF5PeweEPfR4wmZHbc5bCpfbFwdUe6NiS61nqKYHjXwv9UwFAg7U47iigUQLRE5Br1V6dm67fP7udbkfz4y4V
+- XMR: 44FeV38E1xVV87EaynuNkxcBpmi2G5kSE5n1wPSYjezD87MwsPckBs7SvwJmTRJ15rA3TDYSLPTpY7jyzdVTu9Sv9mtoHpi
 
 ## Screenshots
 
